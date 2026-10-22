@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -39,6 +40,22 @@ func ExecLocalWithInput(cmdStr string, cwd string, input string, timeout time.Du
 	if input != "" {
 		cmd.Stdin = strings.NewReader(input)
 	}
+
+	// Injeta Git\usr\bin no PATH para comandos Unix comuns (cp, mv, rm, ls, cat, grep) funcionarem nativamente no Windows
+	gitUsrBin := `C:\Program Files\Git\usr\bin`
+	env := os.Environ()
+	pathUpdated := false
+	for i, e := range env {
+		if strings.HasPrefix(strings.ToUpper(e), "PATH=") {
+			env[i] = e + ";" + gitUsrBin
+			pathUpdated = true
+			break
+		}
+	}
+	if !pathUpdated {
+		env = append(env, "PATH="+gitUsrBin)
+	}
+	cmd.Env = env
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf
