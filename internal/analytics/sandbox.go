@@ -16,7 +16,6 @@ const SessionsRoot = `W:\Data\sessions`
 
 var (
 	sessionIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
-	driveLetterRegex = regexp.MustCompile(`(?i)[a-z]:[\\/]`)
 	forbiddenKeywords = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\bATTACH\b`),
 		regexp.MustCompile(`(?i)\bDETACH\b`),
@@ -24,6 +23,12 @@ var (
 		regexp.MustCompile(`(?i)\bLOAD\b`),
 		regexp.MustCompile(`(?i)\bEXPORT\s+DATABASE\b`),
 		regexp.MustCompile(`(?i)\bPRAGMA\b`),
+	}
+	sensitivePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)[\\/]\.ssh[\\/]`),
+		regexp.MustCompile(`(?i)id_rsa|id_ed25519`),
+		regexp.MustCompile(`(?i)windows[\\/]system32[\\/]config`),
+		regexp.MustCompile(`(?i)/etc/shadow|/etc/passwd`),
 	}
 )
 
@@ -115,22 +120,19 @@ func GetOrCreateSessionDir(sessionName string) (string, error) {
 }
 
 func ValidateSQL(sql string) error {
-	if strings.Contains(sql, "..") {
-		return errors.New("sandboxing violation: parent directory traversal (..) prohibited in query")
-	}
-	if driveLetterRegex.MatchString(sql) {
-		return errors.New("sandboxing violation: absolute paths prohibited in query")
-	}
-	if strings.Contains(sql, `\\`) || strings.Contains(sql, `//`) {
-		return errors.New("sandboxing violation: network/UNC paths prohibited in query")
-	}
-	if strings.Contains(strings.ToLower(sql), "http://") || strings.Contains(strings.ToLower(sql), "https://") || strings.Contains(strings.ToLower(sql), "s3://") {
-		return errors.New("sandboxing violation: remote URLs prohibited in query")
-	}
+	// Bloqueia comandos destrutivos / expansão de extensões
 	for _, kw := range forbiddenKeywords {
 		if kw.MatchString(sql) {
-			return fmt.Errorf("sandboxing violation: command prohibited: %s", kw.String())
+			return fmt.Errorf("sandboxing violation: comando perigoso proibido: %s", kw.String())
 		}
 	}
+
+	// Bloqueia acesso a arquivos de credenciais ou do sistema operacional
+	for _, sp := range sensitivePatterns {
+		if sp.MatchString(sql) {
+			return errors.New("sandboxing violation: acesso a caminhos sensíveis do sistema proibido")
+		}
+	}
+
 	return nil
 }

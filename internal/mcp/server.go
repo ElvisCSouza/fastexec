@@ -78,16 +78,30 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "sql",
-		Description: "Executa SQL com saída JSON pura: DuckDB analítico em arquivos (se informar 'session') ou SQLite (se informar 'database').",
+		Description: "Executa SQL analítico DuckDB (direto em arquivos ou 'session') ou SQLite ('database'). Saída sempre em JSON puro.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"session":  {Type: "string", Description: "Nome da sessão analítica DuckDB no PC-Elvis (executa sobre arquivos na sandbox W:\\Data\\sessions\\sess-<session>\\)"},
+				"session":  {Type: "string", Description: "Nome da sessão analítica DuckDB no PC-Elvis (sandbox em W:\\Data\\sessions\\sess-<session>\\)"},
 				"database": {Type: "string", Description: "Caminho do arquivo .db SQLite (usado com 'host')"},
 				"host":     {Type: "string", Description: "Alvo para SQLite: 'noteserver' (default) ou 'local'"},
-				"query":    {Type: "string", Description: "Instrução SQL a executar"},
+				"query":    {Type: "string", Description: "Instrução SQL a executar (no DuckDB aceita 'SELECT ... FROM \"caminho/arquivo.jsonl\"' diretamente)"},
 			},
 			Required: []string{"query"},
+		},
+	},
+	{
+		Name:        "file_ops",
+		Description: "Operações atômicas no sistema de arquivos sem shell: copy, move, delete, mkdir, list.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":   {Type: "string", Description: "Alvo: 'local' (default) ou 'noteserver'"},
+				"action": {Type: "string", Description: "Ação a executar: 'copy', 'move', 'delete', 'mkdir', 'list'"},
+				"path":   {Type: "string", Description: "Caminho do arquivo ou diretório de origem"},
+				"target": {Type: "string", Description: "Caminho de destino (obrigatório para 'copy' e 'move')"},
+			},
+			Required: []string{"action", "path"},
 		},
 	},
 	{
@@ -219,6 +233,10 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) (result Tool
 		var args tools.SqlArgs
 		_ = json.Unmarshal(rawArgs, &args)
 		outText, err = tools.HandleSql(args)
+	case "file_ops":
+		var args tools.FileOpsArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleFileOps(args)
 	case "read_file":
 		var args tools.ReadFileArgs
 		_ = json.Unmarshal(rawArgs, &args)
@@ -301,7 +319,7 @@ func (s *Server) Run() error {
 					},
 					"serverInfo": map[string]any{
 						"name":    "fastexec",
-						"version": "1.1.0",
+						"version": "1.2.0",
 					},
 				},
 			})
