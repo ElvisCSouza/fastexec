@@ -8,8 +8,10 @@ import (
 	"os"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"homelab/fastexec/internal/logger"
+	"homelab/fastexec/internal/telemetry"
 	"homelab/fastexec/internal/tools"
 )
 
@@ -191,6 +193,7 @@ type Server struct {
 }
 
 func NewServer() *Server {
+	telemetry.Init()
 	return &Server{
 		writer: bufio.NewWriter(os.Stdout),
 	}
@@ -211,6 +214,10 @@ func (s *Server) writeResponse(resp JSONRPCResponse) {
 }
 
 func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
+	start := time.Now()
+	bytesIn := len(rawArgs)
+	host, summary := telemetry.SummarizeCall(name, rawArgs)
+
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("PANIC interceptado na ferramenta %s: %v\nStack: %s", name, r, string(debug.Stack()))
@@ -218,6 +225,17 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) (result Tool
 				Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("[FATAL ERROR INTERCEPTED] Panic na ferramenta %s: %v", name, r)}},
 				IsError: true,
 			}
+			telemetry.Record(telemetry.AuditEntry{
+				Tool:           name,
+				Host:           host,
+				DurationMs:     time.Since(start).Milliseconds(),
+				BytesIn:        bytesIn,
+				BytesOut:       len(result.Content[0].Text),
+				Success:        false,
+				ExitCode:       1,
+				ErrorMessage:   fmt.Sprintf("PANIC: %v", r),
+				CommandSummary: summary,
+			})
 		}
 	}()
 
@@ -262,25 +280,52 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) (result Tool
 		_ = json.Unmarshal(rawArgs, &args)
 		outText, err = tools.HandlePing(args)
 	default:
+		errMsg := fmt.Sprintf("Ferramenta '%s' não encontrada", name)
+		telemetry.Record(telemetry.AuditEntry{
+			Tool:           name,
+			Host:           host,
+			DurationMs:     time.Since(start).Milliseconds(),
+			BytesIn:        bytesIn,
+			BytesOut:       len(errMsg),
+			Success:        false,
+			ExitCode:       1,
+			ErrorMessage:   errMsg,
+			CommandSummary: summary,
+		})
 		return ToolCallResult{
-			Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Ferramenta '%s' não encontrada", name)}},
+			Content: []ToolContent{{Type: "text", Text: errMsg}},
 			IsError: true,
 		}
 	}
 
+	durationMs := time.Since(start).Milliseconds()
+	bytesOut := len(outText)
+	success := (err == nil)
+	errMsg := ""
+	exitCode := 0
 	if err != nil {
+		errMsg = err.Error()
+		exitCode = 1
 		if outText == "" {
 			outText = err.Error()
 		}
-		return ToolCallResult{
-			Content: []ToolContent{{Type: "text", Text: outText}},
-			IsError: true,
-		}
 	}
+
+	telemetry.Record(telemetry.AuditEntry{
+		Tool:           name,
+		Host:           host,
+		DurationMs:     durationMs,
+		BytesIn:        bytesIn,
+		BytesOut:       bytesOut,
+		Success:        success,
+		ExitCode:       exitCode,
+		ErrorMessage:   errMsg,
+		CommandSummary: summary,
+	})
 
 	return ToolCallResult{
 		Content: []ToolContent{{Type: "text", Text: outText}},
-		IsError: false,
+		IsError: !success,
 	}
 }
 

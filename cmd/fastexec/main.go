@@ -8,6 +8,7 @@ import (
 
 	"homelab/fastexec/internal/logger"
 	"homelab/fastexec/internal/mcp"
+	"homelab/fastexec/internal/telemetry"
 	"homelab/fastexec/internal/tools"
 	"homelab/fastexec/internal/transport"
 )
@@ -200,9 +201,31 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "stats":
+		filter := telemetry.StatsFilter{}
+		for _, arg := range subArgs {
+			switch strings.ToLower(arg) {
+			case "--today", "-t":
+				filter.Today = true
+			case "--errors", "-e":
+				filter.OnlyErrors = true
+			case "--tools":
+				filter.OnlyTools = true
+			case "--reset", "--clear":
+				filter.ResetDB = true
+			}
+		}
+
+		out, err := telemetry.RenderStats(filter)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Erro ao obter telemetria:", err)
+			os.Exit(1)
+		}
+		fmt.Print(out)
+
 	default:
 		fmt.Printf("Comando desconhecido: '%s'\n", cmd)
-		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping")
+		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats")
 		os.Exit(1)
 	}
 }
