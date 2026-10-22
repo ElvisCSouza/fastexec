@@ -1,0 +1,368 @@
+package mcp
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"runtime/debug"
+	"sync"
+
+	"homelab/commander/internal/logger"
+	"homelab/commander/internal/tools"
+)
+
+type JSONRPCRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      any             `json:"id,omitempty"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type JSONRPCResponse struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      any    `json:"id,omitempty"`
+	Result  any    `json:"result,omitempty"`
+	Error   *RPCError `json:"error,omitempty"`
+}
+
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
+}
+
+type ToolCallResult struct {
+	Content []ToolContent `json:"content"`
+	IsError bool          `json:"isError,omitempty"`
+}
+
+type ToolContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type ToolSchema struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	InputSchema InputSchema `json:"inputSchema"`
+}
+
+type InputSchema struct {
+	Type       string                 `json:"type"`
+	Properties map[string]PropertyDef `json:"properties"`
+	Required   []string               `json:"required,omitempty"`
+}
+
+type PropertyDef struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
+}
+
+var serverTools = []ToolSchema{
+	{
+		Name:        "exec",
+		Description: "Executa comando bash/sh/cmd nativo no nó alvo sem interpolação de aspas ou pipes.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local'"},
+				"command":    {Type: "string", Description: "Comando completo a ser executado"},
+				"timeout_ms": {Type: "integer", Description: "Timeout em ms (padrão: 120000)"},
+			},
+			Required: []string{"command"},
+		},
+	},
+	{
+		Name:        "sql",
+		Description: "Executa query SQLite diretamente com saída tabular.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":     {Type: "string", Description: "Alvo: 'noteserver' (default) ou 'local'"},
+				"database": {Type: "string", Description: "Caminho do arquivo .db SQLite"},
+				"query":    {Type: "string", Description: "Instrução SQL"},
+			},
+			Required: []string{"database", "query"},
+		},
+	},
+	{
+		Name:        "read_file",
+		Description: "Lê conteúdo de arquivo local ou remoto.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":   {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local'"},
+				"path":   {Type: "string", Description: "Caminho do arquivo"},
+				"offset": {Type: "integer", Description: "Offset em bytes (opcional)"},
+				"limit":  {Type: "integer", Description: "Limite de bytes a ler (opcional)"},
+			},
+			Required: []string{"path"},
+		},
+	},
+	{
+		Name:        "write_file",
+		Description: "Grava conteúdo em arquivo local ou remoto (chunked e opcionalmente atômico).",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":    {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local'"},
+				"path":    {Type: "string", Description: "Caminho do arquivo de destino"},
+				"content": {Type: "string", Description: "Conteúdo a ser gravado"},
+				"atomic":  {Type: "boolean", Description: "Se true, grava em temporário e renomeia atomicamente (padrão: true)"},
+			},
+			Required: []string{"path", "content"},
+		},
+	},
+	{
+		Name:        "get_file",
+		Description: "Baixa arquivo do nó remoto para o PC-Elvis via socket binário direto.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":        {Type: "string", Description: "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
+				"remote_path": {Type: "string", Description: "Caminho do arquivo no nó remoto"},
+				"local_path":  {Type: "string", Description: "Caminho local no PC-Elvis (opcional, default: nome do arquivo no CWD)"},
+			},
+			Required: []string{"remote_path"},
+		},
+	},
+	{
+		Name:        "put_file",
+		Description: "Envia arquivo do PC-Elvis para o nó remoto de forma chunked e atômica.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":        {Type: "string", Description: "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
+				"local_path":  {Type: "string", Description: "Caminho local no PC-Elvis"},
+				"remote_path": {Type: "string", Description: "Caminho de destino no nó remoto"},
+			},
+			Required: []string{"local_path", "remote_path"},
+		},
+	},
+	{
+		Name:        "job",
+		Description: "Gerencia background jobs assíncronos no NoteServer via systemd-run (evita timeout de 120s).",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":    {Type: "string", Description: "Alvo: 'noteserver' (default)"},
+				"action":  {Type: "string", Description: "Ação: 'start', 'status', 'list', 'tail', 'stop'"},
+				"command": {Type: "string", Description: "Comando para ação 'start'"},
+				"job_id":  {Type: "string", Description: "Identificador da tarefa para status/tail/stop"},
+				"lines":   {Type: "integer", Description: "Número de linhas para ação 'tail' (padrão: 30)"},
+			},
+			Required: []string{"action"},
+		},
+	},
+	{
+		Name:        "ping",
+		Description: "Testa latência e conectividade com os nós do homelab (local, noteserver, ax6000, ax3000).",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host": {Type: "string", Description: "Host específico ou 'all' para todos (default: 'all')"},
+			},
+		},
+	},
+}
+
+type Server struct {
+	mu     sync.Mutex
+	writer *bufio.Writer
+}
+
+func NewServer() *Server {
+	return &Server{
+		writer: bufio.NewWriter(os.Stdout),
+	}
+}
+
+func (s *Server) writeResponse(resp JSONRPCResponse) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := json.Marshal(resp)
+	if err != nil {
+		logger.Error("Erro serializando resposta JSON-RPC: %v", err)
+		return
+	}
+	_, _ = s.writer.Write(data)
+	_ = s.writer.WriteByte('\n')
+	_ = s.writer.Flush()
+}
+
+func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("PANIC interceptado na ferramenta %s: %v\nStack: %s", name, r, string(debug.Stack()))
+			result = ToolCallResult{
+				Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("[FATAL ERROR INTERCEPTED] Panic na ferramenta %s: %v", name, r)}},
+				IsError: true,
+			}
+		}
+	}()
+
+	var outText string
+	var err error
+
+	switch name {
+	case "exec":
+		var args tools.ExecArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleExec(args)
+	case "sql":
+		var args tools.SqlArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleSql(args)
+	case "read_file":
+		var args tools.ReadFileArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleReadFile(args)
+	case "write_file":
+		var args tools.WriteFileArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleWriteFile(args)
+	case "get_file":
+		var args tools.GetFileArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleGetFile(args)
+	case "put_file":
+		var args tools.PutFileArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandlePutFile(args)
+	case "job":
+		var args tools.JobArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleJob(args)
+	case "ping":
+		var args tools.PingArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandlePing(args)
+	default:
+		return ToolCallResult{
+			Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("Ferramenta '%s' não encontrada", name)}},
+			IsError: true,
+		}
+	}
+
+	if err != nil {
+		if outText == "" {
+			outText = err.Error()
+		}
+		return ToolCallResult{
+			Content: []ToolContent{{Type: "text", Text: outText}},
+			IsError: true,
+		}
+	}
+
+	return ToolCallResult{
+		Content: []ToolContent{{Type: "text", Text: outText}},
+		IsError: false,
+	}
+}
+
+func (s *Server) Run() error {
+	logger.Info("Iniciando MCP Server 'commander' via stdio...")
+	scanner := bufio.NewScanner(os.Stdin)
+
+	// Buffer ampliado para acomodar payloads de arquivos grandes
+	buf := make([]byte, 1024*1024)
+	scanner.Buffer(buf, 16*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var req JSONRPCRequest
+		if err := json.Unmarshal(line, &req); err != nil {
+			logger.Error("Erro parsing JSON-RPC: %v", err)
+			s.writeResponse(JSONRPCResponse{
+				JSONRPC: "2.0",
+				Error:   &RPCError{Code: -32700, Message: "Parse error"},
+			})
+			continue
+		}
+
+		// Roteamento de métodos MCP
+		switch req.Method {
+		case "initialize":
+			s.writeResponse(JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result: map[string]any{
+					"protocolVersion": "2024-11-05",
+					"capabilities": map[string]any{
+						"tools": map[string]any{},
+					},
+					"serverInfo": map[string]any{
+						"name":    "commander",
+						"version": "1.0.0",
+					},
+				},
+			})
+
+		case "notifications/initialized":
+			// Apenas acknowledge interno, sem resposta
+			logger.Info("Cliente MCP conectado e inicializado")
+
+		case "ping":
+			s.writeResponse(JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  map[string]any{},
+			})
+
+		case "tools/list":
+			s.writeResponse(JSONRPCResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result: map[string]any{
+					"tools": serverTools,
+				},
+			})
+
+		case "tools/call":
+			go func(r JSONRPCRequest) {
+				var callParams struct {
+					Name      string          `json:"name"`
+					Arguments json.RawMessage `json:"arguments"`
+				}
+				if err := json.Unmarshal(r.Params, &callParams); err != nil {
+					s.writeResponse(JSONRPCResponse{
+						JSONRPC: "2.0",
+						ID:      r.ID,
+						Error:   &RPCError{Code: -32602, Message: "Invalid params"},
+					})
+					return
+				}
+
+				result := s.dispatchTool(callParams.Name, callParams.Arguments)
+				s.writeResponse(JSONRPCResponse{
+					JSONRPC: "2.0",
+					ID:      r.ID,
+					Result:  result,
+				})
+			}(req)
+
+		default:
+			// Métodos desconhecidos
+			if req.ID != nil {
+				s.writeResponse(JSONRPCResponse{
+					JSONRPC: "2.0",
+					ID:      req.ID,
+					Error:   &RPCError{Code: -32601, Message: fmt.Sprintf("Method not found: %s", req.Method)},
+				})
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil && err != io.EOF {
+		logger.Error("Erro lendo stdin: %v", err)
+		return err
+	}
+	return nil
+}
