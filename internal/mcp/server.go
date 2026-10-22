@@ -63,15 +63,15 @@ type PropertyDef struct {
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Executa comando bash/sh/cmd no nó alvo com suporte opcional a stdin direto.",
+		Description: "Executa comando síncrono no nó alvo (orientado a eventos, retorna no término exato do processo). Suporta 'input' via stdin e 'cwd'.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:<host>'"},
-				"command":    {Type: "string", Description: "Comando completo a ser executado"},
+				"command":    {Type: "string", Description: "Comando a ser executado (PROIBIDO usar sleep/timeout artificial)"},
 				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional)"},
 				"input":      {Type: "string", Description: "Conteúdo enviado diretamente para o stdin do processo (opcional, evita criar arquivos temporários)"},
-				"timeout_ms": {Type: "integer", Description: "Timeout em ms (padrão: 120000)"},
+				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 300000 = 5 min)"},
 			},
 			Required: []string{"command"},
 		},
@@ -160,14 +160,14 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "job",
-		Description: "Gerencia background jobs assíncronos no NoteServer via systemd-run (evita timeout de 120s).",
+		Description: "Gerencia background jobs assíncronos no NoteServer via systemd-run. Use action='wait' para aguardar conclusão por evento (zero sleep).",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":    {Type: "string", Description: "Alvo: 'noteserver' (default)"},
-				"action":  {Type: "string", Description: "Ação: 'start', 'status', 'list', 'tail', 'stop'"},
+				"action":  {Type: "string", Description: "Ação: 'start', 'wait' (aguarda conclusão por evento), 'status', 'list', 'tail', 'stop'"},
 				"command": {Type: "string", Description: "Comando para ação 'start'"},
-				"job_id":  {Type: "string", Description: "Identificador da tarefa para status/tail/stop"},
+				"job_id":  {Type: "string", Description: "Identificador da tarefa para wait/status/tail/stop"},
 				"lines":   {Type: "integer", Description: "Número de linhas para ação 'tail' (padrão: 30)"},
 			},
 			Required: []string{"action"},
@@ -319,7 +319,7 @@ func (s *Server) Run() error {
 					},
 					"serverInfo": map[string]any{
 						"name":    "fastexec",
-						"version": "1.2.0",
+						"version": "1.3.0",
 					},
 				},
 			})

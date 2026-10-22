@@ -2,10 +2,13 @@ package tools
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
 	"homelab/fastexec/internal/transport"
 )
+
+var sleepGuardRegex = regexp.MustCompile(`(?i)\b(sleep\s+\d+|timeout(\.exe)?\s+(\/t\s+)?\d+)\b`)
 
 type ExecArgs struct {
 	Host      string `json:"host"`
@@ -18,6 +21,11 @@ type ExecArgs struct {
 func HandleExec(args ExecArgs) (string, error) {
 	if args.Command == "" {
 		return "", fmt.Errorf("parâmetro 'command' é obrigatório")
+	}
+
+	// Bloqueio determinístico de sleep / timeout artificial
+	if sleepGuardRegex.MatchString(args.Command) {
+		return "", fmt.Errorf("[FastExec Guard] Uso de 'sleep' ou 'timeout' é proibido. O FastExec é síncrono e orientado a eventos (retorna no milissegundo exato da conclusão do processo). Para tarefas longas, aumente o 'timeout_ms' (ex: timeout_ms: 300000). Para processos assíncronos, use 'fastexec.job' com action 'wait'")
 	}
 
 	timeout := transport.DefaultTimeout

@@ -12,7 +12,7 @@ import (
 
 type JobArgs struct {
 	Host    string `json:"host"`
-	Action  string `json:"action"` // start, status, list, tail, stop
+	Action  string `json:"action"` // start, status, list, tail, stop, wait
 	Command string `json:"command,omitempty"`
 	JobID   string `json:"job_id,omitempty"`
 	Lines   int    `json:"lines,omitempty"`
@@ -23,7 +23,6 @@ func sanitizeUnit(id string) string {
 	if !strings.HasPrefix(s, "job-") {
 		s = "job-" + s
 	}
-	// Remover .service se passado
 	s = strings.TrimSuffix(s, ".service")
 	return s
 }
@@ -53,7 +52,7 @@ func HandleJob(args JobArgs) (string, error) {
 		unit := sanitizeUnit(jobID)
 
 		b64Cmd := base64.StdEncoding.EncodeToString([]byte(args.Command))
-		cmd := fmt.Sprintf("%s systemd-run --user --unit='%s' --description='Commander Job %s' /bin/bash -c \"$(echo '%s' | base64 -d)\"",
+		cmd := fmt.Sprintf("%s systemd-run --user --unit='%s' --description='FastExec Job %s' /bin/bash -c \"$(echo '%s' | base64 -d)\"",
 			envPrefix, unit, unit, b64Cmd)
 
 		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
@@ -64,8 +63,26 @@ func HandleJob(args JobArgs) (string, error) {
 			return fmt.Sprintf("[Job Start Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("falha ao iniciar job: %s", res.Stderr)
 		}
 
-		return fmt.Sprintf("[job] Iniciado com sucesso\nUnit:    %s.service\nComando: %s\nStatus:  Use job(action='status', job_id='%s')\nTail:    Use job(action='tail', job_id='%s')",
-			unit, args.Command, unit, unit), nil
+		return fmt.Sprintf("[job] Iniciado com sucesso\nUnit:    %s.service\nComando: %s\nStatus:  Use job(action='status', job_id='%s')\nWait:    Use job(action='wait', job_id='%s')\nTail:    Use job(action='tail', job_id='%s')",
+			unit, args.Command, unit, unit, unit), nil
+
+	case "wait":
+		unit := sanitizeUnit(args.JobID)
+		if args.JobID == "" {
+			return "", fmt.Errorf("ação 'wait' requer o parâmetro 'job_id'")
+		}
+		// Aguarda o processo terminar no SO e devolve o log final instantaneamente no milissegundo do término
+		cmd := fmt.Sprintf("%s while systemctl --user is-active --quiet '%s.service'; do sleep 0.5; done; journalctl --user-unit='%s.service' -n 50 --no-pager",
+			envPrefix, unit, unit)
+		res, err := transport.Dispatch(targetHost, cmd, 600*time.Second)
+		if err != nil {
+			return "", err
+		}
+		out := res.Stdout
+		if out == "" {
+			out = res.Stderr
+		}
+		return fmt.Sprintf("[job %s finalizado]\n%s", unit, out), nil
 
 	case "status":
 		unit := sanitizeUnit(args.JobID)
@@ -131,6 +148,6 @@ func HandleJob(args JobArgs) (string, error) {
 		return fmt.Sprintf("[job] %s.service parado com sucesso.", unit), nil
 
 	default:
-		return "", fmt.Errorf("ação de job desconhecida: '%s' (ações válidas: start, status, list, tail, stop)", action)
+		return "", fmt.Errorf("ação de job desconhecida: '%s' (ações válidas: start, wait, status, list, tail, stop)", action)
 	}
 }

@@ -56,6 +56,9 @@ func main() {
 			}
 		}
 		if err != nil {
+			if out == "" {
+				fmt.Fprintln(os.Stderr, err.Error())
+			}
 			os.Exit(1)
 		}
 
@@ -148,7 +151,7 @@ func main() {
 			if len(subArgs) >= 4 {
 				host = subArgs[3]
 			}
-		case "status", "stop", "kill":
+		case "status", "stop", "kill", "wait":
 			if len(subArgs) >= 2 {
 				jobID = subArgs[1]
 			}

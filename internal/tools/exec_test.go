@@ -45,3 +45,39 @@ func TestExecWithInputNoteServer(t *testing.T) {
 		t.Errorf("saída inesperada: %s", out)
 	}
 }
+
+func TestSleepGuardRejection(t *testing.T) {
+	// Comandos com sleep ou timeout devem ser bloqueados
+	proibidos := []string{
+		"sleep 140",
+		"bash -c 'sleep 100; echo oi'",
+		"sleep 5 && ls",
+		"timeout 10",
+		"timeout /t 5 /nobreak",
+	}
+
+	for _, cmd := range proibidos {
+		_, err := HandleExec(ExecArgs{
+			Host:    "local",
+			Command: cmd,
+		})
+		if err == nil {
+			t.Errorf("esperava erro de guarda para comando '%s', mas passou", cmd)
+		}
+		if !strings.Contains(err.Error(), "[FastExec Guard]") {
+			t.Errorf("mensagem de erro esperada não contém '[FastExec Guard]': %v", err)
+		}
+	}
+
+	// Comandos válidos contendo a palavra 'sleep' sem número NÃO devem ser bloqueados
+	permitidos := []string{
+		"echo sleep",
+		"grep 'sleeping' arquivo.txt",
+	}
+
+	for _, cmd := range permitidos {
+		if sleepGuardRegex.MatchString(cmd) {
+			t.Errorf("comando legítimo '%s' disparou a guarda indevidamente", cmd)
+		}
+	}
+}
