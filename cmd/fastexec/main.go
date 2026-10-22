@@ -97,17 +97,27 @@ func main() {
 		}
 
 	case "sql":
-		if len(subArgs) < 2 {
-			fmt.Println("Uso: fastexec sql <database> \"<query>\" [host]")
+		if len(subArgs) < 1 {
+			fmt.Println("Uso: fastexec sql \"<query>\" [session_ou_db] [host]")
 			os.Exit(1)
 		}
-		db := subArgs[0]
-		query := subArgs[1]
-		host := "noteserver"
-		if len(subArgs) >= 3 {
-			host = subArgs[2]
+		var query, db, session, host string
+		if len(subArgs) == 1 {
+			query = subArgs[0]
+			session = "default"
+		} else if strings.HasSuffix(subArgs[0], ".db") || strings.HasSuffix(subArgs[0], ".sqlite") {
+			db = subArgs[0]
+			query = subArgs[1]
+			host = "noteserver"
+			if len(subArgs) >= 3 {
+				host = subArgs[2]
+			}
+		} else {
+			query = subArgs[0]
+			session = subArgs[1]
 		}
-		out, err := tools.HandleSql(tools.SqlArgs{Host: host, Database: db, Query: query})
+
+		out, err := tools.HandleSql(tools.SqlArgs{Host: host, Database: db, Session: session, Query: query})
 		fmt.Print(out)
 		if !strings.HasSuffix(out, "\n") {
 			fmt.Println()

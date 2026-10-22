@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -12,10 +13,14 @@ import (
 )
 
 func ExecLocal(cmdStr string, timeout time.Duration) (*ExecResult, error) {
-	return ExecLocalWithCwd(cmdStr, "", timeout)
+	return ExecLocalWithInput(cmdStr, "", "", timeout)
 }
 
 func ExecLocalWithCwd(cmdStr string, cwd string, timeout time.Duration) (*ExecResult, error) {
+	return ExecLocalWithInput(cmdStr, cwd, "", timeout)
+}
+
+func ExecLocalWithInput(cmdStr string, cwd string, input string, timeout time.Duration) (*ExecResult, error) {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
@@ -30,6 +35,9 @@ func ExecLocalWithCwd(cmdStr string, cwd string, timeout time.Duration) (*ExecRe
 	}
 	if cwd != "" {
 		cmd.Dir = cwd
+	}
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer

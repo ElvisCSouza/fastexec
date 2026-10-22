@@ -63,13 +63,14 @@ type PropertyDef struct {
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Executa comando bash/sh/cmd nativo no nó alvo sem interpolação de aspas ou pipes.",
+		Description: "Executa comando bash/sh/cmd no nó alvo com suporte opcional a stdin direto.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:<host>'"},
 				"command":    {Type: "string", Description: "Comando completo a ser executado"},
 				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional)"},
+				"input":      {Type: "string", Description: "Conteúdo enviado diretamente para o stdin do processo (opcional, evita criar arquivos temporários)"},
 				"timeout_ms": {Type: "integer", Description: "Timeout em ms (padrão: 120000)"},
 			},
 			Required: []string{"command"},
@@ -77,15 +78,16 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "sql",
-		Description: "Executa query SQLite diretamente com saída em JSON estruturado (otimizado para LLM).",
+		Description: "Executa SQL com saída JSON pura: DuckDB analítico em arquivos (se informar 'session') ou SQLite (se informar 'database').",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":     {Type: "string", Description: "Alvo: 'noteserver' (default) ou 'local'"},
-				"database": {Type: "string", Description: "Caminho do arquivo .db SQLite"},
-				"query":    {Type: "string", Description: "Instrução SQL"},
+				"session":  {Type: "string", Description: "Nome da sessão analítica DuckDB no PC-Elvis (executa sobre arquivos na sandbox W:\\Data\\sessions\\sess-<session>\\)"},
+				"database": {Type: "string", Description: "Caminho do arquivo .db SQLite (usado com 'host')"},
+				"host":     {Type: "string", Description: "Alvo para SQLite: 'noteserver' (default) ou 'local'"},
+				"query":    {Type: "string", Description: "Instrução SQL a executar"},
 			},
-			Required: []string{"database", "query"},
+			Required: []string{"query"},
 		},
 	},
 	{
@@ -299,7 +301,7 @@ func (s *Server) Run() error {
 					},
 					"serverInfo": map[string]any{
 						"name":    "fastexec",
-						"version": "1.0.0",
+						"version": "1.1.0",
 					},
 				},
 			})

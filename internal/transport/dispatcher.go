@@ -3,6 +3,8 @@ package transport
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"fmt"
 	"os/exec"
 	"time"
 
@@ -46,21 +48,31 @@ func ExecSSH(sshHost string, cmdStr string, timeout time.Duration) (*ExecResult,
 }
 
 func Dispatch(hostName string, cmd string, timeout time.Duration) (*ExecResult, error) {
-	return DispatchWithCwd(hostName, cmd, "", timeout)
+	return DispatchWithInput(hostName, cmd, "", "", timeout)
 }
 
 func DispatchWithCwd(hostName string, cmd string, cwd string, timeout time.Duration) (*ExecResult, error) {
+	return DispatchWithInput(hostName, cmd, cwd, "", timeout)
+}
+
+func DispatchWithInput(hostName string, cmd string, cwd string, input string, timeout time.Duration) (*ExecResult, error) {
 	target, err := ResolveHost(hostName)
 	if err != nil {
 		return nil, err
 	}
 	if target.IsLocal {
-		return ExecLocalWithCwd(cmd, cwd, timeout)
+		return ExecLocalWithInput(cmd, cwd, input, timeout)
 	}
+
 	effectiveCmd := cmd
-	if cwd != "" {
-		effectiveCmd = "cd \"" + cwd + "\" && " + cmd
+	if input != "" {
+		b64Input := base64.StdEncoding.EncodeToString([]byte(input))
+		effectiveCmd = fmt.Sprintf("printf '%%s' '%s' | base64 -d | %s", b64Input, cmd)
 	}
+	if cwd != "" {
+		effectiveCmd = "cd \"" + cwd + "\" && " + effectiveCmd
+	}
+
 	if target.IsSSH {
 		return ExecSSH(target.SSHHost, effectiveCmd, timeout)
 	}

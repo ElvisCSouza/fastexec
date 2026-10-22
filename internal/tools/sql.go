@@ -5,28 +5,45 @@ import (
 	"fmt"
 	"strings"
 
+	"homelab/fastexec/internal/analytics"
 	"homelab/fastexec/internal/transport"
 )
 
 type SqlArgs struct {
-	Host     string `json:"host"`
-	Database string `json:"database"`
+	Host     string `json:"host,omitempty"`
+	Database string `json:"database,omitempty"`
+	Session  string `json:"session,omitempty"`
 	Query    string `json:"query"`
 }
 
 func HandleSql(args SqlArgs) (string, error) {
-	if args.Database == "" {
-		return "", fmt.Errorf("parâmetro 'database' é obrigatório")
-	}
 	if args.Query == "" {
 		return "", fmt.Errorf("parâmetro 'query' é obrigatório")
 	}
 
+	// 1. Modo DuckDB Analítico (Sessão Sandboxed no PC-Elvis)
+	if args.Session != "" || (args.Database == "" && args.Host == "") {
+		sessionName := args.Session
+		if sessionName == "" {
+			sessionName = "default"
+		}
+		return analytics.ExecuteDuckDBQuery(sessionName, args.Query, 60000)
+	}
+
+	// 2. Modo SQLite (NoteServer ou Local)
+	if args.Database == "" {
+		return "", fmt.Errorf("informe 'database' (para SQLite) ou 'session' (para DuckDB analítico)")
+	}
+
+	host := args.Host
+	if host == "" {
+		host = "noteserver"
+	}
+
 	b64Query := base64.StdEncoding.EncodeToString([]byte(args.Query))
-	// -json por padrão: formato estruturado perfeito para ingestão de LLM sem desperdício de tokens com padding de colunas
 	cmd := fmt.Sprintf("echo '%s' | base64 -d | sqlite3 -json '%s'", b64Query, args.Database)
 
-	res, err := transport.Dispatch(args.Host, cmd, transport.DefaultTimeout)
+	res, err := transport.Dispatch(host, cmd, transport.DefaultTimeout)
 	if err != nil {
 		return "", err
 	}
