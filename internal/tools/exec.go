@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"homelab/fastexec/internal/transport"
@@ -46,6 +47,9 @@ func HandleExec(args ExecArgs) (string, error) {
 		if errMsg == "" {
 			errMsg = fmt.Sprintf("comando falhou com exit code %d (sem saída)", res.ExitCode)
 		}
+		if isWindowsCmdletMismatch(args.Command, errMsg) {
+			errMsg += "\n[FastExec Hint] O host 'local' (Windows) executa via cmd.exe nativo por performance. Para cmdlets PowerShell invoque 'powershell -NoProfile -Command ...'; para listar/manipular arquivos use a tool nativa 'file_ops'."
+		}
 		return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), fmt.Errorf("comando falhou com código %d", res.ExitCode)
 	}
 
@@ -54,4 +58,19 @@ func HandleExec(args ExecArgs) (string, error) {
 	}
 
 	return res.Stdout, nil
+}
+
+func isWindowsCmdletMismatch(cmd string, errMsg string) bool {
+	lowerErr := strings.ToLower(errMsg)
+	if !strings.Contains(lowerErr, "não é reconhecido") && !strings.Contains(lowerErr, "not recognized") {
+		return false
+	}
+	lowerCmd := strings.ToLower(cmd)
+	markers := []string{"select-object", "get-childitem", "get-content", "where-object", "$env:", "get-process", "set-executionpolicy"}
+	for _, m := range markers {
+		if strings.Contains(lowerCmd, m) {
+			return true
+		}
+	}
+	return false
 }

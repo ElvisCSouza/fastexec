@@ -65,7 +65,7 @@ type PropertyDef struct {
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Executa comando síncrono no nó alvo (orientado a eventos, retorna no término exato do processo). Suporta 'input' via stdin e 'cwd'.",
+		Description: "Executa comando síncrono no nó alvo (orientado a eventos, retorna no término exato do processo). No Windows ('local'), roda em cmd.exe nativo (para PowerShell use 'powershell -NoProfile -Command ...'; para arquivos prefira 'file_ops'). Suporta 'input' via stdin e 'cwd'.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
