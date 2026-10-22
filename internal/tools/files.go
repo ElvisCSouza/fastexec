@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"homelab/commander/internal/transport"
+	"homelab/fastexec/internal/transport"
 )
 
 const FileChunkSize = 256 * 1024 // 256 KB por chunk

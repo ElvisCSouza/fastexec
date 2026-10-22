@@ -9,8 +9,8 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"homelab/commander/internal/logger"
-	"homelab/commander/internal/tools"
+	"homelab/fastexec/internal/logger"
+	"homelab/fastexec/internal/tools"
 )
 
 type JSONRPCRequest struct {

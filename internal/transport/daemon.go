@@ -7,7 +7,7 @@ import (
 	"net"
 	"time"
 
-	"homelab/commander/internal/logger"
+	"homelab/fastexec/internal/logger"
 )
 
 const (

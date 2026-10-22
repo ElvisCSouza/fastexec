@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"homelab/commander/internal/transport"
+	"homelab/fastexec/internal/transport"
 )
 
 type SqlArgs struct {

@@ -6,10 +6,10 @@ import (
 	"strconv"
 	"strings"
 
-	"homelab/commander/internal/logger"
-	"homelab/commander/internal/mcp"
-	"homelab/commander/internal/tools"
-	"homelab/commander/internal/transport"
+	"homelab/fastexec/internal/logger"
+	"homelab/fastexec/internal/mcp"
+	"homelab/fastexec/internal/tools"
+	"homelab/fastexec/internal/transport"
 )
 
 func main() {

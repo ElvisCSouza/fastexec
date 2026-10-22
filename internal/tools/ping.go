@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"homelab/commander/internal/transport"
+	"homelab/fastexec/internal/transport"
 )
 
 type PingArgs struct {

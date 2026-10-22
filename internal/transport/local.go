@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"time"
 
-	"homelab/commander/internal/logger"
+	"homelab/fastexec/internal/logger"
 )
 
 func ExecLocal(cmdStr string, timeout time.Duration) (*ExecResult, error) {
