@@ -1,4 +1,4 @@
-# Commander — MCP Server & CLI Multihost Unificado
+# FastExec — MCP Server & CLI Multihost Unificado
 
 Ponte nativa em Go entre o PC-Elvis (Windows) e a infraestrutura do HomeLab (NoteServer, AX6000, AX3000, Local). Substitui o Desktop-Commander e wrappers PowerShell intermediários.
 
@@ -7,7 +7,7 @@ Ponte nativa em Go entre o PC-Elvis (Windows) e a infraestrutura do HomeLab (Not
 [LLM (Claude / Antigravity)]
        │ (JSON-RPC 2.0 via stdio)
        ▼
-commander.exe (W:\ReposHomeLab\commander\bin\commander.exe)
+fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
        ├── host: "local"      ──> Win32 CreateProcess (sem powershell.exe)
        ├── host: "noteserver" ──> TCP :9142 (Daemon Zig server-exec, ~4ms)
        ├── host: "ax6000"     ──> TCP :9142 (Daemon Zig server-exec aarch64)
@@ -22,7 +22,7 @@ commander.exe (W:\ReposHomeLab\commander\bin\commander.exe)
 | `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo |
 | `get_file` | `host`, `remote_path`, `local_path` | Download determinístico via socket binário direto |
 | `put_file` | `host`, `local_path`, `remote_path` | Upload determinístico chunked via socket binário |
-| `sql` | `host`, `db_path`, `query` | Execução direta de SQLite com saída tabular |
+| `sql` | `host`, `db_path`, `query` | Execução direta de SQLite com saída tabular ou JSON |
 | `job` | `host`, `action`, `cmd`, `id`, `lines` | Gerenciamento de background jobs assíncronos (`start`, `status`, `tail`, `stop`, `list`) |
 | `ping` | `host` | Diagnóstico de latência e saúde de conexão por nó |
 
