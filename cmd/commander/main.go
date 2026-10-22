@@ -9,6 +9,7 @@ import (
 	"homelab/commander/internal/logger"
 	"homelab/commander/internal/mcp"
 	"homelab/commander/internal/tools"
+	"homelab/commander/internal/transport"
 )
 
 func main() {
@@ -36,9 +37,13 @@ func main() {
 		}
 		host := "noteserver"
 		var command string
-		if len(subArgs) >= 2 && !strings.Contains(subArgs[0], " ") && (subArgs[0] == "local" || subArgs[0] == "noteserver" || subArgs[0] == "ax6000" || subArgs[0] == "ax3000") {
-			host = subArgs[0]
-			command = strings.Join(subArgs[1:], " ")
+		if len(subArgs) >= 2 && !strings.Contains(subArgs[0], " ") {
+			if _, err := transport.ResolveHost(subArgs[0]); err == nil {
+				host = subArgs[0]
+				command = strings.Join(subArgs[1:], " ")
+			} else {
+				command = strings.Join(subArgs, " ")
+			}
 		} else {
 			command = strings.Join(subArgs, " ")
 		}

@@ -8,6 +8,8 @@ import (
 type HostTarget struct {
 	Name    string
 	IsLocal bool
+	IsSSH   bool
+	SSHHost string
 	TCPAddr string
 }
 
@@ -19,6 +21,10 @@ var knownHosts = map[string]HostTarget{
 	"servidor":   {Name: "servidor", TCPAddr: "192.168.31.142:9142"},
 	"ax6000":     {Name: "ax6000", TCPAddr: "192.168.31.1:9142"},
 	"ax3000":     {Name: "ax3000", TCPAddr: "192.168.31.34:9142"},
+	// Hosts de trabalho mapeados para SSH BatchMode transparente
+	"vm-ia-core": {Name: "vm-ia-core", IsSSH: true, SSHHost: "vm-ia-core"},
+	"vm-obs-dev": {Name: "vm-obs-dev", IsSSH: true, SSHHost: "vm-obs-dev"},
+	"vm-ia-mssp": {Name: "vm-ia-mssp", IsSSH: true, SSHHost: "vm-ia-mssp"},
 }
 
 func ResolveHost(name string) (HostTarget, error) {
@@ -29,6 +35,13 @@ func ResolveHost(name string) (HostTarget, error) {
 	if target, ok := knownHosts[n]; ok {
 		return target, nil
 	}
+
+	// Prefixo explícito ssh: ex: ssh:servidor ou ssh:usuario@ip
+	if strings.HasPrefix(n, "ssh:") {
+		sshHost := strings.TrimPrefix(n, "ssh:")
+		return HostTarget{Name: name, IsSSH: true, SSHHost: sshHost}, nil
+	}
+
 	// Suporte a IP direto com ou sem porta
 	if strings.Contains(n, ".") {
 		if !strings.Contains(n, ":") {
@@ -36,5 +49,6 @@ func ResolveHost(name string) (HostTarget, error) {
 		}
 		return HostTarget{Name: name, TCPAddr: n}, nil
 	}
-	return HostTarget{}, fmt.Errorf("host desconhecido: '%s' (hosts válidos: local, noteserver, ax6000, ax3000 ou IP)", name)
+
+	return HostTarget{}, fmt.Errorf("host desconhecido: '%s' (hosts válidos: local, noteserver, ax6000, ax3000, vm-ia-core, prefixo ssh:<host> ou IP direto)", name)
 }

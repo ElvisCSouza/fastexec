@@ -67,7 +67,7 @@ var serverTools = []ToolSchema{
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local'"},
+				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:<host>'"},
 				"command":    {Type: "string", Description: "Comando completo a ser executado"},
 				"timeout_ms": {Type: "integer", Description: "Timeout em ms (padrão: 120000)"},
 			},
@@ -76,7 +76,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "sql",
-		Description: "Executa query SQLite diretamente com saída tabular.",
+		Description: "Executa query SQLite diretamente com saída em JSON estruturado (otimizado para LLM).",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{

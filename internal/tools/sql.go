@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"homelab/commander/internal/transport"
 )
@@ -22,7 +23,8 @@ func HandleSql(args SqlArgs) (string, error) {
 	}
 
 	b64Query := base64.StdEncoding.EncodeToString([]byte(args.Query))
-	cmd := fmt.Sprintf("echo '%s' | base64 -d | sqlite3 -header -column '%s'", b64Query, args.Database)
+	// -json por padrão: formato estruturado perfeito para ingestão de LLM sem desperdício de tokens com padding de colunas
+	cmd := fmt.Sprintf("echo '%s' | base64 -d | sqlite3 -json '%s'", b64Query, args.Database)
 
 	res, err := transport.Dispatch(args.Host, cmd, transport.DefaultTimeout)
 	if err != nil {
@@ -33,9 +35,10 @@ func HandleSql(args SqlArgs) (string, error) {
 		return fmt.Sprintf("[SQL Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("sql falhou com código %d", res.ExitCode)
 	}
 
-	if res.Stdout == "" {
-		return "(0 linhas retornadas / query executada com sucesso)", nil
+	trimmed := strings.TrimSpace(res.Stdout)
+	if trimmed == "" {
+		return "[]", nil
 	}
 
-	return res.Stdout, nil
+	return trimmed, nil
 }
