@@ -32,7 +32,7 @@ func main() {
 	switch cmd {
 	case "exec":
 		if len(subArgs) < 1 {
-			fmt.Println("Uso: commander exec [host] <comando>")
+			fmt.Println("Uso: fastexec exec [host] <comando>")
 			os.Exit(1)
 		}
 		host := "noteserver"
@@ -61,7 +61,7 @@ func main() {
 
 	case "get":
 		if len(subArgs) < 1 {
-			fmt.Println("Uso: commander get <remote_path> [local_path] [host]")
+			fmt.Println("Uso: fastexec get <remote_path> [local_path] [host]")
 			os.Exit(1)
 		}
 		remotePath := subArgs[0]
@@ -81,7 +81,7 @@ func main() {
 
 	case "put":
 		if len(subArgs) < 2 {
-			fmt.Println("Uso: commander put <local_path> <remote_path> [host]")
+			fmt.Println("Uso: fastexec put <local_path> <remote_path> [host]")
 			os.Exit(1)
 		}
 		localPath := subArgs[0]
@@ -98,7 +98,7 @@ func main() {
 
 	case "sql":
 		if len(subArgs) < 2 {
-			fmt.Println("Uso: commander sql <database> \"<query>\" [host]")
+			fmt.Println("Uso: fastexec sql <database> \"<query>\" [host]")
 			os.Exit(1)
 		}
 		db := subArgs[0]
@@ -128,7 +128,7 @@ func main() {
 		switch action {
 		case "start":
 			if len(subArgs) < 2 {
-				fmt.Println("Uso: commander job start \"<comando>\" [job_id] [host]")
+				fmt.Println("Uso: fastexec job start \"<comando>\" [job_id] [host]")
 				os.Exit(1)
 			}
 			jobCmd = subArgs[1]

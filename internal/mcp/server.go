@@ -21,9 +21,9 @@ type JSONRPCRequest struct {
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      any    `json:"id,omitempty"`
-	Result  any    `json:"result,omitempty"`
+	JSONRPC string    `json:"jsonrpc"`
+	ID      any       `json:"id,omitempty"`
+	Result  any       `json:"result,omitempty"`
 	Error   *RPCError `json:"error,omitempty"`
 }
 
@@ -69,6 +69,7 @@ var serverTools = []ToolSchema{
 			Properties: map[string]PropertyDef{
 				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:<host>'"},
 				"command":    {Type: "string", Description: "Comando completo a ser executado"},
+				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional)"},
 				"timeout_ms": {Type: "integer", Description: "Timeout em ms (padrão: 120000)"},
 			},
 			Required: []string{"command"},
@@ -264,10 +265,9 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) (result Tool
 }
 
 func (s *Server) Run() error {
-	logger.Info("Iniciando MCP Server 'commander' via stdio...")
+	logger.Info("Iniciando MCP Server 'fastexec' via stdio...")
 	scanner := bufio.NewScanner(os.Stdin)
 
-	// Buffer ampliado para acomodar payloads de arquivos grandes
 	buf := make([]byte, 1024*1024)
 	scanner.Buffer(buf, 16*1024*1024)
 
@@ -287,7 +287,6 @@ func (s *Server) Run() error {
 			continue
 		}
 
-		// Roteamento de métodos MCP
 		switch req.Method {
 		case "initialize":
 			s.writeResponse(JSONRPCResponse{
@@ -299,14 +298,13 @@ func (s *Server) Run() error {
 						"tools": map[string]any{},
 					},
 					"serverInfo": map[string]any{
-						"name":    "commander",
+						"name":    "fastexec",
 						"version": "1.0.0",
 					},
 				},
 			})
 
 		case "notifications/initialized":
-			// Apenas acknowledge interno, sem resposta
 			logger.Info("Cliente MCP conectado e inicializado")
 
 		case "ping":
@@ -349,7 +347,6 @@ func (s *Server) Run() error {
 			}(req)
 
 		default:
-			// Métodos desconhecidos
 			if req.ID != nil {
 				s.writeResponse(JSONRPCResponse{
 					JSONRPC: "2.0",

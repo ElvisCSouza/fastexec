@@ -10,6 +10,7 @@ import (
 type ExecArgs struct {
 	Host      string `json:"host"`
 	Command   string `json:"command"`
+	Cwd       string `json:"cwd,omitempty"`
 	TimeoutMs int    `json:"timeout_ms,omitempty"`
 }
 
@@ -23,7 +24,7 @@ func HandleExec(args ExecArgs) (string, error) {
 		timeout = time.Duration(args.TimeoutMs) * time.Millisecond
 	}
 
-	res, err := transport.Dispatch(args.Host, args.Command, timeout)
+	res, err := transport.DispatchWithCwd(args.Host, args.Command, args.Cwd, timeout)
 	if err != nil {
 		return "", err
 	}

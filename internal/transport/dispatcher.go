@@ -46,15 +46,23 @@ func ExecSSH(sshHost string, cmdStr string, timeout time.Duration) (*ExecResult,
 }
 
 func Dispatch(hostName string, cmd string, timeout time.Duration) (*ExecResult, error) {
+	return DispatchWithCwd(hostName, cmd, "", timeout)
+}
+
+func DispatchWithCwd(hostName string, cmd string, cwd string, timeout time.Duration) (*ExecResult, error) {
 	target, err := ResolveHost(hostName)
 	if err != nil {
 		return nil, err
 	}
 	if target.IsLocal {
-		return ExecLocal(cmd, timeout)
+		return ExecLocalWithCwd(cmd, cwd, timeout)
+	}
+	effectiveCmd := cmd
+	if cwd != "" {
+		effectiveCmd = "cd \"" + cwd + "\" && " + cmd
 	}
 	if target.IsSSH {
-		return ExecSSH(target.SSHHost, cmd, timeout)
+		return ExecSSH(target.SSHHost, effectiveCmd, timeout)
 	}
-	return ExecDaemon(target.TCPAddr, cmd, timeout)
+	return ExecDaemon(target.TCPAddr, effectiveCmd, timeout)
 }
