@@ -50,11 +50,11 @@ type ErrorRecord struct {
 }
 
 func GetDB() (*sql.DB, error) {
-	dbPath := getDBPath()
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("banco de telemetria ainda não existe em %s", dbPath)
+	Init()
+	if dbInstance == nil {
+		return nil, fmt.Errorf("não foi possível inicializar banco de telemetria")
 	}
-	return sql.Open("sqlite", dbPath)
+	return dbInstance, nil
 }
 
 func ResetTelemetry() error {
@@ -79,7 +79,6 @@ func RenderStats(filter StatsFilter) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer db.Close()
 
 	whereClause := ""
 	if filter.Today {
