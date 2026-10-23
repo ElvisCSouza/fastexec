@@ -62,8 +62,8 @@ func TestCleanOutputCapsLongLines(t *testing.T) {
 
 func TestFormatExecResultNoResultOnExit1Empty(t *testing.T) {
 	out, err := formatExecResult("findstr x", transport.ExecResult{ExitCode: 1})
-	if out != NoResultText || err == nil {
-		t.Fatalf("got (%q, %v), want (%q, erro)", out, err, NoResultText)
+	if out != NoResultText || err != nil {
+		t.Fatalf("got (%q, %v), want (%q, nil)", out, err, NoResultText)
 	}
 	if !IsNoResult(out) {
 		t.Fatalf("IsNoResult deveria reconhecer o texto de sem resultado")

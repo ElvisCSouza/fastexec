@@ -48,7 +48,7 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 
 	if res.ExitCode != 0 {
 		if res.ExitCode == 1 && stdout == "" && stderr == "" {
-			return NoResultText, fmt.Errorf("comando falhou com código 1")
+			return NoResultText, nil
 		}
 		errMsg := stderr
 		if errMsg == "" {

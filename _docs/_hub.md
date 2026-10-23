@@ -38,7 +38,7 @@ Aplicado a stdout e stderr, sempre, antes de montar a resposta:
 1. Remove sequências ANSI (CSI e OSC).
 2. Linhas consecutivas idênticas viram `<linha> ×N` (CRLF preservado).
 3. Linha com mais de 400 caracteres vira `<400 chars>…(+N chars)`.
-4. Exit 1 com stdout e stderr vazios responde `sem resultado (exit 1)`. Demais exits não-zero mantêm `[exit N] ...`.
+4. Exit 1 com stdout e stderr vazios responde `sem resultado (exit 1)` com `isError=false` e é gravado como sucesso (`success=1`, `no_result=1`). Exit 1 com alguma saída e demais exits não-zero mantêm `[exit N] ...` com `isError=true` e `success=0`.
 5. Teto: saída limpa acima de 256 KB devolve os primeiros 16 KB e a linha final `[truncado: <total> bytes; só os primeiros 16 KB foram devolvidos]`. Até 256 KB nada é cortado.
 
 Saída limpa (sem ANSI, sem repetição, sem linha longa, até 256 KB) é idêntica byte a byte à saída bruta.
