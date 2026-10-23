@@ -321,6 +321,8 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) (result Tool
 		ExitCode:       exitCode,
 		ErrorMessage:   errMsg,
 		CommandSummary: summary,
+		Truncated:      name == "exec" && tools.IsTruncated(outText),
+		NoResult:       name == "exec" && tools.IsNoResult(outText),
 	})
 
 	return ToolCallResult{

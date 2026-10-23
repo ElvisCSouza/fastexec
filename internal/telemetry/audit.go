@@ -26,6 +26,8 @@ type AuditEntry struct {
 	ExitCode       int
 	ErrorMessage   string
 	CommandSummary string
+	Truncated      bool
+	NoResult       bool
 }
 
 var (
@@ -78,32 +80,56 @@ func Init() {
 			_, _ = dbInstance.Exec(p)
 		}
 
-		createTableSQL := `
-		CREATE TABLE IF NOT EXISTS audit (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-			session_id TEXT,
-			tool TEXT NOT NULL,
-			host TEXT,
-			duration_ms INTEGER,
-			bytes_in INTEGER,
-			bytes_out INTEGER,
-			est_tokens_in INTEGER,
-			est_tokens_out INTEGER,
-			success INTEGER,
-			exit_code INTEGER,
-			error_message TEXT,
-			command_summary TEXT
-		);
-		CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp);
-		CREATE INDEX IF NOT EXISTS idx_audit_tool ON audit(tool);
-		CREATE INDEX IF NOT EXISTS idx_audit_success ON audit(success);
-		`
-		_, _ = dbInstance.Exec(createTableSQL)
+		setupAuditSchema(dbInstance)
 
 		auditQueue = make(chan AuditEntry, 2048)
 		go worker()
 	})
+}
+
+func setupAuditSchema(db *sql.DB) {
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS audit (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+		session_id TEXT,
+		tool TEXT NOT NULL,
+		host TEXT,
+		duration_ms INTEGER,
+		bytes_in INTEGER,
+		bytes_out INTEGER,
+		est_tokens_in INTEGER,
+		est_tokens_out INTEGER,
+		success INTEGER,
+		exit_code INTEGER,
+		error_message TEXT,
+		command_summary TEXT,
+		truncated INTEGER NOT NULL DEFAULT 0,
+		no_result INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_audit_tool ON audit(tool);
+	CREATE INDEX IF NOT EXISTS idx_audit_success ON audit(success);
+	`
+	_, _ = db.Exec(createTableSQL)
+
+	existing := map[string]bool{}
+	if rows, err := db.Query("PRAGMA table_info(audit);"); err == nil {
+		for rows.Next() {
+			var cid, notNull, pk int
+			var name, colType string
+			var dflt sql.NullString
+			if rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk) == nil {
+				existing[name] = true
+			}
+		}
+		rows.Close()
+	}
+	for _, col := range []string{"truncated", "no_result"} {
+		if !existing[col] {
+			_, _ = db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s INTEGER NOT NULL DEFAULT 0;", col))
+		}
+	}
 }
 
 func worker() {
@@ -116,25 +142,32 @@ func insertEntry(e AuditEntry) {
 	if dbInstance == nil {
 		return
 	}
+	writeEntry(dbInstance, e)
+}
 
-	successInt := 0
-	if e.Success {
-		successInt = 1
-	}
-
+func writeEntry(db *sql.DB, e AuditEntry) {
 	query := `
 	INSERT INTO audit (
 		session_id, tool, host, duration_ms,
 		bytes_in, bytes_out, est_tokens_in, est_tokens_out,
-		success, exit_code, error_message, command_summary
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		success, exit_code, error_message, command_summary,
+		truncated, no_result
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
-	_, _ = dbInstance.Exec(
+	_, _ = db.Exec(
 		query,
 		e.SessionID, e.Tool, e.Host, e.DurationMs,
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
-		successInt, e.ExitCode, e.ErrorMessage, e.CommandSummary,
+		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
+		boolInt(e.Truncated), boolInt(e.NoResult),
 	)
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // Record registra uma execução de forma assíncrona (zero overhead no caminho crítico).

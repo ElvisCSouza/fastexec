@@ -39,25 +39,36 @@ func HandleExec(args ExecArgs) (string, error) {
 		return "", err
 	}
 
+	return formatExecResult(args.Command, *res)
+}
+
+func formatExecResult(command string, res transport.ExecResult) (string, error) {
+	stdout := cleanOutput(res.Stdout)
+	stderr := cleanOutput(res.Stderr)
+
 	if res.ExitCode != 0 {
-		errMsg := res.Stderr
+		if res.ExitCode == 1 && stdout == "" && stderr == "" {
+			return NoResultText, fmt.Errorf("comando falhou com código 1")
+		}
+		errMsg := stderr
 		if errMsg == "" {
-			errMsg = res.Stdout
+			errMsg = stdout
 		}
 		if errMsg == "" {
 			errMsg = fmt.Sprintf("comando falhou com exit code %d (sem saída)", res.ExitCode)
 		}
-		if isWindowsCmdletMismatch(args.Command, errMsg) {
+		errMsg = capOutput(errMsg)
+		if isWindowsCmdletMismatch(command, errMsg) {
 			errMsg += "\n[FastExec Hint] O host 'local' (Windows) executa via cmd.exe nativo por performance. Para cmdlets PowerShell invoque 'powershell -NoProfile -Command ...'; para listar/manipular arquivos use a tool nativa 'file_ops'."
 		}
 		return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), fmt.Errorf("comando falhou com código %d", res.ExitCode)
 	}
 
-	if res.Stdout == "" && res.Stderr != "" {
-		return res.Stderr, nil
+	if stdout == "" && stderr != "" {
+		return capOutput(stderr), nil
 	}
 
-	return res.Stdout, nil
+	return capOutput(stdout), nil
 }
 
 func isWindowsCmdletMismatch(cmd string, errMsg string) bool {

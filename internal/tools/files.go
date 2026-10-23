@@ -110,7 +110,7 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 				return "", err
 			}
 		}
-		return fmt.Sprintf("Arquivo local gravado com sucesso: %s (%d bytes)", args.Path, len(contentBytes)), nil
+		return okReply(int64(len(contentBytes))), nil
 	}
 
 	// Remoto via daemon chunked
@@ -159,7 +159,7 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 		}
 	}
 
-	return fmt.Sprintf("Arquivo gravado em %s:%s (%d bytes)", target.Name, normalizedPath, len(contentBytes)), nil
+	return okReply(int64(len(contentBytes))), nil
 }
 
 func HandleGetFile(args GetFileArgs) (string, error) {
@@ -185,7 +185,7 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("[get_file] Sucesso: %s:%s -> %s (%.1f KB via socket stream)", target.Name, args.RemotePath, localPath, float64(written)/1024.0), nil
+	return okReply(written), nil
 }
 
 func HandlePutFile(args PutFileArgs) (string, error) {
@@ -211,7 +211,7 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 		if err := os.WriteFile(args.RemotePath, data, 0644); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("[put_file] Sucesso local: %s -> %s (%.1f KB)", args.LocalPath, args.RemotePath, float64(fileInfo.Size())/1024.0), nil
+		return okReply(fileInfo.Size()), nil
 	}
 
 	// Remoto via Streaming Binário Direto (Zero-Copy Socket)
@@ -219,5 +219,9 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 		return "", err
 	}
 
-	return fmt.Sprintf("[put_file] Sucesso: %s -> %s:%s (%.1f KB via socket stream)", args.LocalPath, target.Name, args.RemotePath, float64(fileInfo.Size())/1024.0), nil
+	return okReply(fileInfo.Size()), nil
+}
+
+func okReply(n int64) string {
+	return fmt.Sprintf("ok %d bytes", n)
 }

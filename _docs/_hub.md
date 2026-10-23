@@ -19,9 +19,9 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
 |---|---|---|
 | `exec` | `host`, `cmd`, `timeout_ms` | Execução síncrona sem escape de aspas ou pipes |
 | `read_file` | `host`, `path`, `offset`, `limit` | Leitura determinística de arquivo local ou remoto |
-| `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo |
-| `get_file` | `host`, `remote_path`, `local_path` | Download determinístico via socket binário direto |
-| `put_file` | `host`, `local_path`, `remote_path` | Upload determinístico chunked via socket binário |
+| `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo. Retorna `ok N bytes` |
+| `get_file` | `host`, `remote_path`, `local_path` | Download determinístico via socket binário direto. Retorna `ok N bytes` |
+| `put_file` | `host`, `local_path`, `remote_path` | Upload determinístico chunked via socket binário. Retorna `ok N bytes` |
 | `sql` | `host`, `db_path`, `query` | Execução direta de SQLite com saída tabular ou JSON |
 | `job` | `host`, `action`, `cmd`, `id`, `lines` | Gerenciamento de background jobs assíncronos (`start`, `status`, `tail`, `stop`, `list`) |
 | `ping` | `host` | Diagnóstico de latência e saúde de conexão por nó |
@@ -31,6 +31,19 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
 - `ax6000`: `192.168.31.1:9142`
 - `ax3000`: `192.168.31.34:9142`
 - `local`: `PC-Elvis` (Win32 direto)
+
+## Retorno da tool `exec` (`internal/tools/outclean.go`, `formatExecResult`)
+
+Aplicado a stdout e stderr, sempre, antes de montar a resposta:
+1. Remove sequências ANSI (CSI e OSC).
+2. Linhas consecutivas idênticas viram `<linha> ×N` (CRLF preservado).
+3. Linha com mais de 400 caracteres vira `<400 chars>…(+N chars)`.
+4. Exit 1 com stdout e stderr vazios responde `sem resultado (exit 1)`. Demais exits não-zero mantêm `[exit N] ...`.
+5. Teto: saída limpa acima de 256 KB devolve os primeiros 16 KB e a linha final `[truncado: <total> bytes; só os primeiros 16 KB foram devolvidos]`. Até 256 KB nada é cortado.
+
+Saída limpa (sem ANSI, sem repetição, sem linha longa, até 256 KB) é idêntica byte a byte à saída bruta.
+
+Telemetria (`internal/telemetry`): tabela `audit` ganhou `truncated` e `no_result` (migração `setupAuditSchema`, `ALTER TABLE ... ADD COLUMN` só se faltar). `RenderStats` mostra por ferramenta P50/P90/P99/máximo de `bytes_out`, contagem de truncados e de "sem resultado", e os 5 maiores retornos do período (comando limitado a 60 caracteres).
 
 ## Módulo `internal/env`: Montagem de Ambiente Windows
 

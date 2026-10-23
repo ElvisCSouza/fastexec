@@ -3,6 +3,7 @@ package telemetry
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -79,7 +80,10 @@ func RenderStats(filter StatsFilter) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return renderStats(db, filter)
+}
 
+func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 	whereClause := ""
 	if filter.Today {
 		whereClause = "WHERE date(timestamp, 'localtime') = date('now', 'localtime')"
@@ -105,6 +109,16 @@ func RenderStats(filter StatsFilter) (string, error) {
 	tools, err := queryTools(db, whereClause)
 	if err != nil {
 		return "", fmt.Errorf("erro consultando ferramentas: %w", err)
+	}
+
+	toolBytes, err := queryToolBytes(db, whereClause)
+	if err != nil {
+		return "", fmt.Errorf("erro consultando bytes por ferramenta: %w", err)
+	}
+
+	topReturns, err := queryTopReturns(db, whereClause, 5)
+	if err != nil {
+		return "", fmt.Errorf("erro consultando maiores retornos: %w", err)
 	}
 
 	// 3. Registros de Erro
@@ -147,6 +161,29 @@ func RenderStats(filter StatsFilter) (string, error) {
 		for _, t := range tools {
 			fmt.Fprintf(tw, "%s\t%d\t%d\t%.1fms\t~%d\t~%d\n",
 				t.Tool, t.Calls, t.Errors, t.AvgDuration, t.TokensIn, t.TokensOut)
+		}
+		tw.Flush()
+		sb.WriteString("\n")
+
+		sb.WriteString("--------------------------------------------------------------------------------\n")
+		sb.WriteString("RETORNO POR FERRAMENTA (bytes devolvidos ao modelo)\n")
+		sb.WriteString("--------------------------------------------------------------------------------\n")
+		tw = tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
+		fmt.Fprintf(tw, "FERRAMENTA\tP50\tP90\tP99\tMÁXIMO\tTRUNCADOS\tSEM RESULTADO\n")
+		for _, t := range toolBytes {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\n",
+				t.Tool, formatBytes(t.P50), formatBytes(t.P90), formatBytes(t.P99), formatBytes(t.Max), t.Truncated, t.NoResult)
+		}
+		tw.Flush()
+		sb.WriteString("\n")
+
+		sb.WriteString("--------------------------------------------------------------------------------\n")
+		sb.WriteString("MAIORES RETORNOS DO PERÍODO\n")
+		sb.WriteString("--------------------------------------------------------------------------------\n")
+		tw = tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
+		fmt.Fprintf(tw, "DATA/HORA\tTOOL\tBYTES\tCOMANDO / ALVO\n")
+		for _, r := range topReturns {
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Timestamp, r.Tool, formatBytes(r.Bytes), truncRunes(r.CommandSummary, 60))
 		}
 		tw.Flush()
 		sb.WriteString("\n")
@@ -285,6 +322,125 @@ func queryErrors(db *sql.DB, whereClause string, limit int) ([]ErrorRecord, erro
 		}
 	}
 	return list, nil
+}
+
+type ToolBytes struct {
+	Tool      string
+	P50       int64
+	P90       int64
+	P99       int64
+	Max       int64
+	Truncated int
+	NoResult  int
+}
+
+type TopReturn struct {
+	Timestamp      string
+	Tool           string
+	CommandSummary string
+	Bytes          int64
+}
+
+func queryToolBytes(db *sql.DB, whereClause string) ([]ToolBytes, error) {
+	q := fmt.Sprintf(`
+		SELECT tool, bytes_out, truncated, no_result
+		FROM audit %s
+		ORDER BY tool, bytes_out;
+	`, whereClause)
+
+	rows, err := db.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type acc struct {
+		values    []int64
+		truncated int
+		noResult  int
+	}
+	byTool := map[string]*acc{}
+	var order []string
+	for rows.Next() {
+		var tool string
+		var b int64
+		var tr, nr int
+		if err := rows.Scan(&tool, &b, &tr, &nr); err != nil {
+			continue
+		}
+		a, ok := byTool[tool]
+		if !ok {
+			a = &acc{}
+			byTool[tool] = a
+			order = append(order, tool)
+		}
+		a.values = append(a.values, b)
+		a.truncated += tr
+		a.noResult += nr
+	}
+
+	list := make([]ToolBytes, 0, len(order))
+	for _, tool := range order {
+		a := byTool[tool]
+		list = append(list, ToolBytes{
+			Tool:      tool,
+			P50:       percentile(a.values, 0.50),
+			P90:       percentile(a.values, 0.90),
+			P99:       percentile(a.values, 0.99),
+			Max:       a.values[len(a.values)-1],
+			Truncated: a.truncated,
+			NoResult:  a.noResult,
+		})
+	}
+	return list, nil
+}
+
+func queryTopReturns(db *sql.DB, whereClause string, limit int) ([]TopReturn, error) {
+	q := fmt.Sprintf(`
+		SELECT strftime('%%d/%%m %%H:%%M:%%S', timestamp, 'localtime'), tool, COALESCE(command_summary, '-'), bytes_out
+		FROM audit %s
+		ORDER BY bytes_out DESC
+		LIMIT ?;
+	`, whereClause)
+
+	rows, err := db.Query(q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []TopReturn
+	for rows.Next() {
+		var r TopReturn
+		if err := rows.Scan(&r.Timestamp, &r.Tool, &r.CommandSummary, &r.Bytes); err == nil {
+			list = append(list, r)
+		}
+	}
+	return list, nil
+}
+
+// percentile usa o método nearest-rank sobre valores já ordenados crescentemente.
+func percentile(sorted []int64, p float64) int64 {
+	n := len(sorted)
+	if n == 0 {
+		return 0
+	}
+	idx := int(math.Ceil(p*float64(n))) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= n {
+		idx = n - 1
+	}
+	return sorted[idx]
+}
+
+func truncRunes(s string, maxLen int) string {
+	r := []rune(s)
+	if len(r) <= maxLen {
+		return s
+	}
+	return string(r[:maxLen-3]) + "..."
 }
 
 func calculateP95(durations []int64) int64 {
