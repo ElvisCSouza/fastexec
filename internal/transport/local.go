@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"syscall"
 	"time"
 
+	"homelab/fastexec/internal/env"
 	"homelab/fastexec/internal/logger"
 )
 
@@ -41,21 +41,23 @@ func ExecLocalWithInput(cmdStr string, cwd string, input string, timeout time.Du
 		cmd.Stdin = strings.NewReader(input)
 	}
 
+	// Monta o ambiente a partir do registro do Windows (Machine + User) e injeta Git\usr\bin no PATH
+	envList := env.MountForCurrentProcess()
+
 	// Injeta Git\usr\bin no PATH para comandos Unix comuns (cp, mv, rm, ls, cat, grep) funcionarem nativamente no Windows
 	gitUsrBin := `C:\Program Files\Git\usr\bin`
-	env := os.Environ()
 	pathUpdated := false
-	for i, e := range env {
+	for i, e := range envList {
 		if strings.HasPrefix(strings.ToUpper(e), "PATH=") {
-			env[i] = e + ";" + gitUsrBin
+			envList[i] = e + ";" + gitUsrBin
 			pathUpdated = true
 			break
 		}
 	}
 	if !pathUpdated {
-		env = append(env, "PATH="+gitUsrBin)
+		envList = append(envList, "PATH="+gitUsrBin)
 	}
-	cmd.Env = env
+	cmd.Env = envList
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf

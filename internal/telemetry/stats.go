@@ -13,10 +13,10 @@ import (
 )
 
 type StatsFilter struct {
-	Today       bool
-	OnlyErrors  bool
-	OnlyTools   bool
-	ResetDB     bool
+	Today      bool
+	OnlyErrors bool
+	OnlyTools  bool
+	ResetDB    bool
 }
 
 type GlobalSummary struct {

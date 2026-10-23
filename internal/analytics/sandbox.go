@@ -15,7 +15,7 @@ import (
 const SessionsRoot = `W:\Data\sessions`
 
 var (
-	sessionIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+	sessionIDRegex    = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 	forbiddenKeywords = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\bATTACH\b`),
 		regexp.MustCompile(`(?i)\bDETACH\b`),

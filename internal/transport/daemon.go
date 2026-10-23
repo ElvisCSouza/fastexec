@@ -13,14 +13,14 @@ import (
 )
 
 const (
-	Magic            uint16 = 0x5345 // Alias para retrocompatibilidade
-	MagicExec        uint16 = 0x5345 // 'SE'
-	MagicPut         uint16 = 0x5350 // 'SP'
-	MagicGet         uint16 = 0x5347 // 'SG'
-	DefaultTimeout          = 300 * time.Second // 5 minutos de teto para permitir comandos pesados síncronos sem sleep
-	DialTimeout             = 3 * time.Second
-	MaxCmdLen               = 1024 * 1024      // 1 MB
-	MaxOutputLen            = 16 * 1024 * 1024 // 16 MB
+	Magic          uint16 = 0x5345            // Alias para retrocompatibilidade
+	MagicExec      uint16 = 0x5345            // 'SE'
+	MagicPut       uint16 = 0x5350            // 'SP'
+	MagicGet       uint16 = 0x5347            // 'SG'
+	DefaultTimeout        = 300 * time.Second // 5 minutos de teto para permitir comandos pesados síncronos sem sleep
+	DialTimeout           = 3 * time.Second
+	MaxCmdLen             = 1024 * 1024      // 1 MB
+	MaxOutputLen          = 16 * 1024 * 1024 // 16 MB
 )
 
 type ExecResult struct {
