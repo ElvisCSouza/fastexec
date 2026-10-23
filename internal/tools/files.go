@@ -180,32 +180,12 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 		localPath = filepath.Base(args.RemotePath)
 	}
 
-	// Garantir diretório local
-	localDir := filepath.Dir(localPath)
-	if localDir != "" && localDir != "." {
-		_ = os.MkdirAll(localDir, 0755)
-	}
-
-	cmd := fmt.Sprintf("if [ ! -f '%s' ]; then echo '__FILE_NOT_FOUND__' >&2; exit 1; fi; base64 -w 0 '%s'", args.RemotePath, args.RemotePath)
-	res, err := transport.ExecDaemon(target.TCPAddr, cmd, transport.DefaultTimeout)
+	written, err := transport.GetFileDaemon(target.TCPAddr, args.RemotePath, localPath, transport.DefaultTimeout)
 	if err != nil {
 		return "", err
 	}
-	if res.ExitCode != 0 {
-		return "", fmt.Errorf("arquivo remoto não encontrado ou inacessível: %s", strings.TrimSpace(res.Stderr))
-	}
 
-	rawB64 := strings.TrimSpace(res.Stdout)
-	data, err := base64.StdEncoding.DecodeString(rawB64)
-	if err != nil {
-		return "", fmt.Errorf("erro decodificando dados base64: %w", err)
-	}
-
-	if err := os.WriteFile(localPath, data, 0644); err != nil {
-		return "", fmt.Errorf("erro gravando arquivo local '%s': %w", localPath, err)
-	}
-
-	return fmt.Sprintf("[get_file] Sucesso: %s:%s -> %s (%.1f KB)", target.Name, args.RemotePath, localPath, float64(len(data))/1024.0), nil
+	return fmt.Sprintf("[get_file] Sucesso: %s:%s -> %s (%.1f KB via socket stream)", target.Name, args.RemotePath, localPath, float64(written)/1024.0), nil
 }
 
 func HandlePutFile(args PutFileArgs) (string, error) {
@@ -213,15 +193,31 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 		return "", fmt.Errorf("parâmetros 'local_path' e 'remote_path' são obrigatórios")
 	}
 
-	data, err := os.ReadFile(args.LocalPath)
+	target, err := transport.ResolveHost(args.Host)
+	if err != nil {
+		return "", err
+	}
+
+	fileInfo, err := os.Stat(args.LocalPath)
 	if err != nil {
 		return "", fmt.Errorf("arquivo local não encontrado: %w", err)
 	}
 
-	return HandleWriteFile(WriteFileArgs{
-		Host:    args.Host,
-		Path:    args.RemotePath,
-		Content: string(data),
-		Atomic:  true,
-	})
+	if target.IsLocal {
+		data, err := os.ReadFile(args.LocalPath)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(args.RemotePath, data, 0644); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("[put_file] Sucesso local: %s -> %s (%.1f KB)", args.LocalPath, args.RemotePath, float64(fileInfo.Size())/1024.0), nil
+	}
+
+	// Remoto via Streaming Binário Direto (Zero-Copy Socket)
+	if err := transport.PutFileDaemon(target.TCPAddr, args.LocalPath, args.RemotePath, transport.DefaultTimeout); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("[put_file] Sucesso: %s -> %s:%s (%.1f KB via socket stream)", args.LocalPath, target.Name, args.RemotePath, float64(fileInfo.Size())/1024.0), nil
 }
