@@ -8,9 +8,6 @@ import (
 	"homelab/fastexec/internal/transport"
 )
 
-// localJobWaitMax mantém o `wait` abaixo do limite do cliente MCP (~4 min): passou disso, responde "ainda roda".
-const localJobWaitMax = 200 * time.Second
-
 func jobLabel(m transport.LocalJobMeta) string {
 	s := m.Command
 	if m.Argv != nil {
@@ -95,14 +92,14 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		return fmt.Sprintf("[job] %s encerrado (%s); árvore de processos terminada pelo Job Object.", j.Meta.ID, j.State), nil
 
 	case "wait":
-		j, finished, err := transport.LocalJobWait(args.JobID, localJobWaitMax)
+		j, finished, err := transport.LocalJobWait(args.JobID, jobWaitMax)
 		if err != nil {
 			return "", err
 		}
 		tail, _ := transport.TailLocalJob(args.JobID, 20)
 		tail = capOutput(cleanOutput(tail))
 		if !finished {
-			return fmt.Sprintf("[job %s ainda em execução após %s; chame 'wait' de novo ou use 'tail']\n%s", j.Meta.ID, human(localJobWaitMax), tail), nil
+			return fmt.Sprintf("[job %s ainda em execução após %s; chame 'wait' de novo ou use 'tail']\n%s", j.Meta.ID, human(jobWaitMax), tail), nil
 		}
 		return fmt.Sprintf("[job %s finalizado: %s]\n%s", j.Meta.ID, j.State, tail), nil
 

@@ -17,7 +17,7 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
 ## Ferramentas Expostas ao LLM
 | Tool | Parâmetros | Descrição |
 |---|---|---|
-| `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona (`timeout_ms` padrão 120 s, teto 210 s). `command` é linha de shell; `argv` roda sem shell (ver seção do host `local`) |
+| `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona (`timeout_ms` padrão 200 s, teto 210 s). `command` é linha de shell; `argv` roda sem shell (ver seção do host `local`) |
 | `read_file` | `host`, `path`, `offset`, `limit` | Leitura determinística de arquivo local ou remoto |
 | `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo. Retorna `ok N bytes` |
 | `get_file` | `host`, `remote_path`, `local_path` | Download determinístico via socket binário direto. Retorna `ok N bytes` |
@@ -96,7 +96,7 @@ Para o que precisa ficar no ar além da chamada (dev server, watcher, túnel) e 
 | Higiene | no máximo 5 jobs ativos (o 6º falha dizendo qual parar); vida máxima de 12 h desde a criação (encerrado ao consultar); arquivos de jobs finalizados são apagados após 7 dias | nada fica no ar para sempre |
 | Comando que falha na hora | o `start` não falha: o job aparece `EXITED` e o `tail` mostra a mensagem | o agente vê o erro real |
 
-Timeout do `exec`: `DefaultTimeout` é 120 s e `timeout_ms` acima de 210 s é limitado a 210 s (`MaxClientTimeoutMs`), porque o cliente MCP corta chamadas pendentes em ~4 min. Quem estoura recebe `[timeout após X.Xs; árvore de processos encerrada]`, a saída parcial e a orientação de usar `job`. Limitação conhecida: o `wait` dos hosts Linux ainda usa 600 s e portanto pode ser cortado pelo cliente.
+Timeout do `exec`: `DefaultTimeout` é 200 s e `timeout_ms` acima de 210 s é limitado a 210 s (`MaxClientTimeoutMs`), porque o cliente MCP corta chamadas pendentes em ~240 s; o padrão deixa 40 s de margem e não derruba operações rotineiras do homelab (docker, restic, apt). Quem estoura recebe `[timeout após X.Xs; árvore de processos encerrada]`, a saída parcial e a orientação de usar `job`. O `wait` também espera no máximo 200 s (`jobWaitMax`), no local e nos hosts Linux: se o job segue ativo no prazo, a resposta é `[job X ainda em execução após 200s; chame 'wait' de novo ou use 'tail']` seguida do fim do log. No Linux o laço é limitado no próprio host remoto, então nenhum comando fica pendurado.
 
 Testes: `internal/transport/localjob_test.go` (ciclo start, status, tail, stop sem órfão; job que sobrevive a um `exec`; limite de 5; vida máxima; término espontâneo; comando que falha na hora; id e cwd) e `internal/tools/job_local_test.go`, `internal/tools/exec_timeout_test.go`.
 

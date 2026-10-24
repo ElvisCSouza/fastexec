@@ -75,7 +75,7 @@ var serverTools = []ToolSchema{
 				"argv":       {Type: "array", Description: "Alternativa sem shell: [executável, arg1, arg2...]. Nenhum metacaractere é interpretado. Informe argv OU command", Items: &PropertyDef{Type: "string"}},
 				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional)"},
 				"input":      {Type: "string", Description: "Conteúdo enviado diretamente para o stdin do processo (opcional, evita criar arquivos temporários)"},
-				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 120000; máximo: 210000, valores maiores são limitados porque o cliente MCP corta a chamada em ~4 min). Ao estourar, a árvore de processos é encerrada. Comando que precisa de mais tempo: tool 'job'"},
+				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 200000; máximo: 210000, valores maiores são limitados porque o cliente MCP corta a chamada em ~4 min). Ao estourar, a árvore de processos é encerrada. Comando que precisa de mais tempo: tool 'job'"},
 			},
 		},
 	},

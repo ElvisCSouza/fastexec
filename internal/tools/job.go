@@ -20,6 +20,13 @@ type JobArgs struct {
 	Lines   int      `json:"lines,omitempty"`
 }
 
+// jobWaitMax mantém o `wait` (local e Linux) abaixo do limite do cliente MCP (~4 min): passou disso, responde que o job
+// segue ativo em vez de deixar o transporte JSON-RPC cair. Variável só para os testes encurtarem.
+var jobWaitMax = 200 * time.Second
+
+// waitTimeoutMarker é impresso pelo laço remoto quando o prazo do wait acaba com o job ainda ativo.
+const waitTimeoutMarker = "__FASTEXEC_WAIT_TIMEOUT__"
+
 func sanitizeUnit(id string) string {
 	s := strings.TrimSpace(id)
 	if !strings.HasPrefix(s, "job-") {
@@ -85,16 +92,22 @@ func HandleJob(args JobArgs) (string, error) {
 		if args.JobID == "" {
 			return "", fmt.Errorf("ação 'wait' requer o parâmetro 'job_id'")
 		}
-		// Aguarda o processo terminar no SO e devolve o log final instantaneamente no milissegundo do término
-		cmd := fmt.Sprintf("%s while systemctl --user is-active --quiet '%s.service'; do sleep 0.5; done; journalctl --user-unit='%s.service' -n 50 --no-pager",
-			envPrefix, unit, unit)
-		res, err := transport.Dispatch(targetHost, cmd, 600*time.Second)
+		// Aguarda o processo terminar no SO e devolve o log final no instante do término. O laço é limitado no próprio host
+		// remoto (jobWaitMax): se o job ainda roda no prazo, imprime o marcador e segue para o log, em vez de o transporte
+		// estourar o limite do cliente MCP.
+		cmd := fmt.Sprintf("%s end=$(( $(date +%%s) + %d )); while systemctl --user is-active --quiet '%s.service'; do if [ $(date +%%s) -ge $end ]; then echo %s; break; fi; sleep 0.5; done; journalctl --user-unit='%s.service' -n 50 --no-pager",
+			envPrefix, int(jobWaitMax/time.Second), unit, waitTimeoutMarker, unit)
+		res, err := transport.Dispatch(targetHost, cmd, jobWaitMax+5*time.Second)
 		if err != nil {
 			return "", err
 		}
 		out := res.Stdout
 		if out == "" {
 			out = res.Stderr
+		}
+		if strings.Contains(out, waitTimeoutMarker) {
+			out = strings.TrimSpace(strings.ReplaceAll(out, waitTimeoutMarker, ""))
+			return fmt.Sprintf("[job %s ainda em execução após %s; chame 'wait' de novo ou use 'tail']\n%s", unit, human(jobWaitMax), out), nil
 		}
 		return fmt.Sprintf("[job %s finalizado]\n%s", unit, out), nil
 
