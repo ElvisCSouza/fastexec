@@ -11,11 +11,13 @@ import (
 )
 
 type JobArgs struct {
-	Host    string `json:"host"`
-	Action  string `json:"action"` // start, status, list, tail, stop, wait
-	Command string `json:"command,omitempty"`
-	JobID   string `json:"job_id,omitempty"`
-	Lines   int    `json:"lines,omitempty"`
+	Host    string   `json:"host"`
+	Action  string   `json:"action"` // start, status, list, tail, stop, wait
+	Command string   `json:"command,omitempty"`
+	Argv    []string `json:"argv,omitempty"` // alternativa sem shell ao command (um dos dois)
+	Cwd     string   `json:"cwd,omitempty"`
+	JobID   string   `json:"job_id,omitempty"`
+	Lines   int      `json:"lines,omitempty"`
 }
 
 func sanitizeUnit(id string) string {
@@ -36,6 +38,18 @@ func HandleJob(args JobArgs) (string, error) {
 	targetHost := args.Host
 	if targetHost == "" {
 		targetHost = "noteserver"
+	}
+
+	if target, err := transport.ResolveHost(targetHost); err == nil && target.IsLocal {
+		return handleLocalJob(action, args)
+	}
+
+	// hosts remotos (systemd-run): argv vira linha de comando com aspas simples POSIX
+	if len(args.Argv) > 0 && args.Command == "" {
+		args.Command = transport.QuoteArgvPOSIX(args.Argv)
+	}
+	if args.Cwd != "" && args.Command != "" {
+		args.Command = "cd \"" + args.Cwd + "\" && " + args.Command
 	}
 
 	envPrefix := "export XDG_RUNTIME_DIR=/run/user/1000; "

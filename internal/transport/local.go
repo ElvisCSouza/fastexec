@@ -95,23 +95,7 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	// stdin nunca fica pendurado: sem input, o filho recebe EOF imediato em vez de esperar um terminal que não existe.
 	cmd.Stdin = strings.NewReader(spec.input)
 
-	// Ambiente do registro do Windows (Machine + User) + Git\usr\bin no PATH para cp, mv, rm, ls, cat, grep funcionarem.
-	envList := env.MountForCurrentProcess()
-	gitUsrBin := `C:\Program Files\Git\usr\bin`
-	pathUpdated := false
-	for i, e := range envList {
-		if strings.HasPrefix(strings.ToUpper(e), "PATH=") {
-			envList[i] = e + ";" + gitUsrBin
-			pathUpdated = true
-			break
-		}
-	}
-	if !pathUpdated {
-		envList = append(envList, "PATH="+gitUsrBin)
-	}
-	// Sem terminal interativo: o git falha na hora em vez de pedir credencial e travar.
-	envList = append(envList, "GIT_TERMINAL_PROMPT=0")
-	cmd.Env = envList
+	cmd.Env = localEnv()
 
 	stdoutBuf, stderrBuf := &capBuffer{}, &capBuffer{}
 	cmd.Stdout = stdoutBuf
@@ -163,4 +147,23 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 		Duration: durationMs,
 		TimedOut: timedOut,
 	}, nil
+}
+
+// localEnv monta o ambiente dos processos filhos locais: registro do Windows (Machine + User) + Git\usr\bin no PATH para
+// cp, mv, rm, ls, cat, grep funcionarem + GIT_TERMINAL_PROMPT=0 (sem terminal interativo, o git falha em vez de travar).
+func localEnv() []string {
+	envList := env.MountForCurrentProcess()
+	gitUsrBin := `C:\Program Files\Git\usr\bin`
+	pathUpdated := false
+	for i, e := range envList {
+		if strings.HasPrefix(strings.ToUpper(e), "PATH=") {
+			envList[i] = e + ";" + gitUsrBin
+			pathUpdated = true
+			break
+		}
+	}
+	if !pathUpdated {
+		envList = append(envList, "PATH="+gitUsrBin)
+	}
+	return append(envList, "GIT_TERMINAL_PROMPT=0")
 }

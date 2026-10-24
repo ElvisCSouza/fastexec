@@ -17,7 +17,7 @@ const (
 	MagicExec      uint16 = 0x5345            // 'SE'
 	MagicPut       uint16 = 0x5350            // 'SP'
 	MagicGet       uint16 = 0x5347            // 'SG'
-	DefaultTimeout        = 300 * time.Second // 5 minutos de teto para permitir comandos pesados síncronos sem sleep
+	DefaultTimeout        = 120 * time.Second // abaixo do limite de ~4 min do cliente MCP; mais que isso, use a tool job
 	DialTimeout           = 3 * time.Second
 	MaxCmdLen             = 1024 * 1024      // 1 MB
 	MaxOutputLen          = 16 * 1024 * 1024 // 16 MB

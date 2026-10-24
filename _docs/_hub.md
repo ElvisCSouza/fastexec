@@ -17,13 +17,13 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
 ## Ferramentas Expostas ao LLM
 | Tool | Parâmetros | Descrição |
 |---|---|---|
-| `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona. `command` é linha de shell; `argv` roda sem shell (ver seção do host `local`) |
+| `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona (`timeout_ms` padrão 120 s, teto 210 s). `command` é linha de shell; `argv` roda sem shell (ver seção do host `local`) |
 | `read_file` | `host`, `path`, `offset`, `limit` | Leitura determinística de arquivo local ou remoto |
 | `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo. Retorna `ok N bytes` |
 | `get_file` | `host`, `remote_path`, `local_path` | Download determinístico via socket binário direto. Retorna `ok N bytes` |
 | `put_file` | `host`, `local_path`, `remote_path` | Upload determinístico chunked via socket binário. Retorna `ok N bytes` |
 | `sql` | `host`, `db_path`, `query` | Execução direta de SQLite com saída tabular ou JSON |
-| `job` | `host`, `action`, `cmd`, `id`, `lines` | Gerenciamento de background jobs assíncronos (`start`, `status`, `tail`, `stop`, `list`) |
+| `job` | `host`, `action`, `command` ou `argv`, `cwd`, `job_id`, `lines` | Background jobs assíncronos (`start`, `status`, `tail`, `wait`, `stop`, `list`): systemd-run nos hosts Linux, Job Object no `local` (seção abaixo) |
 | `ping` | `host` | Diagnóstico de latência e saúde de conexão por nó |
 
 ## Convenções de Rede
@@ -54,7 +54,7 @@ Contrato síncrono e determinístico. Cada linha da tabela é uma regra com o mo
 | Regra | Como | Por quê |
 |---|---|---|
 | Timeout encerra a árvore inteira | cada comando entra num Windows Job Object (`KILL_ON_JOB_CLOSE`, `job_windows.go`); no estouro de `timeout_ms` o job é terminado e `cmd.WaitDelay` (150 ms) solta pipes presos | antes só o `cmd.exe` morria; um `node` neto segurava o pipe e a chamada ficava até o filho acabar, sem aviso de timeout |
-| Nada sobrevive à chamada | ao fim da chamada o handle do job é fechado e o que ainda estiver vivo na árvore morre | sem processo órfão consumindo CPU ou segurando porta/arquivo. **Consequência:** processo iniciado em segundo plano (`start`, `Start-Process`, servidor) morre quando a chamada termina; não há breakaway |
+| Nada sobrevive à chamada | ao fim da chamada o handle do job é fechado e o que ainda estiver vivo na árvore morre | sem processo órfão consumindo CPU ou segurando porta/arquivo. **Consequência:** processo iniciado em segundo plano (`start`, `Start-Process`, servidor) morre quando a chamada termina; não há breakaway. Para isso existe a tool `job` |
 | `argv` sem shell | `argv: ["node","-e","...","a > b && %TEMP%"]` vira `exec.Command` direto; `command` e `argv` são exclusivos | `cmd.exe /s /c` interpreta `> < \| & %VAR%` e aspas antes do programa ver o argumento (arquivos-lixo, comando quebrado) |
 | Código longo por `input` | `argv ["node","-"]`, `["python","-"]` ou `["powershell","-NoProfile","-Command","-"]` com o script em `input` (stdin) | evita qualquer escape; não há parâmetro `script` nem `interpreter` (tool sprawl) |
 | Guard de sleep em argv | só quando `argv[0]` é `sleep`, `timeout` ou um shell (`cmd`, `bash`, `sh`, `zsh`, `powershell`, `pwsh`) | num argv para `node`/`python` o texto é código, não linha de shell: sem falso positivo |
@@ -70,6 +70,35 @@ Hosts remotos (`noteserver`, `ax6000`, `ax3000`): inalterados, exceto `argv`, qu
 Testes (`go test ./...`): `internal/transport/local_test.go` (timeout com limpeza da árvore, órfão no fim normal, encodings, argv literal, stdin EOF, cwd, limite de captura) e `internal/tools/exec_argv_test.go` (guard, formato do timeout, hint do PowerShell). Exigem `node` no PATH.
 
 Ativar um binário novo: `go build -o bin\fastexec.new.exe .\cmd\fastexec`; o `fastexec.exe` em uso fica bloqueado pelo Claude Desktop, então fechar o Desktop, trocar o arquivo e reabrir.
+
+## Tool `job` no host `local` (`internal/transport/localjob_windows.go`, `internal/tools/job_local.go`)
+
+Para o que precisa ficar no ar além da chamada (dev server, watcher, túnel) e para qualquer comando acima de ~3 min. Mesma assinatura da tool: `host: "local"`, `action`, `command` ou `argv`, `cwd`, `job_id`, `lines`.
+
+| Ação | O que faz |
+|---|---|
+| `start` | inicia em background e devolve na hora o `id` e o caminho do log; `job_id` opcional escolhe o id (letras, números, `_`, `-`) |
+| `status` | `RUNNING`, `EXITED`, `STOPPED` ou `EXPIRED`, processos ativos, tempo no ar, último log, tamanho do log |
+| `tail` | últimas `lines` linhas do log (padrão 30, máximo 500) com a limpeza do `outclean.go` |
+| `wait` | espera o job terminar por até 200 s; passou disso, responde "ainda em execução" com o fim do log |
+| `stop` | encerra a árvore inteira pelo nome do Job Object |
+| `list` | jobs conhecidos, do mais novo ao mais velho (20 linhas no máximo) |
+
+| Regra | Como | Por quê |
+|---|---|---|
+| Job Object nomeado, handle guardado pelo dono | `Local\FastExec_Job_<id>`, criado com `KILL_ON_JOB_CLOSE`; o FastExec que iniciou o job guarda o handle enquanto o job viver | **Medido:** o nome de um job object só resolve enquanto alguém mantém um handle aberto. Fechar o último handle remove o nome mesmo com o processo vivo, e o processo vira órfão inalcançável. Efeito: o job sobrevive às chamadas, **não a um restart do FastExec** (que o encerra, sem órfão). Outro FastExec vê e para o job pelo nome enquanto o dono estiver vivo |
+| Parada por nome do job, nunca por PID | `OpenJobObjectW` + `TerminateJobObject` | o Windows recicla PID na hora; matar por PID derruba programa de terceiros |
+| `status` sem lista de PIDs | contabilidade do job (`ActiveProcesses`) | mesma informação e sem tocar em PID |
+| Sem breakaway | o job aninha dentro de qualquer job do host (Windows 8+, inclusive o do Claude Desktop/MSIX) | `CREATE_BREAKAWAY_FROM_JOB` falharia com acesso negado |
+| Log direto em arquivo | stdout e stderr do processo vão para `<id>.log` (append), sem pipe nem buffer no FastExec | zero memória presa; o log sobrevive ao job |
+| Estado em disco | `<id>.json` (id, comando ou argv, cwd, pid informativo, created_at, nome do job, caminho do log, estado), escrita atômica | outro FastExec e o `list` leem o mesmo estado |
+| Pasta | `FASTEXEC_JOBS_DIR` se definida; senão `W:\Data\jobs` se a unidade W: existir; senão `%LOCALAPPDATA%\fastexec\jobs` | W: é o Dev Drive do PC-Elvis |
+| Higiene | no máximo 5 jobs ativos (o 6º falha dizendo qual parar); vida máxima de 12 h desde a criação (encerrado ao consultar); arquivos de jobs finalizados são apagados após 7 dias | nada fica no ar para sempre |
+| Comando que falha na hora | o `start` não falha: o job aparece `EXITED` e o `tail` mostra a mensagem | o agente vê o erro real |
+
+Timeout do `exec`: `DefaultTimeout` é 120 s e `timeout_ms` acima de 210 s é limitado a 210 s (`MaxClientTimeoutMs`), porque o cliente MCP corta chamadas pendentes em ~4 min. Quem estoura recebe `[timeout após X.Xs; árvore de processos encerrada]`, a saída parcial e a orientação de usar `job`. Limitação conhecida: o `wait` dos hosts Linux ainda usa 600 s e portanto pode ser cortado pelo cliente.
+
+Testes: `internal/transport/localjob_test.go` (ciclo start, status, tail, stop sem órfão; job que sobrevive a um `exec`; limite de 5; vida máxima; término espontâneo; comando que falha na hora; id e cwd) e `internal/tools/job_local_test.go`, `internal/tools/exec_timeout_test.go`.
 
 ## Módulo `internal/env`: Montagem de Ambiente Windows
 

@@ -10,6 +10,13 @@ import (
 	"homelab/fastexec/internal/transport"
 )
 
+// MaxClientTimeoutMs é o teto do timeout_ms do exec: o cliente MCP (Claude Desktop) desiste de uma chamada pendente em
+// ~240 s; com 210 s o FastExec responde (com a saída parcial) 30 s antes de o transporte ser cortado.
+const MaxClientTimeoutMs = 210000
+
+// maxClientTimeout é variável só para os testes poderem encurtar o teto.
+var maxClientTimeout = time.Duration(MaxClientTimeoutMs) * time.Millisecond
+
 var sleepGuardRegex = regexp.MustCompile(`(?i)\b(sleep\s+\d+|timeout(\.exe)?\s+(\/t\s+)?\d+)\b`)
 
 // shellExes são os executáveis cujo argumento de texto é interpretado como comando de shell. O guard de sleep só faz
@@ -54,6 +61,10 @@ func HandleExec(args ExecArgs) (string, error) {
 	if args.TimeoutMs > 0 {
 		timeout = time.Duration(args.TimeoutMs) * time.Millisecond
 	}
+	clampedFrom := time.Duration(0)
+	if timeout > maxClientTimeout {
+		clampedFrom, timeout = timeout, maxClientTimeout
+	}
 
 	var (
 		res *transport.ExecResult
@@ -68,7 +79,11 @@ func HandleExec(args ExecArgs) (string, error) {
 		return "", err
 	}
 
-	return formatExecResult(label, *res)
+	out, ferr := formatExecResult(label, *res)
+	if res.TimedOut && clampedFrom > 0 {
+		out += fmt.Sprintf("\nO timeout_ms pedido (%d) foi limitado a %d ms, o teto antes de o cliente MCP cortar a chamada.", clampedFrom.Milliseconds(), timeout.Milliseconds())
+	}
+	return out, ferr
 }
 
 func formatExecResult(command string, res transport.ExecResult) (string, error) {
@@ -119,6 +134,7 @@ func formatTimeout(elapsedMs int64, stdout, stderr string) (string, error) {
 	if partial != "" {
 		msg += "\nSaída parcial capturada até o corte:\n" + capOutput(partial)
 	}
+	msg += "\nPara comandos que exigem mais de 3 minutos, use a tool 'job' (action='start')."
 	return msg, fmt.Errorf("timeout após %.1fs", float64(elapsedMs)/1000)
 }
 

@@ -66,11 +66,16 @@ func DispatchArgv(hostName string, argv []string, cwd string, input string, time
 	if target.IsLocal {
 		return ExecLocalArgv(argv, cwd, input, timeout)
 	}
+	return DispatchWithInput(hostName, QuoteArgvPOSIX(argv), cwd, input, timeout)
+}
+
+// QuoteArgvPOSIX junta argv numa linha de comando POSIX com cada argumento entre aspas simples (sem interpretação).
+func QuoteArgvPOSIX(argv []string) string {
 	quoted := make([]string, len(argv))
 	for i, a := range argv {
 		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
 	}
-	return DispatchWithInput(hostName, strings.Join(quoted, " "), cwd, input, timeout)
+	return strings.Join(quoted, " ")
 }
 
 func DispatchWithInput(hostName string, cmd string, cwd string, input string, timeout time.Duration) (*ExecResult, error) {

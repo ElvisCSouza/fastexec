@@ -13,9 +13,20 @@ type jobObject struct {
 	assigned bool
 }
 
-func newJobObject() (*jobObject, error) {
-	h, err := windows.CreateJobObject(nil, nil)
-	if err != nil {
+func newJobObject() (*jobObject, error) { return newNamedJobObject("") }
+
+// newNamedJobObject cria o job (com KILL_ON_JOB_CLOSE); name vazio = job anônimo. Nome no namespace Local\ da sessão.
+func newNamedJobObject(name string) (*jobObject, error) {
+	var namePtr *uint16
+	if name != "" {
+		p, err := windows.UTF16PtrFromString(name)
+		if err != nil {
+			return nil, err
+		}
+		namePtr = p
+	}
+	h, err := windows.CreateJobObject(nil, namePtr)
+	if h == 0 {
 		return nil, err
 	}
 	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION

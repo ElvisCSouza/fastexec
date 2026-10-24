@@ -75,7 +75,7 @@ var serverTools = []ToolSchema{
 				"argv":       {Type: "array", Description: "Alternativa sem shell: [executável, arg1, arg2...]. Nenhum metacaractere é interpretado. Informe argv OU command", Items: &PropertyDef{Type: "string"}},
 				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional)"},
 				"input":      {Type: "string", Description: "Conteúdo enviado diretamente para o stdin do processo (opcional, evita criar arquivos temporários)"},
-				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 300000 = 5 min). Ao estourar, a árvore de processos é encerrada"},
+				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 120000; máximo: 210000, valores maiores são limitados porque o cliente MCP corta a chamada em ~4 min). Ao estourar, a árvore de processos é encerrada. Comando que precisa de mais tempo: tool 'job'"},
 			},
 		},
 	},
@@ -163,13 +163,15 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "job",
-		Description: "Gerencia background jobs assíncronos no NoteServer via systemd-run. Use action='wait' para aguardar conclusão por evento (zero sleep).",
+		Description: "Gerencia background jobs assíncronos: no NoteServer via systemd-run; no host 'local' (Windows) em Job Object nomeado, com log em arquivo, sobrevivendo ao fim da chamada (dev server, watcher, túnel). Use para qualquer comando que precise de mais de ~3 min ou ficar no ar; o 'exec' é síncrono e encerra tudo ao terminar. No local: máx. 5 jobs ativos e vida máxima de 12 h; 'stop' encerra a árvore inteira. Use action='wait' para aguardar conclusão por evento (zero sleep).",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":    {Type: "string", Description: "Alvo: 'noteserver' (default)"},
+				"host":    {Type: "string", Description: "Alvo: 'noteserver' (default) ou 'local' (Windows)"},
 				"action":  {Type: "string", Description: "Ação: 'start', 'wait' (aguarda conclusão por evento), 'status', 'list', 'tail', 'stop'"},
-				"command": {Type: "string", Description: "Comando para ação 'start'"},
+				"command": {Type: "string", Description: "Linha de shell para ação 'start' (informe command OU argv)"},
+				"argv":    {Type: "array", Description: "Alternativa sem shell para 'start': [executável, arg1, ...]", Items: &PropertyDef{Type: "string"}},
+				"cwd":     {Type: "string", Description: "Diretório de trabalho para 'start' (opcional)"},
 				"job_id":  {Type: "string", Description: "Identificador da tarefa para wait/status/tail/stop"},
 				"lines":   {Type: "integer", Description: "Número de linhas para ação 'tail' (padrão: 30)"},
 			},
