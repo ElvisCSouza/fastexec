@@ -28,6 +28,8 @@ type ExecResult struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	Duration int64  `json:"duration_ms"`
+	// TimedOut: o comando estourou o timeout e a árvore de processos foi encerrada (só o host local preenche).
+	TimedOut bool `json:"timed_out,omitempty"`
 }
 
 func ExecDaemon(tcpAddr string, cmd string, timeout time.Duration) (*ExecResult, error) {

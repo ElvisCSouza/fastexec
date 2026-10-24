@@ -58,24 +58,25 @@ type InputSchema struct {
 }
 
 type PropertyDef struct {
-	Type        string `json:"type"`
-	Description string `json:"description"`
+	Type        string       `json:"type"`
+	Description string       `json:"description"`
+	Items       *PropertyDef `json:"items,omitempty"`
 }
 
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Executa comando síncrono no nó alvo (orientado a eventos, retorna no término exato do processo). No Windows ('local'), roda em cmd.exe nativo (para PowerShell use 'powershell -NoProfile -Command ...'; para arquivos prefira 'file_ops'). Suporta 'input' via stdin e 'cwd'.",
+		Description: "Executa comando síncrono no nó alvo (orientado a eventos, retorna no término exato do processo). Dois modos: 'command' (linha de shell; no Windows 'local' roda em cmd.exe, que interpreta > < | & %VAR% e aspas antes do programa ver o argumento) ou 'argv' (sem shell: cada item chega ao programa exatamente como enviado; use para código e texto com metacaracteres). Código longo vai por 'input' (stdin): argv ['node','-'] ou ['python','-'] com o script em 'input'. Para PowerShell use argv ['powershell','-NoProfile','-Command','-'] com o script em 'input'. No estouro de timeout_ms a árvore de processos é encerrada e a resposta traz a saída parcial. stdin sem 'input' é EOF imediato (comandos interativos falham em vez de travar). Para arquivos prefira 'file_ops'.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:<host>'"},
-				"command":    {Type: "string", Description: "Comando a ser executado (PROIBIDO usar sleep/timeout artificial)"},
+				"command":    {Type: "string", Description: "Linha de shell a executar (PROIBIDO usar sleep/timeout artificial). Informe command OU argv"},
+				"argv":       {Type: "array", Description: "Alternativa sem shell: [executável, arg1, arg2...]. Nenhum metacaractere é interpretado. Informe argv OU command", Items: &PropertyDef{Type: "string"}},
 				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional)"},
 				"input":      {Type: "string", Description: "Conteúdo enviado diretamente para o stdin do processo (opcional, evita criar arquivos temporários)"},
-				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 300000 = 5 min)"},
+				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 300000 = 5 min). Ao estourar, a árvore de processos é encerrada"},
 			},
-			Required: []string{"command"},
 		},
 	},
 	{

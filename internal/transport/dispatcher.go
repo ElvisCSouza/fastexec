@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	"homelab/fastexec/internal/logger"
@@ -53,6 +54,23 @@ func Dispatch(hostName string, cmd string, timeout time.Duration) (*ExecResult, 
 
 func DispatchWithCwd(hostName string, cmd string, cwd string, timeout time.Duration) (*ExecResult, error) {
 	return DispatchWithInput(hostName, cmd, cwd, "", timeout)
+}
+
+// DispatchArgv executa argv sem shell no host local. Em hosts remotos monta uma linha de comando com cada argumento
+// entre aspas simples POSIX, que é o equivalente seguro de "sem interpretação" no destino.
+func DispatchArgv(hostName string, argv []string, cwd string, input string, timeout time.Duration) (*ExecResult, error) {
+	target, err := ResolveHost(hostName)
+	if err != nil {
+		return nil, err
+	}
+	if target.IsLocal {
+		return ExecLocalArgv(argv, cwd, input, timeout)
+	}
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return DispatchWithInput(hostName, strings.Join(quoted, " "), cwd, input, timeout)
 }
 
 func DispatchWithInput(hostName string, cmd string, cwd string, input string, timeout time.Duration) (*ExecResult, error) {

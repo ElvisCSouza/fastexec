@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -11,22 +12,42 @@ import (
 
 var sleepGuardRegex = regexp.MustCompile(`(?i)\b(sleep\s+\d+|timeout(\.exe)?\s+(\/t\s+)?\d+)\b`)
 
+// shellExes são os executáveis cujo argumento de texto é interpretado como comando de shell. O guard de sleep só faz
+// sentido neles: num argv para node/python o texto é código ou dado, não uma linha de shell.
+var shellExes = map[string]bool{"cmd": true, "bash": true, "sh": true, "zsh": true, "powershell": true, "pwsh": true}
+
 type ExecArgs struct {
-	Host      string `json:"host"`
-	Command   string `json:"command"`
-	Cwd       string `json:"cwd,omitempty"`
-	Input     string `json:"input,omitempty"`
-	TimeoutMs int    `json:"timeout_ms,omitempty"`
+	Host string `json:"host"`
+	// Command é uma linha de shell (pipelines, redirecionamento). Argv é a alternativa sem shell: o executável recebe
+	// cada argumento exatamente como enviado. Informe um dos dois.
+	Command   string   `json:"command,omitempty"`
+	Argv      []string `json:"argv,omitempty"`
+	Cwd       string   `json:"cwd,omitempty"`
+	Input     string   `json:"input,omitempty"`
+	TimeoutMs int      `json:"timeout_ms,omitempty"`
 }
 
+const sleepGuardMsg = "[FastExec Guard] Uso de 'sleep' ou 'timeout' é proibido. O FastExec é síncrono e orientado a eventos (retorna no milissegundo exato da conclusão do processo). Para tarefas longas, aumente o 'timeout_ms' (ex: timeout_ms: 300000). Para processos assíncronos, use 'fastexec.job' com action 'wait'"
+
 func HandleExec(args ExecArgs) (string, error) {
-	if args.Command == "" {
-		return "", fmt.Errorf("parâmetro 'command' é obrigatório")
+	hasCmd, hasArgv := args.Command != "", len(args.Argv) > 0
+	switch {
+	case hasCmd && hasArgv:
+		return "", fmt.Errorf("informe só um: 'command' (linha de shell) ou 'argv' (sem shell)")
+	case !hasCmd && !hasArgv:
+		return "", fmt.Errorf("parâmetro 'command' (ou 'argv') é obrigatório")
 	}
 
 	// Bloqueio determinístico de sleep / timeout artificial
-	if sleepGuardRegex.MatchString(args.Command) {
-		return "", fmt.Errorf("[FastExec Guard] Uso de 'sleep' ou 'timeout' é proibido. O FastExec é síncrono e orientado a eventos (retorna no milissegundo exato da conclusão do processo). Para tarefas longas, aumente o 'timeout_ms' (ex: timeout_ms: 300000). Para processos assíncronos, use 'fastexec.job' com action 'wait'")
+	label := args.Command
+	if hasArgv {
+		label = strings.Join(args.Argv, " ")
+		exe := strings.ToLower(strings.TrimSuffix(filepath.Base(args.Argv[0]), ".exe"))
+		if exe == "sleep" || exe == "timeout" || (shellExes[exe] && sleepGuardRegex.MatchString(label)) {
+			return "", fmt.Errorf(sleepGuardMsg)
+		}
+	} else if sleepGuardRegex.MatchString(label) {
+		return "", fmt.Errorf(sleepGuardMsg)
 	}
 
 	timeout := transport.DefaultTimeout
@@ -34,17 +55,29 @@ func HandleExec(args ExecArgs) (string, error) {
 		timeout = time.Duration(args.TimeoutMs) * time.Millisecond
 	}
 
-	res, err := transport.DispatchWithInput(args.Host, args.Command, args.Cwd, args.Input, timeout)
+	var (
+		res *transport.ExecResult
+		err error
+	)
+	if hasArgv {
+		res, err = transport.DispatchArgv(args.Host, args.Argv, args.Cwd, args.Input, timeout)
+	} else {
+		res, err = transport.DispatchWithInput(args.Host, args.Command, args.Cwd, args.Input, timeout)
+	}
 	if err != nil {
 		return "", err
 	}
 
-	return formatExecResult(args.Command, *res)
+	return formatExecResult(label, *res)
 }
 
 func formatExecResult(command string, res transport.ExecResult) (string, error) {
 	stdout := cleanOutput(res.Stdout)
 	stderr := cleanOutput(res.Stderr)
+
+	if res.TimedOut {
+		return formatTimeout(res.Duration, stdout, stderr)
+	}
 
 	if res.ExitCode != 0 {
 		if res.ExitCode == 1 && stdout == "" && stderr == "" {
@@ -69,6 +102,24 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 	}
 
 	return capOutput(stdout), nil
+}
+
+// formatTimeout devolve ao agente um desfecho inequívoco: estourou o prazo, a árvore foi encerrada e o que foi emitido
+// até o corte. Assim ele nunca precisa adivinhar se o comando rodou.
+func formatTimeout(elapsedMs int64, stdout, stderr string) (string, error) {
+	head := fmt.Sprintf("[timeout após %.1fs; árvore de processos encerrada]", float64(elapsedMs)/1000)
+	partial := stdout
+	if stderr != "" {
+		if partial != "" {
+			partial += "\n"
+		}
+		partial += "[stderr]\n" + stderr
+	}
+	msg := head
+	if partial != "" {
+		msg += "\nSaída parcial capturada até o corte:\n" + capOutput(partial)
+	}
+	return msg, fmt.Errorf("timeout após %.1fs", float64(elapsedMs)/1000)
 }
 
 func isWindowsCmdletMismatch(cmd string, errMsg string) bool {
