@@ -190,6 +190,9 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "firestick":
+		runFirestick(subArgs)
+
 	case "ping":
 		host := "all"
 		if len(subArgs) >= 1 {
@@ -225,7 +228,7 @@ func main() {
 
 	default:
 		fmt.Printf("Comando desconhecido: '%s'\n", cmd)
-		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats")
+		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, firestick")
 		os.Exit(1)
 	}
 }

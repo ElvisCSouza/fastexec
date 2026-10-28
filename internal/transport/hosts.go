@@ -19,8 +19,10 @@ var knownHosts = map[string]HostTarget{
 	"windows":    {Name: "windows", IsLocal: true},
 	"noteserver": {Name: "noteserver", TCPAddr: "192.168.31.142:9142"},
 	"servidor":   {Name: "servidor", TCPAddr: "192.168.31.142:9142"},
-	"ax6000":     {Name: "ax6000", TCPAddr: "192.168.31.1:9142"},
-	"ax3000":     {Name: "ax3000", TCPAddr: "192.168.31.34:9142"},
+	"ax6000":          {Name: "ax6000", TCPAddr: "192.168.31.1:9142"},
+	"ax3000":          {Name: "ax3000", TCPAddr: "192.168.31.34:9142"},
+	"firestick-suite": {Name: "firestick-suite", TCPAddr: "192.168.31.37:9142"},
+	"firestick-sala":  {Name: "firestick-sala", TCPAddr: "192.168.31.21:9142"},
 	// Hosts de trabalho mapeados para SSH BatchMode transparente
 	"vm-ia-core": {Name: "vm-ia-core", IsSSH: true, SSHHost: "vm-ia-core"},
 	"vm-obs-dev": {Name: "vm-obs-dev", IsSSH: true, SSHHost: "vm-obs-dev"},
