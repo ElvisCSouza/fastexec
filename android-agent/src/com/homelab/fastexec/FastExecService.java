@@ -14,6 +14,7 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 
 import java.io.BufferedReader;
@@ -70,6 +71,7 @@ public class FastExecService extends Service {
         reportHandler = new Handler(reportThread.getLooper());
         startDaemon();
         startCommandServer();
+        ensureAccessibilityEnabled();
         registerScreenReceiver();
         reportCurrentState();
     }
@@ -81,6 +83,22 @@ public class FastExecService extends Service {
             startCommandServer();
         }
         return START_STICKY;
+    }
+
+    /** Religa a propria acessibilidade se o Android a desligou (force-stop, atualizacao do Fire OS). Usa a
+     *  WRITE_SECURE_SETTINGS concedida por ADB; sem ela, so registra no log. Roda so ao iniciar o servico. */
+    private void ensureAccessibilityEnabled() {
+        String me = getPackageName() + "/" + FastExecAccessibilityService.class.getName();
+        try {
+            String cur = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (cur != null && cur.contains(me)) return;
+            String novo = (cur == null || cur.isEmpty()) ? me : cur + ":" + me;
+            Settings.Secure.putString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, novo);
+            Settings.Secure.putInt(getContentResolver(), Settings.Secure.ACCESSIBILITY_ENABLED, 1);
+            Log.w(TAG, "acessibilidade estava desligada; religada");
+        } catch (SecurityException e) {
+            Log.w(TAG, "acessibilidade desligada e sem permissao para religar");
+        }
     }
 
     private boolean isAutoTvEnabled() {
@@ -342,6 +360,18 @@ public class FastExecService extends Service {
                             getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_REPORT_TARGET, t).apply();
                             reportCurrentState();
                             out.write(("OK:REPORT_TARGET " + t + "\n").getBytes());
+                        } else if ("adb on".equals(cmd) || "adb off".equals(cmd)) {
+                            // ADB so ligado na hora do deploy (porta 5555 fechada no resto do tempo). Precisa de
+                            // WRITE_SECURE_SETTINGS concedida uma vez: adb shell pm grant com.homelab.fastexec android.permission.WRITE_SECURE_SETTINGS
+                            try {
+                                Settings.Global.putInt(getContentResolver(), Settings.Global.ADB_ENABLED, "adb on".equals(cmd) ? 1 : 0);
+                                out.write(("adb on".equals(cmd) ? "OK:ADB_ON\n" : "OK:ADB_OFF\n").getBytes());
+                            } catch (SecurityException e) {
+                                out.write("FAIL:NO_PERMISSION\n".getBytes());
+                            }
+                        } else if ("adb".equals(cmd) || "adb status".equals(cmd)) {
+                            int v = Settings.Global.getInt(getContentResolver(), Settings.Global.ADB_ENABLED, 0);
+                            out.write((v == 1 ? "ADB:ON\n" : "ADB:OFF\n").getBytes());
                         } else if ("home".equals(cmd)) {
                             FastExecAccessibilityService a11y = FastExecAccessibilityService.getInstance();
                             if (a11y != null) {
