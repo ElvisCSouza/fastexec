@@ -8,9 +8,9 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
+import android.os.HandlerThread;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -20,6 +20,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -36,6 +37,13 @@ public class FastExecService extends Service {
     private static final long AUTO_TV_DELAY_MS = 1500;
     private static final long SELF_WAKE_WINDOW_MS = 5000;
 
+    // Aviso de estado: a cada tela ligou/desligou (e ao iniciar o servico) o app avisa o tv-fastbridge
+    // no noteserver com uma linha "ON"/"OFF" (ele identifica o Firestick pelo IP). Sem consulta periodica.
+    // Se o aviso falhar, tenta de novo (5 s, 15 s, 60 s...) enquanto o estado nao mudar.
+    private static final String PREF_REPORT_TARGET = "report_target";
+    private static final String DEFAULT_REPORT_TARGET = "192.168.31.142:9144";
+    private static final long[] REPORT_RETRY_MS = {5000, 15000, 60000};
+
     private volatile boolean isRunning = false;
     private Thread workerThread;
     private Thread cmdThread;
@@ -43,6 +51,9 @@ public class FastExecService extends Service {
     private volatile long lastSelfWakeMs = 0;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private BroadcastReceiver screenReceiver;
+    private HandlerThread reportThread;
+    private Handler reportHandler;
+    private volatile int reportSeq = 0;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -54,9 +65,13 @@ public class FastExecService extends Service {
         super.onCreate();
         createNotificationChannel();
         startForeground(1, createNotification());
+        reportThread = new HandlerThread("FastExecReport");
+        reportThread.start();
+        reportHandler = new Handler(reportThread.getLooper());
         startDaemon();
         startCommandServer();
         registerScreenReceiver();
+        reportCurrentState();
     }
 
     @Override
@@ -76,12 +91,71 @@ public class FastExecService extends Service {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_AUTO_TV, on).apply();
     }
 
+    private String reportTarget() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_REPORT_TARGET, DEFAULT_REPORT_TARGET);
+    }
+
+    // ---- aviso de estado -------------------------------------------------------------------------
+
+    private void reportCurrentState() {
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        reportState(pm != null && pm.isInteractive());
+    }
+
+    /** Agenda o envio do estado; um estado novo cancela as tentativas do anterior. */
+    private void reportState(final boolean on) {
+        final int seq = ++reportSeq;
+        reportHandler.removeCallbacksAndMessages(null);
+        reportHandler.post(new Runnable() {
+            int attempt = 0;
+            @Override
+            public void run() {
+                if (seq != reportSeq) return;
+                if (sendReport(on ? "ON" : "OFF")) return;
+                long wait = REPORT_RETRY_MS[Math.min(attempt, REPORT_RETRY_MS.length - 1)];
+                attempt++;
+                reportHandler.postDelayed(this, wait);
+            }
+        });
+    }
+
+    private boolean sendReport(String state) {
+        String target = reportTarget();
+        try {
+            int i = target.lastIndexOf(':');
+            String host = target.substring(0, i);
+            int port = Integer.parseInt(target.substring(i + 1));
+            Socket s = new Socket();
+            s.connect(new InetSocketAddress(host, port), 2000);
+            s.setSoTimeout(2000);
+            OutputStream out = s.getOutputStream();
+            out.write((state + "\n").getBytes());
+            out.flush();
+            BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream()));
+            String ack = in.readLine();
+            s.close();
+            Log.i(TAG, "report: " + state + " -> " + target + " (" + ack + ")");
+            return ack != null && ack.startsWith("OK");
+        } catch (Exception e) {
+            Log.w(TAG, "report: " + state + " falhou para " + target + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    // ---- tela ligou / desligou -------------------------------------------------------------------
+
     private void registerScreenReceiver() {
         if (screenReceiver != null) return;
         screenReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (!Intent.ACTION_SCREEN_ON.equals(intent.getAction())) return;
+                String action = intent.getAction();
+                if (Intent.ACTION_SCREEN_OFF.equals(action)) {
+                    reportState(false);
+                    return;
+                }
+                if (!Intent.ACTION_SCREEN_ON.equals(action)) return;
+                reportState(true);
                 if (!isAutoTvEnabled()) {
                     Log.i(TAG, "autotv: tela ligou, desativado");
                     return;
@@ -98,8 +172,10 @@ public class FastExecService extends Service {
                 }, AUTO_TV_DELAY_MS);
             }
         };
-        registerReceiver(screenReceiver, new IntentFilter(Intent.ACTION_SCREEN_ON));
-        Log.i(TAG, "autotv: receiver de tela registrado");
+        IntentFilter filter = new IntentFilter(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        registerReceiver(screenReceiver, filter);
+        Log.i(TAG, "receiver de tela registrado (autotv + aviso de estado)");
     }
 
     private void autoTvCheck() {
@@ -255,6 +331,17 @@ public class FastExecService extends Service {
                                 wakeDevice();
                                 out.write("OK:WAKE\n".getBytes());
                             }
+                        } else if ("state".equals(cmd)) {
+                            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                            out.write((pm != null && pm.isInteractive() ? "ON\n" : "OFF\n").getBytes());
+                        } else if ("report".equals(cmd)) {
+                            reportCurrentState();
+                            out.write("OK:REPORT\n".getBytes());
+                        } else if (cmd.startsWith("report_target ")) {
+                            String t = rawCmd.substring(14).trim();
+                            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_REPORT_TARGET, t).apply();
+                            reportCurrentState();
+                            out.write(("OK:REPORT_TARGET " + t + "\n").getBytes());
                         } else if ("home".equals(cmd)) {
                             FastExecAccessibilityService a11y = FastExecAccessibilityService.getInstance();
                             if (a11y != null) {
@@ -409,6 +496,9 @@ public class FastExecService extends Service {
         if (screenReceiver != null) {
             try { unregisterReceiver(screenReceiver); } catch (Exception ignored) {}
             screenReceiver = null;
+        }
+        if (reportThread != null) {
+            reportThread.quitSafely();
         }
         if (cmdServerSocket != null) {
             try { cmdServerSocket.close(); } catch (Exception ignored) {}
