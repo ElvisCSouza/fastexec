@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -55,6 +56,7 @@ public class FastExecService extends Service {
     private HandlerThread reportThread;
     private Handler reportHandler;
     private volatile int reportSeq = 0;
+    private WifiManager.WifiLock wifiLock;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -66,6 +68,7 @@ public class FastExecService extends Service {
         super.onCreate();
         createNotificationChannel();
         startForeground(1, createNotification());
+        acquireWifiLock();
         reportThread = new HandlerThread("FastExecReport");
         reportThread.start();
         reportHandler = new Handler(reportThread.getLooper());
@@ -520,9 +523,26 @@ public class FastExecService extends Service {
         return null;
     }
 
+    /** Mantem o radio Wi-Fi sem power save, inclusive em standby: sem isso o ponto de acesso segura os
+     *  pacotes ate o proximo beacon (~100 ms). Sem Wi-Fi conectado (cabo) o lock nao tem efeito. */
+    @SuppressWarnings("deprecation")
+    private void acquireWifiLock() {
+        try {
+            WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "fastexec:wifi");
+            wifiLock.setReferenceCounted(false);
+            wifiLock.acquire();
+            Log.i(TAG, "WifiLock high perf adquirido");
+        } catch (Exception e) {
+            Log.w(TAG, "WifiLock falhou: " + e);
+        }
+    }
     @Override
     public void onDestroy() {
         isRunning = false;
+        if (wifiLock != null && wifiLock.isHeld()) {
+            try { wifiLock.release(); } catch (Exception ignored) {}
+        }
         if (screenReceiver != null) {
             try { unregisterReceiver(screenReceiver); } catch (Exception ignored) {}
             screenReceiver = null;
