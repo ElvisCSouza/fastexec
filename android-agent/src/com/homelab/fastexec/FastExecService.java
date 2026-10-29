@@ -391,8 +391,11 @@ public class FastExecService extends Service {
                             } else {
                                 out.write("FAIL:NO_A11Y\n".getBytes());
                             }
-                        } else if ("autotv on".equals(cmd)) {
-                            setAutoTvEnabled(true);
+                        } else if ("shot".equals(cmd)) {
+                            FastExecAccessibilityService a11yShot = FastExecAccessibilityService.getInstance();
+                            String shot = a11yShot == null ? "FAIL:NO_A11Y" : a11yShot.takeShot(new File(getFilesDir(), "shot.png"));
+                            out.write((shot + "\n").getBytes());
+                        } else if ("autotv on".equals(cmd)) {                            setAutoTvEnabled(true);
                             out.write("OK:AUTOTV_ON\n".getBytes());
                         } else if ("autotv off".equals(cmd)) {
                             setAutoTvEnabled(false);
