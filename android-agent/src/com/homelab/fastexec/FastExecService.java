@@ -25,6 +25,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.concurrent.TimeUnit;
 
 public class FastExecService extends Service {
     private static final String TAG = "FastExecService";
@@ -46,6 +47,22 @@ public class FastExecService extends Service {
     private static final String DEFAULT_REPORT_TARGET = "192.168.31.142:9144";
     private static final long[] REPORT_RETRY_MS = {5000, 15000, 60000};
 
+    // CEC no proprio evento de tela (substitui o watcher por poll) + aviso de heal sob demanda.
+    // No screen-off/no wake o app roda o CEC via o su do GhostLock. Se o root cair, ele avisa o
+    // daemon fastexec-heal (TCP cru, sem HTTP) que repoe o root e manda o CEC. Sem heartbeat.
+    private static final String PREF_HEAL_TARGET = "heal_target";
+    private static final String DEFAULT_HEAL_TARGET = "192.168.31.142:9145";
+    private static final String PREF_TV_DEV = "tv_dev";            // "sala" | "suite" | "" (desligado)
+    private static final String PREF_TV_CEC_ROOT = "tv_cec_root";  // liga o CEC-via-su no evento de tela
+    private static final String SU_BIN = "/data/local/tmp/su";
+    private static final long HEAL_DEBOUNCE_MS = 60000;            // nao avisa o heal mais de 1x/min
+
+    // Comandos CEC (transacoes conferidas no Fire OS 8.1.8.5):
+    //   service call hdmi_control 30 i32 0 i32 0  -> powerOffRemoteDevice (<Standby>)
+    //   service call AmazonHdmiService 21         -> turnTvOn() (<Text View On>+<Active Source> = OTP)
+    private static final String CEC_STANDBY = "service call hdmi_control 30 i32 0 i32 0";
+    private static final String CEC_TURNON = "service call AmazonHdmiService 21";
+
     private volatile boolean isRunning = false;
     private Thread workerThread;
     private Thread cmdThread;
@@ -56,6 +73,7 @@ public class FastExecService extends Service {
     private HandlerThread reportThread;
     private Handler reportHandler;
     private volatile int reportSeq = 0;
+    private volatile long lastHealMs = 0;
     private WifiManager.WifiLock wifiLock;
 
     @Override
@@ -116,6 +134,106 @@ public class FastExecService extends Service {
         return getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_REPORT_TARGET, DEFAULT_REPORT_TARGET);
     }
 
+    private String healTarget() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_HEAL_TARGET, DEFAULT_HEAL_TARGET);
+    }
+
+    private String tvDev() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_TV_DEV, "");
+    }
+
+    private boolean isTvCecRootEnabled() {
+        return getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_TV_CEC_ROOT, true);
+    }
+
+    // ---- CEC via root no evento de tela + heal sob demanda ---------------------------------------
+
+    /** Roda um comando como root pelo su do GhostLock. Retorna true se o su respondeu (uid=0/exit 0).
+     *  NAO roda na main thread. O su do GhostLock e um cliente que fala com um daemon em
+     *  /data/local/tmp/temp_su.sock; se o root caiu, ele falha na hora ("Connection refused"). */
+    private boolean suExec(String cmd) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(SU_BIN, "-c", cmd);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            StringBuilder sb = new StringBuilder();
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String l;
+            while ((l = r.readLine()) != null) sb.append(l).append('\n');
+            boolean done = p.waitFor(15, TimeUnit.SECONDS);
+            if (!done) p.destroyForcibly();
+            String outp = sb.toString();
+            boolean ok = done && p.exitValue() == 0
+                    && !outp.contains("connect daemon")
+                    && !outp.contains("Permission denied")
+                    && !outp.contains("inaccessible");
+            if (!ok) Log.w(TAG, "suExec falhou (" + (done ? "rc=" + p.exitValue() : "timeout") + "): " + outp.trim());
+            return ok;
+        } catch (Exception e) {
+            Log.w(TAG, "suExec erro: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Screen-off: manda o <Standby> via su. Sem root -> avisa o daemon de heal (TVOFF) 1x. */
+    private void handleScreenOff() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                boolean ok = false;
+                if (isTvCecRootEnabled()) ok = suExec(CEC_STANDBY);
+                if (ok) Log.i(TAG, "cec: Standby enviado via su");
+                else notifyHeal("TVOFF");
+            }
+        }, "FastExecCecOff").start();
+    }
+
+    /** Wake: reforca o One Touch Play via su (o autotv ja manda Home). Sem root -> avisa o heal. */
+    private void handleScreenOn() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                if (!isTvCecRootEnabled()) return;
+                if (!suExec(CEC_TURNON)) notifyHeal("TVON");
+            }
+        }, "FastExecCecOn").start();
+    }
+
+    /** Avisa o daemon fastexec-heal (TCP cru, sem HTTP) para repor o root. Debounce de 1/min. */
+    private void notifyHeal(String cmd) {
+        String dev = tvDev();
+        if (dev == null || dev.isEmpty()) {
+            Log.w(TAG, "heal: tv_dev nao configurado, sem aviso");
+            return;
+        }
+        synchronized (this) {
+            long now = System.currentTimeMillis();
+            if (now - lastHealMs < HEAL_DEBOUNCE_MS) {
+                Log.i(TAG, "heal: debounce, ignorando " + cmd);
+                return;
+            }
+            lastHealMs = now;
+        }
+        String target = healTarget();
+        try {
+            int i = target.lastIndexOf(':');
+            String host = target.substring(0, i);
+            int port = Integer.parseInt(target.substring(i + 1));
+            Socket s = new Socket();
+            s.connect(new InetSocketAddress(host, port), 2000);
+            s.setSoTimeout(2000);
+            OutputStream out = s.getOutputStream();
+            out.write((cmd + " " + dev + "\n").getBytes());
+            out.flush();
+            BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream()));
+            String ack = in.readLine();
+            s.close();
+            Log.i(TAG, "heal: " + cmd + " " + dev + " -> " + target + " (" + ack + ")");
+        } catch (Exception e) {
+            Log.w(TAG, "heal: " + cmd + " falhou para " + target + ": " + e.getMessage());
+        }
+    }
+
     // ---- aviso de estado -------------------------------------------------------------------------
 
     private void reportCurrentState() {
@@ -173,10 +291,12 @@ public class FastExecService extends Service {
                 String action = intent.getAction();
                 if (Intent.ACTION_SCREEN_OFF.equals(action)) {
                     reportState(false);
+                    handleScreenOff();
                     return;
                 }
                 if (!Intent.ACTION_SCREEN_ON.equals(action)) return;
                 reportState(true);
+                handleScreenOn();
                 if (!isAutoTvEnabled()) {
                     Log.i(TAG, "autotv: tela ligou, desativado");
                     return;
@@ -363,6 +483,33 @@ public class FastExecService extends Service {
                             getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_REPORT_TARGET, t).apply();
                             reportCurrentState();
                             out.write(("OK:REPORT_TARGET " + t + "\n").getBytes());
+                        } else if (cmd.startsWith("tvdev ")) {
+                            String d = rawCmd.substring(6).trim().toLowerCase();
+                            if ("off".equals(d) || "none".equals(d)) d = "";
+                            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_TV_DEV, d).apply();
+                            out.write(("OK:TVDEV " + (d.isEmpty() ? "(off)" : d) + "\n").getBytes());
+                        } else if ("tvdev".equals(cmd) || "tvdev status".equals(cmd)) {
+                            String d = tvDev();
+                            out.write(("TVDEV:" + (d.isEmpty() ? "(off)" : d) + "\n").getBytes());
+                        } else if (cmd.startsWith("healtarget ")) {
+                            String t = rawCmd.substring(11).trim();
+                            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_HEAL_TARGET, t).apply();
+                            out.write(("OK:HEALTARGET " + t + "\n").getBytes());
+                        } else if (cmd.startsWith("cecroot ")) {
+                            boolean on = "on".equals(rawCmd.substring(8).trim().toLowerCase());
+                            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_TV_CEC_ROOT, on).apply();
+                            out.write((on ? "OK:CECROOT_ON\n" : "OK:CECROOT_OFF\n").getBytes());
+                        } else if ("cec".equals(cmd) || "cec status".equals(cmd)) {
+                            out.write(("CEC:CECROOT=" + (isTvCecRootEnabled() ? "on" : "off") + " TVDEV=" + (tvDev().isEmpty() ? "(off)" : tvDev()) + "\n").getBytes());
+                        } else if (cmd.startsWith("healtest ")) {
+                            String c = rawCmd.substring(9).trim();
+                            notifyHeal(c);
+                            out.write(("OK:HEALTEST " + c + "\n").getBytes());
+                        } else if (cmd.startsWith("rootcmd ")) {
+                            // diagnostico: roda um comando via o su do GhostLock (sem tocar na TV)
+                            String c = rawCmd.substring(8).trim();
+                            boolean ok = suExec(c);
+                            out.write((ok ? "OK:ROOTCMD\n" : "FAIL:ROOTCMD\n").getBytes());
                         } else if ("adb on".equals(cmd) || "adb off".equals(cmd)) {
                             // ADB so ligado na hora do deploy (porta 5555 fechada no resto do tempo). Precisa de
                             // WRITE_SECURE_SETTINGS concedida uma vez: adb shell pm grant com.homelab.fastexec android.permission.WRITE_SECURE_SETTINGS
