@@ -522,6 +522,22 @@ public class FastExecService extends Service {
                         } else if ("adb".equals(cmd) || "adb status".equals(cmd)) {
                             int v = Settings.Global.getInt(getContentResolver(), Settings.Global.ADB_ENABLED, 0);
                             out.write((v == 1 ? "ADB:ON\n" : "ADB:OFF\n").getBytes());
+                        } else if ("adbaccept".equals(cmd)) {
+                            // Aceita o dialogo "Permitir depuracao USB?" (quando o adb fica unauthorized)
+                            // por keyevents sinteticos, sem depender de alguem clicar no controle.
+                            new Thread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    try {
+                                        Runtime.getRuntime().exec(new String[]{"input", "keyevent", "23"});
+                                        Thread.sleep(400);
+                                        Runtime.getRuntime().exec(new String[]{"input", "keyevent", "66"});
+                                    } catch (Exception e) {
+                                        Log.w(TAG, "adbaccept: " + e.getMessage());
+                                    }
+                                }
+                            }, "FastExecAdbAccept").start();
+                            out.write("OK:ADBACCEPT\n".getBytes());
                         } else if ("home".equals(cmd)) {
                             FastExecAccessibilityService a11y = FastExecAccessibilityService.getInstance();
                             if (a11y != null) {
