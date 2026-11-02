@@ -63,6 +63,9 @@ func DispatchArgv(hostName string, argv []string, cwd string, input string, time
 	if err != nil {
 		return nil, err
 	}
+	if cwd == "" && target.DefaultCwd != "" {
+		cwd = target.DefaultCwd
+	}
 	if target.IsLocal {
 		return ExecLocalArgv(argv, cwd, input, timeout)
 	}
@@ -82,6 +85,9 @@ func DispatchWithInput(hostName string, cmd string, cwd string, input string, ti
 	target, err := ResolveHost(hostName)
 	if err != nil {
 		return nil, err
+	}
+	if cwd == "" && target.DefaultCwd != "" {
+		cwd = target.DefaultCwd
 	}
 	if target.IsLocal {
 		return ExecLocalWithInput(cmd, cwd, input, timeout)

@@ -66,16 +66,16 @@ type PropertyDef struct {
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Executa comando síncrono no nó alvo (orientado a eventos, retorna no término exato do processo). Dois modos: 'command' (linha de shell; no Windows 'local' roda em cmd.exe, que interpreta > < | & %VAR% e aspas antes do programa ver o argumento) ou 'argv' (sem shell: cada item chega ao programa exatamente como enviado; use para código e texto com metacaracteres). Código longo vai por 'input' (stdin): argv ['node','-'] ou ['python','-'] com o script em 'input'. Para PowerShell use argv ['powershell','-NoProfile','-Command','-'] com o script em 'input'. No estouro de timeout_ms a árvore de processos é encerrada e a resposta traz a saída parcial. stdin sem 'input' é EOF imediato (comandos interativos falham em vez de travar). Para arquivos prefira 'file_ops'.",
+		Description: "Executa comando síncrono rápido no nó alvo (orientado a eventos, máx 45s). Para ler arquivos prefira 'read_file'; para gerenciar arquivos/diretórios prefira 'file_ops'; para tarefas longas (> 30s) use a tool 'job' (action='start'). No noteserver, o cwd padrão é ~/workspace. Dois modos: 'command' (linha de shell; no Windows 'local' roda em cmd.exe) ou 'argv' (sem shell: cada item chega ao programa exatamente como enviado; use para código e texto com metacaracteres). Código longo vai por 'input' (stdin): argv ['node','-'] ou ['python','-'] com script em 'input'. Para PowerShell use argv ['powershell','-NoProfile','-Command','-'] com script em 'input'. No estouro de timeout_ms a árvore de processos é encerrada e a resposta traz a saída parcial. stdin sem 'input' é EOF imediato.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:<host>'"},
+				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default, cwd ~/workspace), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:<host>'"},
 				"command":    {Type: "string", Description: "Linha de shell a executar (PROIBIDO usar sleep/timeout artificial). Informe command OU argv"},
 				"argv":       {Type: "array", Description: "Alternativa sem shell: [executável, arg1, arg2...]. Nenhum metacaractere é interpretado. Informe argv OU command", Items: &PropertyDef{Type: "string"}},
-				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional)"},
+				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional, padrão no noteserver: ~/workspace)"},
 				"input":      {Type: "string", Description: "Conteúdo enviado diretamente para o stdin do processo (opcional, evita criar arquivos temporários)"},
-				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 200000; máximo: 210000, valores maiores são limitados porque o cliente MCP corta a chamada em ~4 min). Ao estourar, a árvore de processos é encerrada. Comando que precisa de mais tempo: tool 'job'"},
+				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 45000; máximo: 50000, valores maiores são limitados para respeitar o corte de 60s do Claude Desktop). Ao estourar, a árvore de processos é encerrada. Comando que precisa de mais tempo: tool 'job'"},
 			},
 		},
 	},
@@ -95,7 +95,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "file_ops",
-		Description: "Operações atômicas no sistema de arquivos sem shell: copy, move, delete, mkdir, list.",
+		Description: "Operações atômicas no sistema de arquivos sem shell: copy, move, delete, mkdir, list. Use para listar diretórios ou gerenciar arquivos em vez de 'ls', 'dir', 'rm' ou 'mkdir' via exec.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -109,7 +109,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "read_file",
-		Description: "Lê conteúdo de arquivo local ou remoto.",
+		Description: "Lê conteúdo de arquivo local ou remoto. Use SEMPRE para inspecionar arquivos ou trechos (offset/limit) em vez de 'cat', 'type' ou 'head' via exec.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -163,7 +163,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "job",
-		Description: "Gerencia background jobs assíncronos: no NoteServer via systemd-run; no host 'local' (Windows) em Job Object nomeado, com log em arquivo, sobrevivendo ao fim da chamada (dev server, watcher, túnel). Use para qualquer comando que precise de mais de ~3 min ou ficar no ar; o 'exec' é síncrono e encerra tudo ao terminar. No local: máx. 5 jobs ativos e vida máxima de 12 h; 'stop' encerra a árvore inteira. Use action='wait' para aguardar conclusão por evento (zero sleep).",
+		Description: "Gerencia background jobs assíncronos: no NoteServer via systemd-run; no host 'local' (Windows) em Job Object nomeado, com log em arquivo, sobrevivendo ao fim da chamada (dev server, watcher, túnel). Use para qualquer comando que precise de mais de ~30s ou ficar no ar; o 'exec' é síncrono e encerra tudo ao terminar. No local: máx. 5 jobs ativos e vida máxima de 12 h; 'stop' encerra a árvore inteira. Use action='wait' para aguardar conclusão por evento (espera até 35s por chamada com retorno fluido de progresso e log parcial caso ainda esteja em execução, permitindo polling contínuo sem timeout).",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -191,8 +191,9 @@ var serverTools = []ToolSchema{
 }
 
 type Server struct {
-	mu     sync.Mutex
-	writer *bufio.Writer
+	mu        sync.Mutex
+	writer    *bufio.Writer
+	Forwarder func(name string, rawArgs json.RawMessage) (ToolCallResult, error)
 }
 
 func NewServer() *Server {
@@ -216,7 +217,16 @@ func (s *Server) writeResponse(resp JSONRPCResponse) {
 	_ = s.writer.Flush()
 }
 
-func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
+func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) ToolCallResult {
+	if s.Forwarder != nil {
+		if res, err := s.Forwarder(name, rawArgs); err == nil {
+			return res
+		}
+	}
+	return DispatchTool(name, rawArgs)
+}
+
+func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
 	start := time.Now()
 	bytesIn := len(rawArgs)
 	host, summary := telemetry.SummarizeCall(name, rawArgs)

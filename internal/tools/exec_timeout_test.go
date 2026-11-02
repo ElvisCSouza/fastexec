@@ -12,11 +12,11 @@ func TestDefaultTimeoutFicaAbaixoDoLimiteDoCliente(t *testing.T) {
 	if transport.DefaultTimeout >= maxClientTimeout {
 		t.Errorf("DefaultTimeout (%v) deveria ser menor que o teto (%v)", transport.DefaultTimeout, maxClientTimeout)
 	}
-	if transport.DefaultTimeout != 200*time.Second {
-		t.Errorf("DefaultTimeout deveria ser 200 s (margem de 40 s antes do corte de ~240 s do cliente), é %v", transport.DefaultTimeout)
+	if transport.DefaultTimeout != 45*time.Second {
+		t.Errorf("DefaultTimeout deveria ser 45 s (margem de 15 s antes do corte de 60 s do cliente), é %v", transport.DefaultTimeout)
 	}
-	if MaxClientTimeoutMs != 210000 {
-		t.Errorf("o teto deveria ser 210000 ms, é %d", MaxClientTimeoutMs)
+	if MaxClientTimeoutMs != 50000 {
+		t.Errorf("o teto deveria ser 50000 ms, é %d", MaxClientTimeoutMs)
 	}
 }
 

@@ -10,9 +10,9 @@ import (
 	"homelab/fastexec/internal/transport"
 )
 
-// MaxClientTimeoutMs é o teto do timeout_ms do exec: o cliente MCP (Claude Desktop) desiste de uma chamada pendente em
-// ~240 s; com 210 s o FastExec responde (com a saída parcial) 30 s antes de o transporte ser cortado.
-const MaxClientTimeoutMs = 210000
+// MaxClientTimeoutMs é o teto do timeout_ms do exec: o Claude Desktop corta a chamada do dispositivo aos
+// 60 s; com 50 s o FastExec responde (com a saída parcial) 10 s antes de o transporte ser cortado.
+const MaxClientTimeoutMs = 50000
 
 // maxClientTimeout é variável só para os testes poderem encurtar o teto.
 var maxClientTimeout = time.Duration(MaxClientTimeoutMs) * time.Millisecond
@@ -134,7 +134,7 @@ func formatTimeout(elapsedMs int64, stdout, stderr string) (string, error) {
 	if partial != "" {
 		msg += "\nSaída parcial capturada até o corte:\n" + capOutput(partial)
 	}
-	msg += "\nPara comandos que exigem mais de 3 minutos, use a tool 'job' (action='start')."
+	msg += "\n[FastExec Guidance] Para tarefas longas (> 30s), use a tool 'job' (action='start')."
 	return msg, fmt.Errorf("timeout após %.1fs", float64(elapsedMs)/1000)
 }
 

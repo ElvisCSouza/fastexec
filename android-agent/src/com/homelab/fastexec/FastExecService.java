@@ -94,6 +94,7 @@ public class FastExecService extends Service {
         startCommandServer();
         ensureAccessibilityEnabled();
         registerScreenReceiver();
+        ensureAdbOn();
         reportCurrentState();
     }
 
@@ -103,6 +104,7 @@ public class FastExecService extends Service {
             startDaemon();
             startCommandServer();
         }
+        ensureAdbOn();
         return START_STICKY;
     }
 
@@ -119,6 +121,20 @@ public class FastExecService extends Service {
             Log.w(TAG, "acessibilidade estava desligada; religada");
         } catch (SecurityException e) {
             Log.w(TAG, "acessibilidade desligada e sem permissao para religar");
+        }
+    }
+
+    /** ADB definitivo: se alguem (ou o Fire OS) desligar o ADB, religa sozinho. So age quando esta OFF.
+     *  Nunca DESliga (desligar o ADB mata o root temporario). Precisa de WRITE_SECURE_SETTINGS. */
+    private void ensureAdbOn() {
+        try {
+            int v = Settings.Global.getInt(getContentResolver(), Settings.Global.ADB_ENABLED, 0);
+            if (v != 1) {
+                Settings.Global.putInt(getContentResolver(), Settings.Global.ADB_ENABLED, 1);
+                Log.i(TAG, "ensureAdbOn: ADB estava OFF; religado");
+            }
+        } catch (SecurityException e) {
+            Log.w(TAG, "ensureAdbOn: sem WRITE_SECURE_SETTINGS");
         }
     }
 
@@ -296,6 +312,7 @@ public class FastExecService extends Service {
                 }
                 if (!Intent.ACTION_SCREEN_ON.equals(action)) return;
                 reportState(true);
+                ensureAdbOn();
                 handleScreenOn();
                 if (!isAutoTvEnabled()) {
                     Log.i(TAG, "autotv: tela ligou, desativado");

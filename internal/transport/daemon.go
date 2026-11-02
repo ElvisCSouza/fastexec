@@ -17,7 +17,7 @@ const (
 	MagicExec      uint16 = 0x5345            // 'SE'
 	MagicPut       uint16 = 0x5350            // 'SP'
 	MagicGet       uint16 = 0x5347            // 'SG'
-	DefaultTimeout        = 200 * time.Second // 40 s de margem antes do corte de ~240 s do cliente MCP; mais que isso, use a tool job
+	DefaultTimeout        = 45 * time.Second  // 15 s de margem antes do corte de 60 s do Claude Desktop; mais que isso, use a tool job
 	DialTimeout           = 3 * time.Second
 	MaxCmdLen             = 1024 * 1024      // 1 MB
 	MaxOutputLen          = 16 * 1024 * 1024 // 16 MB
@@ -69,6 +69,13 @@ func ExecDaemon(tcpAddr string, cmd string, timeout time.Duration) (*ExecResult,
 	// Resposta Header 1: 2 bytes magic + 4 bytes exit_code + 4 bytes stdout_len = 10 bytes
 	respHeader := make([]byte, 10)
 	if _, err := io.ReadFull(conn, respHeader); err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return &ExecResult{
+				ExitCode: -1,
+				Duration: time.Since(start).Milliseconds(),
+				TimedOut: true,
+			}, nil
+		}
 		return nil, fmt.Errorf("falha ao ler cabeçalho da resposta de %s: %w", tcpAddr, err)
 	}
 

@@ -105,8 +105,8 @@ func TestLocalJobLimiteDeCinco(t *testing.T) {
 		}
 	}
 	_, err := StartLocalJob("", tickJob(marker), "", "")
-	if err == nil || !strings.Contains(err.Error(), "limite de 5 jobs") || !strings.Contains(err.Error(), "stop") {
-		t.Errorf("o 6º deveria falhar orientando a parar um job: %v", err)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("limite de %d jobs", LocalJobMaxActive)) || !strings.Contains(err.Error(), "stop") {
+		t.Errorf("o próximo deveria falhar orientando a parar um job: %v", err)
 	}
 }
 

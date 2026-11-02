@@ -2,23 +2,27 @@ package transport
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
 type HostTarget struct {
-	Name    string
-	IsLocal bool
-	IsSSH   bool
-	SSHHost string
-	TCPAddr string
+	Name       string
+	IsLocal    bool
+	IsSSH      bool
+	SSHHost    string
+	TCPAddr    string
+	DefaultCwd string
 }
 
 var knownHosts = map[string]HostTarget{
-	"local":      {Name: "local", IsLocal: true},
-	"pc-elvis":   {Name: "pc-elvis", IsLocal: true},
-	"windows":    {Name: "windows", IsLocal: true},
-	"noteserver": {Name: "noteserver", TCPAddr: "192.168.31.142:9142"},
-	"servidor":   {Name: "servidor", TCPAddr: "192.168.31.142:9142"},
+	"local":           {Name: "local", IsLocal: true},
+	"pc-elvis":        {Name: "pc-elvis", IsLocal: true},
+	"localhost":       {Name: "local", IsLocal: true},
+	"127.0.0.1":       {Name: "local", IsLocal: true},
+	"windows":         {Name: "windows", IsLocal: true},
+	"noteserver":      {Name: "noteserver", TCPAddr: "192.168.31.142:9142", DefaultCwd: "/home/elvis/workspace"},
+	"servidor":        {Name: "servidor", TCPAddr: "192.168.31.142:9142", DefaultCwd: "/home/elvis/workspace"},
 	"ax6000":          {Name: "ax6000", TCPAddr: "192.168.31.1:9142"},
 	"ax3000":          {Name: "ax3000", TCPAddr: "192.168.31.34:9142"},
 	"firestick-suite": {Name: "firestick-suite", TCPAddr: "192.168.31.37:9142"},
@@ -36,6 +40,9 @@ func ResolveHost(name string) (HostTarget, error) {
 	}
 	if target, ok := knownHosts[n]; ok {
 		return target, nil
+	}
+	if comp := strings.ToLower(os.Getenv("COMPUTERNAME")); comp != "" && n == comp {
+		return HostTarget{Name: "local", IsLocal: true}, nil
 	}
 
 	// Prefixo explícito ssh: ex: ssh:servidor ou ssh:usuario@ip

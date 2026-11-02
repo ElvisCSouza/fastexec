@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 
+	"homelab/fastexec/internal/daemon"
 	"homelab/fastexec/internal/logger"
 	"homelab/fastexec/internal/mcp"
 	"homelab/fastexec/internal/telemetry"
@@ -19,6 +21,13 @@ func main() {
 	args := os.Args[1:]
 	if len(args) == 0 || args[0] == "mcp" {
 		server := mcp.NewServer()
+		server.Forwarder = func(name string, rawArgs json.RawMessage) (mcp.ToolCallResult, error) {
+			res, err := daemon.CallTool(name, rawArgs)
+			if err != nil {
+				return mcp.ToolCallResult{}, err
+			}
+			return *res, nil
+		}
 		if err := server.Run(); err != nil {
 			logger.Error("MCP server finalizado com erro: %v", err)
 			os.Exit(1)
@@ -31,6 +40,55 @@ func main() {
 	subArgs := args[1:]
 
 	switch cmd {
+	case "daemon-run":
+		if err := daemon.RunDaemon(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+	case "daemon-status":
+		pid, err := daemon.PingDaemon()
+		if err != nil {
+			fmt.Println("Daemon local: inativo")
+		} else {
+			fmt.Printf("Daemon local: ativo (PID %d em %s)\n", pid, daemon.Addr)
+		}
+
+	case "daemon-stop":
+		if err := daemon.StopDaemon(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("Daemon local encerrado com sucesso.")
+
+	case "daemon":
+		sub := "status"
+		if len(subArgs) > 0 {
+			sub = strings.ToLower(subArgs[0])
+		}
+		switch sub {
+		case "start", "run":
+			if err := daemon.RunDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+		case "stop":
+			if err := daemon.StopDaemon(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			fmt.Println("Daemon local encerrado com sucesso.")
+		case "status", "ping":
+			pid, err := daemon.PingDaemon()
+			if err != nil {
+				fmt.Println("Daemon local: inativo")
+			} else {
+				fmt.Printf("Daemon local: ativo (PID %d em %s)\n", pid, daemon.Addr)
+			}
+		default:
+			fmt.Println("Uso: fastexec daemon <status|start|stop>")
+		}
+
 	case "exec":
 		if len(subArgs) < 1 {
 			fmt.Println("Uso: fastexec exec [host] <comando>")
@@ -49,16 +107,31 @@ func main() {
 			command = strings.Join(subArgs, " ")
 		}
 
-		out, err := tools.HandleExec(tools.ExecArgs{Host: host, Command: command})
+		execArgs := tools.ExecArgs{Host: host, Command: command}
+		argsBytes, _ := json.Marshal(execArgs)
+
+		var out string
+		var isErr bool
+		if res, err := daemon.CallTool("exec", argsBytes); err == nil && res != nil {
+			if len(res.Content) > 0 {
+				out = res.Content[0].Text
+			}
+			isErr = res.IsError
+		} else {
+			var herr error
+			out, herr = tools.HandleExec(execArgs)
+			isErr = (herr != nil)
+		}
+
 		if out != "" {
 			fmt.Print(out)
 			if !strings.HasSuffix(out, "\n") {
 				fmt.Println()
 			}
 		}
-		if err != nil {
+		if isErr {
 			if out == "" {
-				fmt.Fprintln(os.Stderr, err.Error())
+				fmt.Fprintln(os.Stderr, "comando falhou")
 			}
 			os.Exit(1)
 		}
@@ -175,18 +248,33 @@ func main() {
 			}
 		}
 
-		out, err := tools.HandleJob(tools.JobArgs{
+		jobArgs := tools.JobArgs{
 			Host:    host,
 			Action:  action,
 			Command: jobCmd,
 			JobID:   jobID,
 			Lines:   lines,
-		})
+		}
+		jobBytes, _ := json.Marshal(jobArgs)
+
+		var out string
+		var isErr bool
+		if res, err := daemon.CallTool("job", jobBytes); err == nil && res != nil {
+			if len(res.Content) > 0 {
+				out = res.Content[0].Text
+			}
+			isErr = res.IsError
+		} else {
+			var herr error
+			out, herr = tools.HandleJob(jobArgs)
+			isErr = (herr != nil)
+		}
+
 		fmt.Print(out)
 		if !strings.HasSuffix(out, "\n") {
 			fmt.Println()
 		}
-		if err != nil {
+		if isErr {
 			os.Exit(1)
 		}
 
@@ -228,7 +316,7 @@ func main() {
 
 	default:
 		fmt.Printf("Comando desconhecido: '%s'\n", cmd)
-		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, firestick")
+		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, firestick, daemon")
 		os.Exit(1)
 	}
 }

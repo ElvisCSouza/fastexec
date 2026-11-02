@@ -26,24 +26,25 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
 | `job` | `host`, `action`, `command` ou `argv`, `cwd`, `job_id`, `lines` | Background jobs assíncronos (`start`, `status`, `tail`, `wait`, `stop`, `list`): systemd-run nos hosts Linux, Job Object no `local` (seção abaixo) |
 | `ping` | `host` | Diagnóstico de latência e saúde de conexão por nó |
 
-## Convenções de Rede
-- `noteserver`: `192.168.31.142:9142`
-- `ax6000`: `192.168.31.1:9142`
-- `ax3000`: `192.168.31.34:9142`
-- `local`: `PC-Elvis` (Win32 direto)
+## Convenções de Rede e CWD Padrão
+- `noteserver`: `192.168.31.142:9142` (Daemon Zig). Diretório de trabalho padrão automático: `/home/elvis/workspace` (elimina a necessidade de injetar `cd ~/workspace &&` nos comandos).
+- `ax6000`: `192.168.31.1:9142` (Daemon Zig aarch64)
+- `ax3000`: `192.168.31.34:9142` (Daemon Zig armv7l)
+- `local`: `PC-Elvis` (Daemon local residente em `127.0.0.1:9146` com auto-bootstrap transparente ou fallback direto)
 
 ## Retorno da tool `exec` (`internal/tools/outclean.go`, `formatExecResult`)
 
 Aplicado a stdout e stderr, sempre, antes de montar a resposta:
 1. Remove sequências ANSI (CSI e OSC).
-2. Linhas consecutivas idênticas viram `<linha> ×N` (CRLF preservado).
-3. Linha com mais de 400 caracteres vira `<400 chars>…(+N chars)`.
-4. Exit 1 com stdout e stderr vazios responde `sem resultado (exit 1)` com `isError=false` e é gravado como sucesso (`success=1`, `no_result=1`). Exit 1 com alguma saída e demais exits não-zero mantêm `[exit N] ...` com `isError=true` e `success=0`.
-5. Teto: saída limpa acima de 256 KB devolve os primeiros 16 KB e a linha final `[truncado: <total> bytes; só os primeiros 16 KB foram devolvidos]`. Até 256 KB nada é cortado.
+2. Expulsa lixo de terminal conhecido via tabela extensível (`noisePrefixes`): `hint: ` do Git, avisos de update/depreciação de gerenciadores de pacotes (`npm notice`, `npm warn deprecated`, `[notice] A new release of pip`) e avisos de versão de PowerShell.
+3. Linhas consecutivas idênticas viram `<linha> ×N` (CRLF preservado).
+4. Linha com mais de 400 caracteres vira `<400 chars>…(+N chars)`.
+5. Exit 1 com stdout e stderr vazios responde `sem resultado (exit 1)` com `isError=false` e é gravado como sucesso (`success=1`, `no_result=1`). Exit 1 com alguma saída e demais exits não-zero mantêm `[exit N] ...` com `isError=true` e `success=0`.
+6. Teto: saída limpa acima de 64 KB devolve os primeiros 16 KB e a linha final `[truncado: <total> bytes; só os primeiros 16 KB foram devolvidos]`. Até 64 KB nada é cortado.
 
-Saída limpa (sem ANSI, sem repetição, sem linha longa, até 256 KB) é idêntica byte a byte à saída bruta.
+Saída limpa (sem ANSI, sem lixo de terminal, sem repetição, sem linha longa, até 64 KB) é preservada fielmente.
 
-6. Timeout (host `local`): resposta `[timeout após X.Xs; árvore de processos encerrada]`, seguida de `Saída parcial capturada até o corte:` e do que foi emitido, com `isError=true`. O agente sabe com certeza que o comando foi interrompido.
+7. Timeout (host `local`): resposta `[timeout após X.Xs; árvore de processos encerrada]`, seguida de `Saída parcial capturada até o corte:` e do que foi emitido, com `isError=true`. O agente sabe com certeza que o comando foi interrompido.
 
 Telemetria (`internal/telemetry`): tabela `audit` ganhou `truncated` e `no_result` (migração `setupAuditSchema`, `ALTER TABLE ... ADD COLUMN` só se faltar). `RenderStats` mostra por ferramenta P50/P90/P99/máximo de `bytes_out`, contagem de truncados e de "sem resultado", e os 5 maiores retornos do período (comando limitado a 60 caracteres).
 
@@ -96,7 +97,7 @@ Para o que precisa ficar no ar além da chamada (dev server, watcher, túnel) e 
 | Higiene | no máximo 5 jobs ativos (o 6º falha dizendo qual parar); vida máxima de 12 h desde a criação (encerrado ao consultar); arquivos de jobs finalizados são apagados após 7 dias | nada fica no ar para sempre |
 | Comando que falha na hora | o `start` não falha: o job aparece `EXITED` e o `tail` mostra a mensagem | o agente vê o erro real |
 
-Timeout do `exec`: `DefaultTimeout` é 200 s e `timeout_ms` acima de 210 s é limitado a 210 s (`MaxClientTimeoutMs`), porque o cliente MCP corta chamadas pendentes em ~240 s; o padrão deixa 40 s de margem e não derruba operações rotineiras do homelab (docker, restic, apt). Quem estoura recebe `[timeout após X.Xs; árvore de processos encerrada]`, a saída parcial e a orientação de usar `job`. O `wait` também espera no máximo 200 s (`jobWaitMax`), no local e nos hosts Linux: se o job segue ativo no prazo, a resposta é `[job X ainda em execução após 200s; chame 'wait' de novo ou use 'tail']` seguida do fim do log. No Linux o laço é limitado no próprio host remoto, então nenhum comando fica pendurado.
+Timeout do `exec`: `DefaultTimeout` é 45 s e `timeout_ms` acima de 50 s é limitado a 50 s (`MaxClientTimeoutMs`), porque o Claude Desktop corta chamadas de dispositivos em 60 s; o padrão deixa 15 s de margem e encerra a árvore de processos sem quebrar a sessão do chat. Quem estoura recebe `[timeout após X.Xs; árvore de processos encerrada]`, a saída parcial e a orientação de usar `job`. O `wait` também espera no máximo 35 s (`jobWaitMax`), no local e nos hosts Linux: se o job segue ativo no prazo, a resposta é `[job X ainda em execução após 35s; chame 'wait' de novo ou use 'tail']` seguida do fim do log. Isso possibilita polling contínuo sem nunca estourar o limite de 60 s do Claude Desktop.
 
 Testes: `internal/transport/localjob_test.go` (ciclo start, status, tail, stop sem órfão; job que sobrevive a um `exec`; limite de 5; vida máxima; término espontâneo; comando que falha na hora; id e cwd) e `internal/tools/job_local_test.go`, `internal/tools/exec_timeout_test.go`.
 

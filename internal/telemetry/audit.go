@@ -208,8 +208,16 @@ func SummarizeCall(toolName string, rawArgs []byte) (string, string) {
 	summary := ""
 	switch toolName {
 	case "exec":
-		if cmd, ok := generic["command"].(string); ok {
+		if cmd, ok := generic["command"].(string); ok && cmd != "" {
 			summary = truncate(cleanLine(cmd), 120)
+		} else if argv, ok := generic["argv"].([]any); ok && len(argv) > 0 {
+			parts := make([]string, 0, len(argv))
+			for _, a := range argv {
+				if s, ok := a.(string); ok {
+					parts = append(parts, s)
+				}
+			}
+			summary = truncate(cleanLine(strings.Join(parts, " ")), 120)
 		}
 	case "sql":
 		if q, ok := generic["query"].(string); ok {

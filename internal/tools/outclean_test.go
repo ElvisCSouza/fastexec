@@ -27,6 +27,26 @@ func TestCleanOutputRemovesANSI(t *testing.T) {
 	}
 }
 
+func TestCleanOutputRemovesTerminalNoise(t *testing.T) {
+	in := "commit 1234abc\nhint: Using 'master' as the name for the initial branch\nhint: This default branch name is subject to change.\nAuthor: Elvis\nnpm notice New major version of npm available! 10.1.0 -> 10.8.2\ncode running\n"
+	want := "commit 1234abc\nAuthor: Elvis\ncode running\n"
+	if got := cleanOutput(in); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	pipNoise := "instalado com sucesso\n[notice] A new release of pip is available: 23.0 -> 24.0\n[notice] To update, run: python -m pip install --upgrade pip\n"
+	wantPip := "instalado com sucesso\n"
+	if got := cleanOutput(pipNoise); got != wantPip {
+		t.Fatalf("pip noise: got %q, want %q", got, wantPip)
+	}
+
+	psNoise := "A new PowerShell prerelease is available: https://aka.ms/PSWindows\nresultado\n"
+	wantPs := "resultado\n"
+	if got := cleanOutput(psNoise); got != wantPs {
+		t.Fatalf("powershell noise: got %q, want %q", got, wantPs)
+	}
+}
+
 func TestCleanOutputCollapsesRepeatedLines(t *testing.T) {
 	cases := map[string]struct{ in, want string }{
 		"lf":    {"a\na\na\nb\n", "a ×3\nb\n"},
@@ -95,7 +115,7 @@ func TestFormatExecResultCleanOutputIsByteIdentical(t *testing.T) {
 		"ação ñandú — ok\n",
 		"x\n" + strings.Repeat("y", 400) + "\n",
 		distinctText(1000),
-		distinctText(255 * 1024),
+		distinctText(63 * 1024),
 	}
 	for _, stdout := range cases {
 		out, err := formatExecResult("cmd", transport.ExecResult{Stdout: stdout})
@@ -115,16 +135,16 @@ func TestFormatExecResultCleanOutputIsByteIdentical(t *testing.T) {
 	}
 }
 
-func TestFormatExecResultCapAt255KBIsUntouched(t *testing.T) {
-	in := distinctText(255 * 1024)
+func TestFormatExecResultCapAt63KBIsUntouched(t *testing.T) {
+	in := distinctText(63 * 1024)
 	out, err := formatExecResult("cmd", transport.ExecResult{Stdout: in})
 	if err != nil || out != in {
-		t.Fatalf("saída de 255 KB não deve ser cortada (len=%d)", len(out))
+		t.Fatalf("saída de 63 KB não deve ser cortada (len=%d)", len(out))
 	}
 }
 
-func TestFormatExecResultCapAt257KB(t *testing.T) {
-	in := distinctText(257 * 1024)
+func TestFormatExecResultCapAt65KB(t *testing.T) {
+	in := distinctText(65 * 1024)
 	out, err := formatExecResult("cmd", transport.ExecResult{Stdout: in})
 	if err != nil {
 		t.Fatalf("err inesperado: %v", err)

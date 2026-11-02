@@ -38,7 +38,8 @@ func Init() *Logger {
 			logPath: logPath,
 			debug:   debug,
 		}
-		l.openFile()
+		// Lazy open: o arquivo só é aberto/criado se houver algo para gravar,
+		// evitando syscalls de disco em comandos CLI rápidos.
 		globalLogger = l
 	})
 	return globalLogger
@@ -82,6 +83,9 @@ func (l *Logger) log(level, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	entry := fmt.Sprintf("[%s] [%s] %s\n", time.Now().Format("2006-01-02 15:04:05.000"), level, msg)
 
+	if l.file == nil {
+		l.openFile()
+	}
 	if l.file != nil {
 		n, _ := io.WriteString(l.file, entry)
 		l.size += int64(n)

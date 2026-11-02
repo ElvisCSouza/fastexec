@@ -20,9 +20,9 @@ type JobArgs struct {
 	Lines   int      `json:"lines,omitempty"`
 }
 
-// jobWaitMax mantém o `wait` (local e Linux) abaixo do limite do cliente MCP (~4 min): passou disso, responde que o job
+// jobWaitMax mantém o `wait` (local e Linux) abaixo do teto de 60 s do Claude Desktop: passou disso, responde que o job
 // segue ativo em vez de deixar o transporte JSON-RPC cair. Variável só para os testes encurtarem.
-var jobWaitMax = 200 * time.Second
+var jobWaitMax = 35 * time.Second
 
 // waitTimeoutMarker é impresso pelo laço remoto quando o prazo do wait acaba com o job ainda ativo.
 const waitTimeoutMarker = "__FASTEXEC_WAIT_TIMEOUT__"
@@ -47,13 +47,17 @@ func HandleJob(args JobArgs) (string, error) {
 		targetHost = "noteserver"
 	}
 
-	if target, err := transport.ResolveHost(targetHost); err == nil && target.IsLocal {
+	target, err := transport.ResolveHost(targetHost)
+	if err == nil && target.IsLocal {
 		return handleLocalJob(action, args)
 	}
 
 	// hosts remotos (systemd-run): argv vira linha de comando com aspas simples POSIX
 	if len(args.Argv) > 0 && args.Command == "" {
 		args.Command = transport.QuoteArgvPOSIX(args.Argv)
+	}
+	if args.Cwd == "" && err == nil && target.DefaultCwd != "" {
+		args.Cwd = target.DefaultCwd
 	}
 	if args.Cwd != "" && args.Command != "" {
 		args.Command = "cd \"" + args.Cwd + "\" && " + args.Command

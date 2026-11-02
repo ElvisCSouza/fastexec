@@ -34,8 +34,8 @@ import (
 // próprio processo filho direto no arquivo).
 
 var (
-	// LocalJobMaxActive é o teto de jobs locais simultâneos.
-	LocalJobMaxActive = 5
+	// LocalJobMaxActive é o teto de jobs locais simultâneos (expandido para 12 para suportar múltiplas IAs e sessões concorrentes).
+	LocalJobMaxActive = 12
 	// localJobTTL é a vida máxima de um job local desde a criação; passou disso, o job é encerrado.
 	localJobTTL = 12 * time.Hour
 	// localJobKeepFinished é quanto tempo os arquivos de um job já finalizado ficam em disco.

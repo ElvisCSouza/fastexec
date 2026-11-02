@@ -11,12 +11,40 @@ const (
 	NoResultText = "sem resultado (exit 1)"
 
 	maxLineRunes  = 400
-	outputCapSize = 256 * 1024
+	outputCapSize = 64 * 1024
 	outputHeadLen = 16 * 1024
 	truncMarker   = "[truncado: "
 )
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+
+// noisePrefixes é a tabela extensível de prefixos de linhas de lixo de terminal (hints do git,
+// banners de atualização, avisos de depreciação) que inflam a janela de contexto das LLMs sem agregar valor técnico.
+var noisePrefixes = []string{
+	"hint: ",
+	"hint:",
+	"npm notice ",
+	"npm warn deprecated ",
+	"[notice] A new release of pip",
+	"[notice] To update, run:",
+	"A new PowerShell prerelease",
+	"A new release of PowerShell",
+	"A new version of PowerShell",
+	"Upgrade to the latest version by visiting",
+}
+
+func isTerminalNoise(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	for _, p := range noisePrefixes {
+		if strings.HasPrefix(trimmed, p) {
+			return true
+		}
+	}
+	return false
+}
 
 func cleanOutput(s string) string {
 	if s == "" {
@@ -24,7 +52,14 @@ func cleanOutput(s string) string {
 	}
 	s = ansiRegex.ReplaceAllString(s, "")
 
-	lines := strings.Split(s, "\n")
+	rawLines := strings.Split(s, "\n")
+	lines := make([]string, 0, len(rawLines))
+	for _, l := range rawLines {
+		if !isTerminalNoise(l) {
+			lines = append(lines, l)
+		}
+	}
+
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(lines); {
