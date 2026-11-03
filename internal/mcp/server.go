@@ -66,7 +66,7 @@ type PropertyDef struct {
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Executa comando síncrono rápido no nó alvo (orientado a eventos, máx 45s). Para ler arquivos prefira 'read_file'; para gerenciar arquivos/diretórios prefira 'file_ops'; para tarefas longas (> 30s) use a tool 'job' (action='start'). No noteserver, o cwd padrão é ~/workspace. Dois modos: 'command' (linha de shell; no Windows 'local' roda em cmd.exe) ou 'argv' (sem shell: cada item chega ao programa exatamente como enviado; use para código e texto com metacaracteres). Código longo vai por 'input' (stdin): argv ['node','-'] ou ['python','-'] com script em 'input'. Para PowerShell use argv ['powershell','-NoProfile','-Command','-'] com script em 'input'. No estouro de timeout_ms a árvore de processos é encerrada e a resposta traz a saída parcial. stdin sem 'input' é EOF imediato.",
+		Description: "Executa comando síncrono rápido no nó alvo (orientado a eventos, máx 45s). Para ler arquivos prefira 'read_file'; para gerenciar arquivos/diretórios prefira 'file_ops'; para tarefas longas (> 30s) use a tool 'job' (action='start'). No noteserver, o cwd padrão é ~/workspace. Dois modos: 'command' (linha de shell; no Windows 'local' roda em cmd.exe) ou 'argv' (sem shell: cada item chega ao programa exatamente como enviado; use para código e texto com metacaracteres). Código longo vai por 'input' (stdin): argv ['node','-'] ou ['python','-'] com script em 'input'. Para PowerShell use argv ['pwsh','-NoProfile','-Command','-'] com script em 'input'. No estouro de timeout_ms a árvore de processos é encerrada e a resposta traz a saída parcial. stdin sem 'input' é EOF imediato.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{

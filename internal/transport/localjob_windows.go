@@ -358,7 +358,8 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 	flags := uint32(createNoWindow | createNewProcessGroup)
 	var cmd *exec.Cmd
 	if argv != nil {
-		cmd = exec.Command(argv[0], argv[1:]...)
+		effectiveArgv := ResolveShellArgv(argv)
+		cmd = exec.Command(effectiveArgv[0], effectiveArgv[1:]...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: flags}
 	} else {
 		cmd = exec.Command("cmd.exe")

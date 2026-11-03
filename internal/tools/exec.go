@@ -129,7 +129,7 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 		}
 		errMsg = capOutput(errMsg)
 		if isWindowsCmdletMismatch(command, errMsg) {
-			errMsg += "\n[FastExec Hint] O host 'local' (Windows) executa via cmd.exe nativo por performance. Para cmdlets PowerShell invoque 'powershell -NoProfile -Command ...'; para listar/manipular arquivos use a tool nativa 'file_ops'."
+			errMsg += "\n[FastExec Hint] O host 'local' (Windows) executa via cmd.exe nativo por performance. Para cmdlets PowerShell invoque 'pwsh -NoProfile -Command ...'; para listar/manipular arquivos use a tool nativa 'file_ops'."
 		}
 		if isBenignExitCode1(command, stdout, stderr) {
 			return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), nil
