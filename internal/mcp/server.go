@@ -188,6 +188,21 @@ var serverTools = []ToolSchema{
 			},
 		},
 	},
+	{
+		Name:        "tool_manage",
+		Description: "Pesquisa, ativa e executa módulos de ferramentas especializadas sob demanda no FastExec (Tool RAG / Dynamic Loading, economizando tokens no system prompt). Ações: 'search' (pesquisa ferramentas por palavra-chave), 'list' (mostra módulos disponíveis), 'enable' (carrega módulo no MCP com list_changed), 'disable' (descarrega módulo), 'call' (executa ferramenta diretamente sem carregá-la no schema).",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"action": {Type: "string", Description: "Ação: 'search', 'list', 'enable', 'disable', 'call'"},
+				"module": {Type: "string", Description: "Nome do módulo (ex: 'docker', 'git', 'alexa', 'iptv')"},
+				"query":  {Type: "string", Description: "Termo de busca para a ação 'search'"},
+				"tool":   {Type: "string", Description: "Nome da ferramenta para a ação 'call'"},
+				"params": {Type: "string", Description: "JSON serializado com argumentos para a ação 'call'"},
+			},
+			Required: []string{"action"},
+		},
+	},
 }
 
 type Server struct {
@@ -210,6 +225,26 @@ func (s *Server) writeResponse(resp JSONRPCResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		logger.Error("Erro serializando resposta JSON-RPC: %v", err)
+		return
+	}
+	_, _ = s.writer.Write(data)
+	_ = s.writer.WriteByte('\n')
+	_ = s.writer.Flush()
+}
+
+func (s *Server) writeNotification(method string, params any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	notif := map[string]any{
+		"jsonrpc": "2.0",
+		"method":  method,
+	}
+	if params != nil {
+		notif["params"] = params
+	}
+	data, err := json.Marshal(notif)
+	if err != nil {
 		return
 	}
 	_, _ = s.writer.Write(data)
@@ -292,22 +327,28 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		var args tools.PingArgs
 		_ = json.Unmarshal(rawArgs, &args)
 		outText, err = tools.HandlePing(args)
+	case "tool_manage":
+		outText, err = tools.HandleToolManage(rawArgs)
 	default:
-		errMsg := fmt.Sprintf("Ferramenta '%s' não encontrada", name)
-		telemetry.Record(telemetry.AuditEntry{
-			Tool:           name,
-			Host:           host,
-			DurationMs:     time.Since(start).Milliseconds(),
-			BytesIn:        bytesIn,
-			BytesOut:       len(errMsg),
-			Success:        false,
-			ExitCode:       1,
-			ErrorMessage:   errMsg,
-			CommandSummary: summary,
-		})
-		return ToolCallResult{
-			Content: []ToolContent{{Type: "text", Text: errMsg}},
-			IsError: true,
+		if dynamicHandler := tools.GetDynamicHandler(name); dynamicHandler != nil {
+			outText, err = dynamicHandler(rawArgs)
+		} else {
+			errMsg := fmt.Sprintf("Ferramenta '%s' não encontrada", name)
+			telemetry.Record(telemetry.AuditEntry{
+				Tool:           name,
+				Host:           host,
+				DurationMs:     time.Since(start).Milliseconds(),
+				BytesIn:        bytesIn,
+				BytesOut:       len(errMsg),
+				Success:        false,
+				ExitCode:       1,
+				ErrorMessage:   errMsg,
+				CommandSummary: summary,
+			})
+			return ToolCallResult{
+				Content: []ToolContent{{Type: "text", Text: errMsg}},
+				IsError: true,
+			}
 		}
 	}
 
@@ -346,6 +387,11 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 
 func (s *Server) Run() error {
 	logger.Info("Iniciando MCP Server 'fastexec' via stdio...")
+
+	tools.SetOnListChanged(func() {
+		s.writeNotification("notifications/tools/list_changed", map[string]any{})
+	})
+
 	scanner := bufio.NewScanner(os.Stdin)
 
 	buf := make([]byte, 1024*1024)
@@ -375,7 +421,9 @@ func (s *Server) Run() error {
 				Result: map[string]any{
 					"protocolVersion": "2024-11-05",
 					"capabilities": map[string]any{
-						"tools": map[string]any{},
+						"tools": map[string]any{
+							"listChanged": true,
+						},
 					},
 					"serverInfo": map[string]any{
 						"name":    "fastexec",
@@ -395,11 +443,18 @@ func (s *Server) Run() error {
 			})
 
 		case "tools/list":
+			allTools := make([]any, 0, len(serverTools))
+			for _, st := range serverTools {
+				allTools = append(allTools, st)
+			}
+			for _, ds := range tools.GetActiveDynamicSchemas() {
+				allTools = append(allTools, ds)
+			}
 			s.writeResponse(JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
 				Result: map[string]any{
-					"tools": serverTools,
+					"tools": allTools,
 				},
 			})
 

@@ -25,6 +25,7 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
 | `sql` | `host`, `db_path`, `query` | Execução direta de SQLite com saída tabular ou JSON |
 | `job` | `host`, `action`, `command` ou `argv`, `cwd`, `job_id`, `lines` | Background jobs assíncronos (`start`, `status`, `tail`, `wait`, `stop`, `list`): systemd-run nos hosts Linux, Job Object no `local` (seção abaixo) |
 | `ping` | `host` | Diagnóstico de latência e saúde de conexão por nó |
+| `tool_manage` | `action`, `module`, `query`, `tool`, `params` | Catálogo dinâmico e execução sob demanda (Tool RAG / `listChanged`). Evita inchar o system prompt com dezenas de ferramentas. Ações: `search`, `list`, `enable`, `disable`, `call` |
 
 ## Convenções de Rede e CWD Padrão
 - `noteserver`: `192.168.31.142:9142` (Daemon Zig). Diretório de trabalho padrão automático: `/home/elvis/workspace` (elimina a necessidade de injetar `cd ~/workspace &&` nos comandos).
