@@ -17,7 +17,7 @@ var firesticks = map[string]string{
 }
 
 const firestickUso = `Uso: fastexec firestick <sala|suite> <comando>
-  adb on | adb off | adb status      ADB fica desligado; ligar so para deploy e desligar depois
+  adb on | adb status | adb off      ADB e PERMANENTE (sempre ON). 'adb off' mata o root e apaga a autorizacao: nao usar
   autotv on | autotv off | autotv    Home ao acordar (liga a TV por HDMI-CEC). Sala: off
   state | wake | sleep | home | back | app | launch <pacote|url> | report
 Shell no aparelho: fastexec exec firestick-sala "logcat -d -t 200"`
