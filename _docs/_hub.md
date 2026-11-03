@@ -34,17 +34,27 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
 
 ## Retorno da tool `exec` (`internal/tools/outclean.go`, `formatExecResult`)
 
-Aplicado a stdout e stderr, sempre, antes de montar a resposta:
-1. Remove sequências ANSI (CSI e OSC).
-2. Expulsa lixo de terminal conhecido via tabela extensível (`noisePrefixes`): `hint: ` do Git, avisos de update/depreciação de gerenciadores de pacotes (`npm notice`, `npm warn deprecated`, `[notice] A new release of pip`) e avisos de versão de PowerShell.
-3. Linhas consecutivas idênticas viram `<linha> ×N` (CRLF preservado).
-4. Linha com mais de 400 caracteres vira `<400 chars>…(+N chars)`.
-5. Exit 1 com stdout e stderr vazios responde `sem resultado (exit 1)` com `isError=false` e é gravado como sucesso (`success=1`, `no_result=1`). Exit 1 com alguma saída e demais exits não-zero mantêm `[exit N] ...` com `isError=true` e `success=0`.
-6. Teto: saída limpa acima de 64 KB devolve os primeiros 16 KB e a linha final `[truncado: <total> bytes; só os primeiros 16 KB foram devolvidos]`. Até 64 KB nada é cortado.
+Aplicado a stdout e stderr, sempre, antes de montar a resposta através de esteira determinística consciente do conteúdo (*Content-Aware Minification*):
+1. Resolve sobrescritas de Carriage Return (`\r` sem `\n`), mantendo apenas o estado final de barras de progresso (ex: `curl`, `docker pull`, `pip`, `npm`).
+2. Remove sequências ANSI (CSI e OSC).
+3. **Detecção e Minificação de JSON**: se a saída for JSON válido (`json.Valid`), compacta diretamente via `json.Compact` (eliminando 100% de quebras de linha e recuos desnecessários, economia de 30% a 50% de tokens).
+4. Expulsa lixo de terminal conhecido via tabela extensível (`noisePrefixes`): `hint: ` do Git, avisos de update/depreciação de gerenciadores de pacotes (`npm notice`, `npm warn deprecated`, `[notice] A new release of pip`) e avisos de versão de PowerShell.
+5. **Preservação de Código vs Compactação de Tabelas**:
+   - Código, diffs, YAML e scripts (`def `, `import `, `class `, `diff --git`, etc.): têm sua indentação e espaços preservados **100% intactos**.
+   - Tabelas de CLI de sistema (`ps`, `docker ps`, `df -h`, `netstat`, `kubectl`): vãos de 3 ou mais espaços entre colunas viram 2 espaços (`\s{3,} ->   `), cortando de 20% a 40% dos tokens de whitespace sem perder a estrutura tabular.
+6. Linhas consecutivas idênticas viram `<linha> ×N` (CRLF preservado).
+7. Linha com mais de 400 caracteres vira `<400 chars>…(+N chars)`.
+8. Exit 1 com stdout e stderr vazios responde `sem resultado (exit 1)` com `isError=false` e é gravado como sucesso (`success=1`, `no_result=1`). Exit 1 com alguma saída e demais exits não-zero mantêm `[exit N] ...` com `isError=true` e `success=0`.
+9. Teto: saída limpa acima de 64 KB devolve os primeiros 16 KB e a linha final `[truncado: <total> bytes; só os primeiros 16 KB foram devolvidos]`. Até 64 KB nada é cortado.
 
 Saída limpa (sem ANSI, sem lixo de terminal, sem repetição, sem linha longa, até 64 KB) é preservada fielmente.
 
-7. Timeout (host `local`): resposta `[timeout após X.Xs; árvore de processos encerrada]`, seguida de `Saída parcial capturada até o corte:` e do que foi emitido, com `isError=true`. O agente sabe com certeza que o comando foi interrompido.
+10. Timeout (host `local`): resposta `[timeout após X.Xs; árvore de processos encerrada]`, seguida de `Saída parcial capturada até o corte:` e do que foi emitido, com `isError=true`. O agente sabe com certeza que o comando foi interrompido.
+
+## Ambiente "Interface Zero / Humano Zero" (Execução Headless na Origem)
+Todas as execuções locais e remotas injetam o set canônico de variáveis headless:
+`CI=1`, `DEBIAN_FRONTEND=noninteractive`, `PAGER=cat`, `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `TERM=dumb`, `NO_COLOR=1`, `POWERSHELL_UPDATECHECK=Off`, `DOTNET_CLI_TELEMETRY_OPTOUT=1`, `NPM_CONFIG_UPDATE_NOTIFIER=false`, `PIP_NO_INPUT=1`, `PIP_DISABLE_PIP_VERSION_CHECK=1`.
+Isso impede que ferramentas de terminal abram paginadores (`less`/`more`), peçam confirmações interativas `[y/n]`, mostrem spinners de progresso ou façam checagens de rede de nova versão na origem.
 
 Telemetria (`internal/telemetry`): tabela `audit` ganhou `truncated` e `no_result` (migração `setupAuditSchema`, `ALTER TABLE ... ADD COLUMN` só se faltar). `RenderStats` mostra por ferramenta P50/P90/P99/máximo de `bytes_out`, contagem de truncados e de "sem resultado", e os 5 maiores retornos do período (comando limitado a 60 caracteres).
 

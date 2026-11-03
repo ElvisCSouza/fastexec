@@ -149,8 +149,25 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	}, nil
 }
 
+// headlessEnv define as variáveis canônicas para execução 100% autônoma ("interface zero / humano zero").
+// Desativa animações, spinners, prompts [y/n], checagens de rede e paginadores na origem.
+var headlessEnv = []string{
+	"CI=1",
+	"DEBIAN_FRONTEND=noninteractive",
+	"PAGER=cat",
+	"GIT_PAGER=cat",
+	"GIT_TERMINAL_PROMPT=0",
+	"TERM=dumb",
+	"NO_COLOR=1",
+	"POWERSHELL_UPDATECHECK=Off",
+	"DOTNET_CLI_TELEMETRY_OPTOUT=1",
+	"NPM_CONFIG_UPDATE_NOTIFIER=false",
+	"PIP_NO_INPUT=1",
+	"PIP_DISABLE_PIP_VERSION_CHECK=1",
+}
+
 // localEnv monta o ambiente dos processos filhos locais: registro do Windows (Machine + User) + Git\usr\bin no PATH para
-// cp, mv, rm, ls, cat, grep funcionarem + GIT_TERMINAL_PROMPT=0 (sem terminal interativo, o git falha em vez de travar).
+// cp, mv, rm, ls, cat, grep funcionarem + variáveis headless canônicas.
 func localEnv() []string {
 	envList := env.MountForCurrentProcess()
 	gitUsrBin := `C:\Program Files\Git\usr\bin`
@@ -165,5 +182,5 @@ func localEnv() []string {
 	if !pathUpdated {
 		envList = append(envList, "PATH="+gitUsrBin)
 	}
-	return append(envList, "GIT_TERMINAL_PROMPT=0")
+	return append(envList, headlessEnv...)
 }

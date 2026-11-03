@@ -101,6 +101,7 @@ func DispatchWithInput(hostName string, cmd string, cwd string, input string, ti
 	if cwd != "" {
 		effectiveCmd = "cd \"" + cwd + "\" && " + effectiveCmd
 	}
+	effectiveCmd = "export CI=1 DEBIAN_FRONTEND=noninteractive PAGER=cat GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 TERM=dumb NO_COLOR=1; " + effectiveCmd
 
 	if target.IsSSH {
 		return ExecSSH(target.SSHHost, effectiveCmd, timeout)

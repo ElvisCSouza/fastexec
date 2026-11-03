@@ -61,6 +61,9 @@ func RunDaemon() error {
 
 func handleConn(conn net.Conn) {
 	defer conn.Close()
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.SetNoDelay(true)
+	}
 	scanner := bufio.NewScanner(conn)
 	buf := make([]byte, 1024*1024)
 	scanner.Buffer(buf, 16*1024*1024)
@@ -223,6 +226,9 @@ func ensureDaemon() (net.Conn, error) {
 	// 1. Tenta conectar direto
 	conn, err := net.DialTimeout("tcp", Addr, DialTimeout)
 	if err == nil {
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			_ = tcpConn.SetNoDelay(true)
+		}
 		return conn, nil
 	}
 
@@ -237,6 +243,9 @@ func ensureDaemon() (net.Conn, error) {
 		time.Sleep(15 * time.Millisecond)
 		conn, err = net.DialTimeout("tcp", Addr, DialTimeout)
 		if err == nil {
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				_ = tcpConn.SetNoDelay(true)
+			}
 			return conn, nil
 		}
 	}

@@ -47,6 +47,43 @@ func TestCleanOutputRemovesTerminalNoise(t *testing.T) {
 	}
 }
 
+func TestCleanOutputCompactsJSON(t *testing.T) {
+	in := "{\n  \"status\": \"ok\",\n  \"items\": [\n    1,\n    2,\n    3\n  ]\n}\n"
+	want := "{\"items\":[1,2,3],\"status\":\"ok\"}"
+	got := cleanOutput(in)
+	if got != want && (!strings.Contains(got, "\"status\":\"ok\"") || strings.Contains(got, "  ")) {
+		t.Fatalf("JSON não foi compactado: got %q", got)
+	}
+}
+
+func TestCleanOutputResolvesCarriageReturns(t *testing.T) {
+	in := "Baixando: 10%\rBaixando: 50%\rBaixando: 100%\r\nArquivo salvo com sucesso.\n"
+	want := "Baixando: 100%\nArquivo salvo com sucesso.\n"
+	if got := cleanOutput(in); got != want {
+		t.Fatalf("Carriage return progress overwrite falhou: got %q, want %q", got, want)
+	}
+}
+
+func TestCleanOutputCompressesTables(t *testing.T) {
+	in := "PID     USER        COMMAND\n1234    root        nginx -g daemon\n5678    elvis       node server.js\n"
+	want := "PID  USER  COMMAND\n1234  root  nginx -g daemon\n5678  elvis  node server.js\n"
+	if got := cleanOutput(in); got != want {
+		t.Fatalf("Tabela não foi compactada: got %q, want %q", got, want)
+	}
+}
+
+func TestCleanOutputPreservesCodeIndentation(t *testing.T) {
+	in := "def minha_funcao():\n    if True:\n        print(\"indentacao intacta\")\n"
+	if got := cleanOutput(in); got != in {
+		t.Fatalf("Código Python teve indentação alterada! got %q, want %q", got, in)
+	}
+
+	diffIn := "diff --git a/main.go b/main.go\n--- a/main.go\n+++ b/main.go\n@@ -1,3 +1,3 @@\n     linha com 4 espacos\n"
+	if got := cleanOutput(diffIn); got != diffIn {
+		t.Fatalf("Diff teve espacos alterados! got %q, want %q", got, diffIn)
+	}
+}
+
 func TestCleanOutputCollapsesRepeatedLines(t *testing.T) {
 	cases := map[string]struct{ in, want string }{
 		"lf":    {"a\na\na\nb\n", "a ×3\nb\n"},
