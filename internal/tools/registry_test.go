@@ -11,7 +11,7 @@ func TestToolManageList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if !strings.Contains(out, "docker") || !strings.Contains(out, "git") || !strings.Contains(out, "sql") || !strings.Contains(out, "homelab") {
+	if !strings.Contains(out, "docker") || !strings.Contains(out, "sql") || !strings.Contains(out, "homelab") {
 		t.Fatalf("list output missing modules: %s", out)
 	}
 }
@@ -62,7 +62,7 @@ func TestToolManageEnableDisable(t *testing.T) {
 
 func TestToolManageCallDirect(t *testing.T) {
 	// Chamada direta da tool sem estar ativa no catálogo (Tool RAG pattern)
-	out, err := HandleToolManage(json.RawMessage(`{"action": "call", "tool": "git_status", "params": "{\"host\": \"local\"}"}`))
+	out, err := HandleToolManage(json.RawMessage(`{"action": "call", "tool": "ping", "params": "{\"host\": \"local\"}"}`))
 	if err != nil {
 		t.Fatalf("call failed: %v", err)
 	}

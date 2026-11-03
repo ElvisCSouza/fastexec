@@ -156,12 +156,12 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "tool_manage",
-		Description: "Pesquisa, ativa e executa módulos de ferramentas especializadas sob demanda no FastExec (Tool RAG / Dynamic Loading, economizando tokens no system prompt). Módulos disponíveis: 'sql', 'homelab', 'docker', 'git'. Ações: 'search' (pesquisa ferramentas por palavra-chave), 'list' (mostra módulos disponíveis), 'enable' (carrega módulo no MCP com list_changed), 'disable' (descarrega módulo), 'call' (executa ferramenta diretamente sem carregá-la no schema).",
+		Description: "Pesquisa, ativa e executa módulos de ferramentas especializadas sob demanda no FastExec (Tool RAG / Dynamic Loading, economizando tokens no system prompt). Módulos disponíveis: 'sql', 'homelab', 'docker'. Ações: 'search' (pesquisa ferramentas por palavra-chave), 'list' (mostra módulos disponíveis), 'enable' (carrega módulo no MCP com list_changed), 'disable' (descarrega módulo), 'call' (executa ferramenta diretamente sem carregá-la no schema).",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"action": {Type: "string", Description: "Ação: 'search', 'list', 'enable', 'disable', 'call'"},
-				"module": {Type: "string", Description: "Nome do módulo (ex: 'sql', 'homelab', 'docker', 'git')"},
+				"module": {Type: "string", Description: "Nome do módulo (ex: 'sql', 'homelab', 'docker')"},
 				"query":  {Type: "string", Description: "Termo de busca para a ação 'search'"},
 				"tool":   {Type: "string", Description: "Nome da ferramenta para a ação 'call'"},
 				"params": {Type: "string", Description: "JSON serializado com argumentos para a ação 'call'"},

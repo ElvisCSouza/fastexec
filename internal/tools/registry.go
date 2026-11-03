@@ -120,66 +120,6 @@ func init() {
 	})
 
 	RegisterModule(&ModuleDef{
-		Name:        "git",
-		Description: "Inspeções semânticas de Git nos repositórios locais e remotos",
-		Tools: map[string]DynamicToolDef{
-			"git_status": {
-				Name:        "git_status",
-				Description: "Status curto e determinístico do repositório git",
-				Schema: map[string]any{
-					"name":        "git_status",
-					"description": "Status curto e determinístico do repositório git",
-					"inputSchema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"host": map[string]any{"type": "string", "description": "Alvo: 'local' (default) ou 'noteserver'"},
-							"cwd":  map[string]any{"type": "string", "description": "Diretório de trabalho do repositório"},
-						},
-					},
-				},
-				Handler: func(rawArgs json.RawMessage) (string, error) {
-					var p struct {
-						Host string `json:"host"`
-						Cwd  string `json:"cwd"`
-					}
-					_ = json.Unmarshal(rawArgs, &p)
-					return HandleExec(ExecArgs{Host: p.Host, Cwd: p.Cwd, Command: "git status -s"})
-				},
-			},
-			"git_log": {
-				Name:        "git_log",
-				Description: "Histórico resumido em 1 linha dos últimos commits",
-				Schema: map[string]any{
-					"name":        "git_log",
-					"description": "Histórico resumido em 1 linha dos últimos commits",
-					"inputSchema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"host":  map[string]any{"type": "string", "description": "Alvo: 'local' (default) ou 'noteserver'"},
-							"cwd":   map[string]any{"type": "string", "description": "Diretório de trabalho do repositório"},
-							"count": map[string]any{"type": "integer", "description": "Número de commits (padrão: 10)"},
-						},
-					},
-				},
-				Handler: func(rawArgs json.RawMessage) (string, error) {
-					var p struct {
-						Host  string `json:"host"`
-						Cwd   string `json:"cwd"`
-						Count int    `json:"count"`
-					}
-					_ = json.Unmarshal(rawArgs, &p)
-					count := p.Count
-					if count <= 0 {
-						count = 10
-					}
-					cmd := fmt.Sprintf("git log --oneline -n %d", count)
-					return HandleExec(ExecArgs{Host: p.Host, Cwd: p.Cwd, Command: cmd})
-				},
-			},
-		},
-	})
-
-	RegisterModule(&ModuleDef{
 		Name:        "sql",
 		Description: "Execução SQL analítica em DuckDB e SQLite com saída JSON pura",
 		Tools: map[string]DynamicToolDef{
