@@ -22,6 +22,7 @@ func ExecSSH(sshHost string, cmdStr string, timeout time.Duration) (*ExecResult,
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", sshHost, cmdStr)
+	cmd.SysProcAttr = hideWindowSysProcAttr()
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf

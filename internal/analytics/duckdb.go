@@ -54,6 +54,7 @@ func ExecuteDuckDBQuery(sessionName, sql string, timeoutMs int) (string, error) 
 
 	cmd := exec.CommandContext(ctx, duckdbPath, "session.duckdb", "-json", "-c", sql)
 	cmd.Dir = sessionDir
+	cmd.SysProcAttr = hideWindowSysProcAttr()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
