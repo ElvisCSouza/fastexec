@@ -16,11 +16,11 @@ var (
 const fileTypePipe = 3
 
 func init() {
-	// Se stdout já for um pipe (MCP Server da LLM via stdio ou redirecionamento de shell),
-	// não anexa console para não desviar os pipes JSON-RPC.
+	// Se stdout já for válido (redirecionado para arquivo, pipe MCP JSON-RPC, etc.),
+	// não anexa console para não sobrescrever o destino de saída.
 	h, _ := syscall.GetStdHandle(syscall.STD_OUTPUT_HANDLE)
 	ft, _, _ := procGetFileType.Call(uintptr(h))
-	if ft == fileTypePipe {
+	if ft != 0 {
 		return
 	}
 

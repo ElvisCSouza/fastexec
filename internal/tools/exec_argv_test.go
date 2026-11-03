@@ -3,6 +3,7 @@ package tools
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExecArgvLiteral(t *testing.T) {
@@ -28,9 +29,23 @@ func TestExecCommandEArgvJuntosSaoRejeitados(t *testing.T) {
 }
 
 func TestExecArgvSleepGuard(t *testing.T) {
+	origSleep := sleepFn
+	sleepFn = func(d time.Duration) {}
+	defer func() { sleepFn = origSleep }()
+
+	// Sleep puro <= 15s é auto-remediado
 	for _, argv := range [][]string{
 		{"sleep", "5"},
 		{"timeout", "/t", "5"},
+	} {
+		out, err := HandleExec(ExecArgs{Host: "local", Argv: argv})
+		if err != nil || !strings.Contains(out, "FastExec Auto-Remediation") {
+			t.Errorf("argv %v deveria ser auto-remediado, veio erro %v, out %q", argv, err, out)
+		}
+	}
+
+	// Comandos com encadeamento ou shells que usam sleep continuam barrados pelo guard
+	for _, argv := range [][]string{
 		{"bash", "-c", "sleep 3 && ls"},
 		{"cmd", "/c", "timeout /t 5"},
 	} {

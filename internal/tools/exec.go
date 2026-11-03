@@ -45,10 +45,18 @@ func HandleExec(args ExecArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'command' (ou 'argv') é obrigatório")
 	}
 
-	// Bloqueio determinístico de sleep / timeout artificial
 	label := args.Command
 	if hasArgv {
 		label = strings.Join(args.Argv, " ")
+	}
+
+	// Auto-remediação de sleep puro <= 15s com aviso pedagógico
+	if out, handled, err := tryRemediateSleep(label, args); handled {
+		return out, err
+	}
+
+	// Bloqueio determinístico de sleep / timeout artificial
+	if hasArgv {
 		exe := strings.ToLower(strings.TrimSuffix(filepath.Base(args.Argv[0]), ".exe"))
 		if exe == "sleep" || exe == "timeout" || (shellExes[exe] && sleepGuardRegex.MatchString(label)) {
 			return "", fmt.Errorf(sleepGuardMsg)
@@ -57,9 +65,9 @@ func HandleExec(args ExecArgs) (string, error) {
 		return "", fmt.Errorf(sleepGuardMsg)
 	}
 
-	// Bloqueio determinístico de cat / type puro (orientação a usar read_file)
-	if err := checkCatGuard(args); err != nil {
-		return "", err
+	// Auto-remediação de cat / type puro (conversão para read_file com notificação pedagógica)
+	if out, handled, err := tryRemediateCat(args); handled {
+		return out, err
 	}
 
 	timeout := transport.DefaultTimeout
@@ -167,21 +175,61 @@ func isWindowsCmdletMismatch(cmd string, errMsg string) bool {
 	return false
 }
 
-// checkCatGuard bloqueia cirurgicamente invocações puras de 'cat' ou 'type' para leitura de arquivos,
-// orientando o agente a usar a tool nativa 'read_file'. Pipelines (|), redirecionamentos (>) ou encadeamentos
-// são transformações legítimas de shell e permanecem permitidos.
-func checkCatGuard(args ExecArgs) error {
+var pureSleepRegex = regexp.MustCompile(`(?i)^\s*(?:sleep|timeout(?:\.exe)?(?:\s+\/t)?|start-sleep(?:\s+(?:-s|-seconds))?)\s+(\d+)\s*$`)
+
+var sleepFn = time.Sleep
+
+// tryRemediateSleep intercepta comandos exclusivos de sleep / timeout.
+// Se a pausa pedida for <= 15s, executa a espera controlada em Go e retorna aviso pedagógico.
+// Se > 15s, bloqueia com instrução explícita de usar job assíncrono.
+func tryRemediateSleep(label string, args ExecArgs) (string, bool, error) {
+	var targetStr string
+	if len(args.Argv) > 0 {
+		exe := strings.ToLower(strings.TrimSuffix(filepath.Base(args.Argv[0]), ".exe"))
+		if exe == "sleep" || exe == "timeout" {
+			targetStr = strings.Join(args.Argv, " ")
+		}
+	} else {
+		targetStr = strings.TrimSpace(label)
+	}
+
+	if targetStr == "" {
+		return "", false, nil
+	}
+
+	matches := pureSleepRegex.FindStringSubmatch(targetStr)
+	if len(matches) < 2 {
+		return "", false, nil
+	}
+
+	var sec int
+	_, err := fmt.Sscanf(matches[1], "%d", &sec)
+	if err != nil {
+		return "", false, nil
+	}
+
+	if sec > 15 {
+		return "", true, fmt.Errorf("[FastExec Guard] Pausa de %ds bloqueada no exec síncrono (>15s excede o limite aceitável de espera). Para processos em background, inicie um job ou utilize agendamentos para não prender a sessão do LLM.", sec)
+	}
+
+	sleepFn(time.Duration(sec) * time.Second)
+	out := fmt.Sprintf("[FastExec Auto-Remediation] Pausa de %ds concluída via timer nativo em Go.\n(Dica: o FastExec é orientado a eventos. Para sincronização de processos, prefira aguardar a porta/arquivo do alvo ou usar 'job').", sec)
+	return out, true, nil
+}
+
+// detectCatCommand extrai o nome do comando e o caminho do arquivo caso seja uma leitura simples.
+func detectCatCommand(args ExecArgs) (string, string) {
 	var cmdName string
 	var candidatePath string
 
 	if args.Command != "" {
 		cmd := strings.TrimSpace(args.Command)
 		if strings.ContainsAny(cmd, "|><;&`$\n") {
-			return nil
+			return "", ""
 		}
 		fields := strings.Fields(cmd)
 		if len(fields) < 2 {
-			return nil
+			return "", ""
 		}
 		cmdName = strings.ToLower(filepath.Base(fields[0]))
 		cmdName = strings.TrimSuffix(cmdName, ".exe")
@@ -190,7 +238,7 @@ func checkCatGuard(args ExecArgs) error {
 		case "cat", "type", "get-content", "gc":
 			candidatePath = fields[len(fields)-1]
 		default:
-			return nil
+			return "", ""
 		}
 	} else if len(args.Argv) >= 2 {
 		cmdName = strings.ToLower(filepath.Base(args.Argv[0]))
@@ -199,21 +247,64 @@ func checkCatGuard(args ExecArgs) error {
 		case "cat", "type", "get-content", "gc":
 			candidatePath = args.Argv[len(args.Argv)-1]
 		default:
-			return nil
+			return "", ""
 		}
 	} else {
-		return nil
+		return "", ""
 	}
 
+	candidatePath = strings.Trim(candidatePath, `"'`)
+
 	if candidatePath != "" && !strings.HasPrefix(candidatePath, "-") && !strings.HasPrefix(candidatePath, "/") {
-		return fmt.Errorf("[FastExec Guard] Para leitura de arquivos use a tool nativa 'read_file' (path='%s'). Ela suporta paginação segura (offset/limit), evita criação de subprocessos e preserva integridade sem risco de estouro de buffer.", candidatePath)
+		return cmdName, candidatePath
 	} else if candidatePath != "" {
 		if cmdName == "cat" || cmdName == "get-content" || cmdName == "gc" || strings.Contains(candidatePath, "/") || strings.Contains(candidatePath, "\\") {
-			return fmt.Errorf("[FastExec Guard] Para leitura de arquivos use a tool nativa 'read_file' (path='%s'). Ela suporta paginação segura (offset/limit), evita criação de subprocessos e preserva integridade sem risco de estouro de buffer.", candidatePath)
+			return cmdName, candidatePath
 		}
 	}
 
-	return nil
+	return "", ""
+}
+
+// tryRemediateCat tenta ler o arquivo diretamente via HandleReadFile (zero-process), retornando
+// o conteúdo com um cabeçalho explicativo pedagógico.
+func tryRemediateCat(args ExecArgs) (string, bool, error) {
+	cmdName, candidatePath := detectCatCommand(args)
+	if candidatePath == "" {
+		return "", false, nil
+	}
+
+	filePath := candidatePath
+	if args.Cwd != "" && !filepath.IsAbs(filePath) && !strings.HasPrefix(filePath, "/") && !strings.HasPrefix(filePath, "\\") {
+		filePath = filepath.Join(args.Cwd, filePath)
+	}
+
+	content, err := HandleReadFile(ReadFileArgs{
+		Host: args.Host,
+		Path: filePath,
+	})
+	if err != nil {
+		return "", true, fmt.Errorf("[FastExec Auto-Remediation] O comando '%s' foi identificado como leitura de arquivo, mas falhou ao ler '%s' via read_file: %w", cmdName, candidatePath, err)
+	}
+
+	cmdLabel := args.Command
+	if cmdLabel == "" {
+		cmdLabel = strings.Join(args.Argv, " ")
+	}
+
+	out := fmt.Sprintf("[FastExec Auto-Remediation] O comando '%s' foi convertido automaticamente para a tool nativa 'read_file' (zero-process).\nNa próxima, invoque 'read_file' diretamente para economizar tempo e tokens.\n---\n%s", cmdLabel, content)
+	return out, true, nil
+}
+
+// checkCatGuard bloqueia cirurgicamente invocações puras de 'cat' ou 'type' para leitura de arquivos,
+// orientando o agente a usar a tool nativa 'read_file'. Pipelines (|), redirecionamentos (>) ou encadeamentos
+// são transformações legítimas de shell e permanecem permitidos.
+func checkCatGuard(args ExecArgs) error {
+	_, candidatePath := detectCatCommand(args)
+	if candidatePath == "" {
+		return nil
+	}
+	return fmt.Errorf("[FastExec Guard] Para leitura de arquivos use a tool nativa 'read_file' (path='%s'). Ela suporta paginação segura (offset/limit), evita criação de subprocessos e preserva integridade sem risco de estouro de buffer.", candidatePath)
 }
 
 // detectNudge sugere ferramentas ou módulos especializados do FastExec no rodapé da resposta quando

@@ -3,6 +3,7 @@ package tools
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSqlDuckDBSession(t *testing.T) {
@@ -47,13 +48,17 @@ func TestExecWithInputNoteServer(t *testing.T) {
 }
 
 func TestSleepGuardRejection(t *testing.T) {
-	// Comandos com sleep ou timeout devem ser bloqueados
+	origSleep := sleepFn
+	sleepFn = func(d time.Duration) {}
+	defer func() { sleepFn = origSleep }()
+
+	// Comandos com sleep longo (>15s) ou encadeados no shell continuam bloqueados
 	proibidos := []string{
 		"sleep 140",
 		"bash -c 'sleep 100; echo oi'",
 		"sleep 5 && ls",
-		"timeout 10",
-		"timeout /t 5 /nobreak",
+		"timeout 20",
+		"timeout /t 25",
 	}
 
 	for _, cmd := range proibidos {
@@ -63,6 +68,7 @@ func TestSleepGuardRejection(t *testing.T) {
 		})
 		if err == nil {
 			t.Errorf("esperava erro de guarda para comando '%s', mas passou", cmd)
+			continue
 		}
 		if !strings.Contains(err.Error(), "[FastExec Guard]") {
 			t.Errorf("mensagem de erro esperada não contém '[FastExec Guard]': %v", err)
@@ -79,6 +85,47 @@ func TestSleepGuardRejection(t *testing.T) {
 		if sleepGuardRegex.MatchString(cmd) {
 			t.Errorf("comando legítimo '%s' disparou a guarda indevidamente", cmd)
 		}
+	}
+}
+
+func TestSleepAutoRemediation(t *testing.T) {
+	origSleep := sleepFn
+	sleepFn = func(d time.Duration) {}
+	defer func() { sleepFn = origSleep }()
+
+	curtos := []string{
+		"sleep 3",
+		"timeout 5",
+		"timeout /t 2",
+		"Start-Sleep 2",
+	}
+	for _, cmd := range curtos {
+		out, err := HandleExec(ExecArgs{
+			Host:    "local",
+			Command: cmd,
+		})
+		if err != nil {
+			t.Errorf("esperava sucesso com auto-remediação para '%s', recebeu erro: %v", cmd, err)
+		}
+		if !strings.Contains(out, "[FastExec Auto-Remediation]") {
+			t.Errorf("saída de auto-remediação não contém cabeçalho para '%s': %s", cmd, out)
+		}
+	}
+}
+
+func TestCatAutoRemediation(t *testing.T) {
+	out, err := HandleExec(ExecArgs{
+		Host:    "local",
+		Command: "cat exec.go",
+	})
+	if err != nil {
+		t.Fatalf("HandleExec com cat exec.go falhou: %v", err)
+	}
+	if !strings.Contains(out, "[FastExec Auto-Remediation]") {
+		t.Errorf("esperava cabeçalho de auto-remediação, recebeu: %s", out)
+	}
+	if !strings.Contains(out, "package tools") {
+		t.Errorf("esperava conteúdo de exec.go na saída, recebeu: %s", out)
 	}
 }
 
