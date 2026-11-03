@@ -13,10 +13,19 @@ import (
 const FileChunkSize = 256 * 1024 // 256 KB por chunk
 
 type ReadFileArgs struct {
-	Host   string `json:"host"`
-	Path   string `json:"path"`
-	Offset int64  `json:"offset,omitempty"`
-	Limit  int64  `json:"limit,omitempty"`
+	Host      string `json:"host"`
+	Path      string `json:"path"`
+	Offset    int64  `json:"offset,omitempty"`
+	Limit     int64  `json:"limit,omitempty"`
+	StartLine int    `json:"start_line,omitempty"`
+	EndLine   int    `json:"end_line,omitempty"`
+}
+
+type EditFileArgs struct {
+	Host        string `json:"host,omitempty"`
+	Path        string `json:"path"`
+	Target      string `json:"target"`
+	Replacement string `json:"replacement"`
 }
 
 type WriteFileArgs struct {
@@ -43,7 +52,12 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
 	}
 
-	target, err := transport.ResolveHost(args.Host)
+	host := args.Host
+	if host == "" && (filepath.VolumeName(args.Path) != "" || strings.HasPrefix(args.Path, `\\`)) {
+		host = "local"
+	}
+
+	target, err := transport.ResolveHost(host)
 	if err != nil {
 		return "", err
 	}
@@ -58,6 +72,24 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return "", err
+		}
+		if args.StartLine > 0 || args.EndLine > 0 {
+			lines := strings.Split(string(data), "\n")
+			start := args.StartLine
+			if start <= 0 {
+				start = 1
+			}
+			if start > len(lines) {
+				return "", nil
+			}
+			end := args.EndLine
+			if end <= 0 || end > len(lines) {
+				end = len(lines)
+			}
+			if start > end {
+				return "", nil
+			}
+			return strings.Join(lines[start-1:end], "\n"), nil
 		}
 		if args.Offset > 0 || args.Limit > 0 {
 			start := int(args.Offset)
@@ -74,7 +106,21 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 	}
 
 	// Remoto via daemon: expande ~ no bash para $HOME do usuário remoto
-	cmd := fmt.Sprintf("TARGET='%s'; TARGET=\"${TARGET/#\\~/$HOME}\"; if [ ! -f \"$TARGET\" ]; then echo '__FILE_NOT_FOUND__' >&2; exit 1; fi; cat \"$TARGET\"", filePath)
+	var readCmd string
+	if args.StartLine > 0 || args.EndLine > 0 {
+		start := args.StartLine
+		if start <= 0 {
+			start = 1
+		}
+		endStr := "$"
+		if args.EndLine > 0 {
+			endStr = fmt.Sprintf("%d", args.EndLine)
+		}
+		readCmd = fmt.Sprintf("sed -n '%d,%sp' \"$TARGET\"", start, endStr)
+	} else {
+		readCmd = "cat \"$TARGET\""
+	}
+	cmd := fmt.Sprintf("TARGET='%s'; TARGET=\"${TARGET/#\\~/$HOME}\"; if [ ! -f \"$TARGET\" ]; then echo '__FILE_NOT_FOUND__' >&2; exit 1; fi; %s", filePath, readCmd)
 	res, err := transport.ExecDaemon(target.TCPAddr, cmd, transport.DefaultTimeout)
 	if err != nil {
 		return "", err
@@ -90,7 +136,12 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
 	}
 
-	target, err := transport.ResolveHost(args.Host)
+	host := args.Host
+	if host == "" && (filepath.VolumeName(args.Path) != "" || strings.HasPrefix(args.Path, `\\`)) {
+		host = "local"
+	}
+
+	target, err := transport.ResolveHost(host)
 	if err != nil {
 		return "", err
 	}
@@ -226,6 +277,51 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 	}
 
 	return okReply(fileInfo.Size()), nil
+}
+
+func HandleEditFile(args EditFileArgs) (string, error) {
+	if args.Path == "" {
+		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
+	}
+	if args.Target == "" {
+		return "", fmt.Errorf("parâmetro 'target' é obrigatório")
+	}
+
+	host := args.Host
+	if host == "" && (filepath.VolumeName(args.Path) != "" || strings.HasPrefix(args.Path, `\\`)) {
+		host = "local"
+	}
+
+	content, err := HandleReadFile(ReadFileArgs{
+		Host: host,
+		Path: args.Path,
+	})
+	if err != nil {
+		return "", fmt.Errorf("falha ao ler '%s' para edição: %w", args.Path, err)
+	}
+
+	if !strings.Contains(content, args.Target) {
+		return "", fmt.Errorf("o trecho especificado em 'target' não foi encontrado em '%s'", args.Path)
+	}
+
+	count := strings.Count(content, args.Target)
+	newContent := strings.Replace(content, args.Target, args.Replacement, 1)
+
+	_, err = HandleWriteFile(WriteFileArgs{
+		Host:    host,
+		Path:    args.Path,
+		Content: newContent,
+		Atomic:  true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("falha ao regravar '%s': %w", args.Path, err)
+	}
+
+	msg := fmt.Sprintf("[edit_file] Substituído com sucesso 1 bloco (%d bytes -> %d bytes) em %s.", len(args.Target), len(args.Replacement), args.Path)
+	if count > 1 {
+		msg += fmt.Sprintf(" (Atenção: havia %d ocorrências idênticas; apenas a primeira foi alterada).", count)
+	}
+	return msg, nil
 }
 
 func okReply(n int64) string {

@@ -131,6 +131,9 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 		if isWindowsCmdletMismatch(command, errMsg) {
 			errMsg += "\n[FastExec Hint] O host 'local' (Windows) executa via cmd.exe nativo por performance. Para cmdlets PowerShell invoque 'powershell -NoProfile -Command ...'; para listar/manipular arquivos use a tool nativa 'file_ops'."
 		}
+		if isBenignExitCode1(command, stdout, stderr) {
+			return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), nil
+		}
 		return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), fmt.Errorf("comando falhou com código %d", res.ExitCode)
 	}
 
@@ -307,10 +310,35 @@ func checkCatGuard(args ExecArgs) error {
 	return fmt.Errorf("[FastExec Guard] Para leitura de arquivos use a tool nativa 'read_file' (path='%s'). Ela suporta paginação segura (offset/limit), evita criação de subprocessos e preserva integridade sem risco de estouro de buffer.", candidatePath)
 }
 
+func isBenignExitCode1(command, stdout, stderr string) bool {
+	combined := strings.ToLower(stdout + " " + stderr)
+	// Erro semântico retornado por query SQL (psql, sqlite3, duckdb)
+	if strings.Contains(combined, "error:") || strings.Contains(combined, "syntax error") {
+		lowerCmd := strings.ToLower(command)
+		if strings.Contains(lowerCmd, "psql") || strings.Contains(lowerCmd, "sqlite") || strings.Contains(lowerCmd, "duckdb") || strings.Contains(lowerCmd, "select") {
+			return true
+		}
+	}
+	// Busca encadeada no shell que produziu saída em stdout apesar de exit code 1 no último comando
+	lowerCmd := strings.ToLower(command)
+	if (strings.Contains(lowerCmd, "findstr") || strings.Contains(lowerCmd, "grep")) && stdout != "" {
+		return true
+	}
+	return false
+}
+
 // detectNudge sugere ferramentas ou módulos especializados do FastExec no rodapé da resposta quando
 // o comando executado no shell tem uma alternativa superior nativa.
 func detectNudge(label string, args ExecArgs) string {
 	cmd := strings.TrimSpace(label)
+
+	// SQL Nudge: mesmo com aspas, pipes ou filtros de linha, sugere a tool 'sql' nativa
+	lower := strings.ToLower(cmd)
+	if strings.Contains(lower, "sqlite3 ") || strings.Contains(lower, "duckdb ") || strings.Contains(lower, "psql ") ||
+		strings.HasPrefix(lower, "select ") || strings.HasPrefix(lower, "insert ") || strings.HasPrefix(lower, "update ") {
+		return "[FastExec Hint] Para consultas SQL (SQLite/DuckDB), use a tool nativa 'sql' que devolve JSON estruturado e não infla o shell."
+	}
+
 	if strings.ContainsAny(cmd, "|><;&`$\n") {
 		return ""
 	}
@@ -332,8 +360,6 @@ func detectNudge(label string, args ExecArgs) string {
 		return "[FastExec Hint] Para listar arquivos e diretórios, prefira a tool nativa 'file_ops' (action='list')."
 	case "docker":
 		return "[FastExec Hint] Módulo 'docker' disponível sob demanda via tool_manage (ex: tool_manage(action='call', tool='docker_ps'))."
-	case "sqlite3", "duckdb":
-		return "[FastExec Hint] Para consultas SQL diretas com saída JSON estruturada, prefira o módulo 'sql'."
 	}
 	return ""
 }

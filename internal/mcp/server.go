@@ -87,10 +87,26 @@ var serverTools = []ToolSchema{
 			Properties: map[string]PropertyDef{
 				"host":   {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local'"},
 				"path":   {Type: "string", Description: "Caminho do arquivo"},
-				"offset": {Type: "integer", Description: "Offset em bytes (opcional)"},
-				"limit":  {Type: "integer", Description: "Limite de bytes a ler (opcional)"},
+				"offset":     {Type: "integer", Description: "Offset em bytes (opcional)"},
+				"limit":      {Type: "integer", Description: "Limite de bytes a ler (opcional)"},
+				"start_line": {Type: "integer", Description: "Linha inicial a ler (1-based, opcional)"},
+				"end_line":   {Type: "integer", Description: "Linha final a ler (inclusive, opcional)"},
 			},
 			Required: []string{"path"},
+		},
+	},
+	{
+		Name:        "edit_file",
+		Description: "Substitui cirurgicamente um trecho específico de texto em um arquivo local ou remoto (target -> replacement). Use para pequenas alterações ou refatorações pontuais sem precisar regravar o arquivo inteiro com write_file, economizando tokens e evitando truncamento.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":        {Type: "string", Description: "Alvo: 'local' (default), 'noteserver', etc."},
+				"path":        {Type: "string", Description: "Caminho do arquivo a ser modificado"},
+				"target":      {Type: "string", Description: "Trecho exato de texto a ser substituído (deve bater exatamente com o conteúdo existente)"},
+				"replacement": {Type: "string", Description: "Novo texto que substituirá o target (deixe vazio para deletar o target)"},
+			},
+			Required: []string{"path", "target"},
 		},
 	},
 	{
@@ -261,6 +277,10 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		var args tools.WriteFileArgs
 		_ = json.Unmarshal(rawArgs, &args)
 		outText, err = tools.HandleWriteFile(args)
+	case "edit_file":
+		var args tools.EditFileArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleEditFile(args)
 	case "get_file":
 		var args tools.GetFileArgs
 		_ = json.Unmarshal(rawArgs, &args)

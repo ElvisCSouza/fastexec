@@ -80,3 +80,61 @@ func TestLocalFileOpsLifecycle(t *testing.T) {
 		t.Fatalf("diretorio ainda existe apos delete")
 	}
 }
+
+func TestReadFileLines(t *testing.T) {
+	tempFile := filepath.Join(os.TempDir(), "fastexec_test_lines.txt")
+	defer os.Remove(tempFile)
+	content := "linha 1\nlinha 2\nlinha 3\nlinha 4\nlinha 5"
+	if err := os.WriteFile(tempFile, []byte(content), 0644); err != nil {
+		t.Fatalf("write falhou: %v", err)
+	}
+
+	out, err := HandleReadFile(ReadFileArgs{
+		Path:      tempFile,
+		StartLine: 2,
+		EndLine:   4,
+	})
+	if err != nil {
+		t.Fatalf("HandleReadFile falhou: %v", err)
+	}
+	expected := "linha 2\nlinha 3\nlinha 4"
+	if out != expected {
+		t.Fatalf("esperava %q, recebeu %q", expected, out)
+	}
+}
+
+func TestHandleEditFile(t *testing.T) {
+	tempFile := filepath.Join(os.TempDir(), "fastexec_test_edit.txt")
+	defer os.Remove(tempFile)
+	content := "header\n<div class=\"search\">remover</div>\nfooter"
+	if err := os.WriteFile(tempFile, []byte(content), 0644); err != nil {
+		t.Fatalf("write falhou: %v", err)
+	}
+
+	res, err := HandleEditFile(EditFileArgs{
+		Path:        tempFile,
+		Target:      "<div class=\"search\">remover</div>\n",
+		Replacement: "",
+	})
+	if err != nil {
+		t.Fatalf("HandleEditFile falhou: %v", err)
+	}
+	if !strings.Contains(res, "[edit_file] Substituído com sucesso") {
+		t.Errorf("resposta inesperada: %s", res)
+	}
+
+	b, _ := os.ReadFile(tempFile)
+	if string(b) != "header\nfooter" {
+		t.Fatalf("conteúdo pós-edição inesperado: %q", string(b))
+	}
+
+	// Target não encontrado
+	_, err = HandleEditFile(EditFileArgs{
+		Path:        tempFile,
+		Target:      "nao_existe",
+		Replacement: "novo",
+	})
+	if err == nil {
+		t.Fatalf("esperava erro quando target não existe")
+	}
+}

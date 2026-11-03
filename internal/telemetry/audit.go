@@ -230,7 +230,7 @@ func SummarizeCall(toolName string, rawArgs []byte) (string, string) {
 	case "read_file":
 		path, _ := generic["path"].(string)
 		summary = path
-	case "write_file":
+	case "write_file", "edit_file":
 		path, _ := generic["path"].(string)
 		summary = path
 	case "get_file":
