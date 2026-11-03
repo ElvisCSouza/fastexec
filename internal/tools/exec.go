@@ -57,6 +57,11 @@ func HandleExec(args ExecArgs) (string, error) {
 		return "", fmt.Errorf(sleepGuardMsg)
 	}
 
+	// Bloqueio determinístico de cat / type puro (orientação a usar read_file)
+	if err := checkCatGuard(args); err != nil {
+		return "", err
+	}
+
 	timeout := transport.DefaultTimeout
 	if args.TimeoutMs > 0 {
 		timeout = time.Duration(args.TimeoutMs) * time.Millisecond
@@ -82,6 +87,15 @@ func HandleExec(args ExecArgs) (string, error) {
 	out, ferr := formatExecResult(label, *res)
 	if res.TimedOut && clampedFrom > 0 {
 		out += fmt.Sprintf("\nO timeout_ms pedido (%d) foi limitado a %d ms, o teto antes de o cliente MCP cortar a chamada.", clampedFrom.Milliseconds(), timeout.Milliseconds())
+	}
+	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
+		if hint := detectNudge(label, args); hint != "" {
+			if out != "" {
+				out = strings.TrimRight(out, "\r\n") + "\n\n" + hint
+			} else {
+				out = hint
+			}
+		}
 	}
 	return out, ferr
 }
@@ -151,4 +165,84 @@ func isWindowsCmdletMismatch(cmd string, errMsg string) bool {
 		}
 	}
 	return false
+}
+
+// checkCatGuard bloqueia cirurgicamente invocações puras de 'cat' ou 'type' para leitura de arquivos,
+// orientando o agente a usar a tool nativa 'read_file'. Pipelines (|), redirecionamentos (>) ou encadeamentos
+// são transformações legítimas de shell e permanecem permitidos.
+func checkCatGuard(args ExecArgs) error {
+	var cmdName string
+	var candidatePath string
+
+	if args.Command != "" {
+		cmd := strings.TrimSpace(args.Command)
+		if strings.ContainsAny(cmd, "|><;&`$\n") {
+			return nil
+		}
+		fields := strings.Fields(cmd)
+		if len(fields) < 2 {
+			return nil
+		}
+		cmdName = strings.ToLower(filepath.Base(fields[0]))
+		cmdName = strings.TrimSuffix(cmdName, ".exe")
+
+		switch cmdName {
+		case "cat", "type", "get-content", "gc":
+			candidatePath = fields[len(fields)-1]
+		default:
+			return nil
+		}
+	} else if len(args.Argv) >= 2 {
+		cmdName = strings.ToLower(filepath.Base(args.Argv[0]))
+		cmdName = strings.TrimSuffix(cmdName, ".exe")
+		switch cmdName {
+		case "cat", "type", "get-content", "gc":
+			candidatePath = args.Argv[len(args.Argv)-1]
+		default:
+			return nil
+		}
+	} else {
+		return nil
+	}
+
+	if candidatePath != "" && !strings.HasPrefix(candidatePath, "-") && !strings.HasPrefix(candidatePath, "/") {
+		return fmt.Errorf("[FastExec Guard] Para leitura de arquivos use a tool nativa 'read_file' (path='%s'). Ela suporta paginação segura (offset/limit), evita criação de subprocessos e preserva integridade sem risco de estouro de buffer.", candidatePath)
+	} else if candidatePath != "" {
+		if cmdName == "cat" || cmdName == "get-content" || cmdName == "gc" || strings.Contains(candidatePath, "/") || strings.Contains(candidatePath, "\\") {
+			return fmt.Errorf("[FastExec Guard] Para leitura de arquivos use a tool nativa 'read_file' (path='%s'). Ela suporta paginação segura (offset/limit), evita criação de subprocessos e preserva integridade sem risco de estouro de buffer.", candidatePath)
+		}
+	}
+
+	return nil
+}
+
+// detectNudge sugere ferramentas ou módulos especializados do FastExec no rodapé da resposta quando
+// o comando executado no shell tem uma alternativa superior nativa.
+func detectNudge(label string, args ExecArgs) string {
+	cmd := strings.TrimSpace(label)
+	if strings.ContainsAny(cmd, "|><;&`$\n") {
+		return ""
+	}
+	var fields []string
+	if args.Command != "" {
+		fields = strings.Fields(cmd)
+	} else if len(args.Argv) > 0 {
+		fields = args.Argv
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+
+	exe := strings.ToLower(filepath.Base(fields[0]))
+	exe = strings.TrimSuffix(exe, ".exe")
+
+	switch exe {
+	case "ls", "dir":
+		return "[FastExec Hint] Para listar arquivos e diretórios, prefira a tool nativa 'file_ops' (action='list')."
+	case "docker":
+		return "[FastExec Hint] Módulo 'docker' disponível sob demanda via tool_manage (ex: tool_manage(action='call', tool='docker_ps'))."
+	case "sqlite3", "duckdb":
+		return "[FastExec Hint] Para consultas SQL diretas com saída JSON estruturada, prefira o módulo 'sql'."
+	}
+	return ""
 }

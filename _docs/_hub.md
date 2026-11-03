@@ -14,18 +14,31 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
        └── host: "ax3000"     ──> TCP :9142 (Daemon Zig server-exec armv7l)
 ```
 
-## Ferramentas Expostas ao LLM
-| Tool | Parâmetros | Descrição |
+## Ferramentas Expostas ao LLM (6 Core Tools + Módulos Dinâmicos Sob Demanda)
+
+Para economizar ~45% de overhead estático de tokens no system prompt (~480 tokens vs ~850 tokens anteriores), o FastExec expõe por padrão apenas as **6 ferramentas Core essenciais**:
+
+| Tool Core | Parâmetros | Descrição |
 |---|---|---|
-| `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona (`timeout_ms` padrão 200 s, teto 210 s). `command` é linha de shell; `argv` roda sem shell (ver seção do host `local`) |
-| `read_file` | `host`, `path`, `offset`, `limit` | Leitura determinística de arquivo local ou remoto |
+| `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona orientada a eventos (`timeout_ms` padrão 45 s, teto 50 s). Inclui guardas ativas determinísticas e nudges contextuais educativos no rodapé |
+| `read_file` | `host`, `path`, `offset`, `limit` | Leitura determinística de arquivo local ou remoto sem subprocessos (offset/limit seguros) |
 | `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo. Retorna `ok N bytes` |
-| `get_file` | `host`, `remote_path`, `local_path` | Download determinístico via socket binário direto. Retorna `ok N bytes` |
-| `put_file` | `host`, `local_path`, `remote_path` | Upload determinístico chunked via socket binário. Retorna `ok N bytes` |
-| `sql` | `host`, `db_path`, `query` | Execução direta de SQLite com saída tabular ou JSON |
-| `job` | `host`, `action`, `command` ou `argv`, `cwd`, `job_id`, `lines` | Background jobs assíncronos (`start`, `status`, `tail`, `wait`, `stop`, `list`): systemd-run nos hosts Linux, Job Object no `local` (seção abaixo) |
-| `ping` | `host` | Diagnóstico de latência e saúde de conexão por nó |
-| `tool_manage` | `action`, `module`, `query`, `tool`, `params` | Catálogo dinâmico e execução sob demanda (Tool RAG / `listChanged`). Evita inchar o system prompt com dezenas de ferramentas. Ações: `search`, `list`, `enable`, `disable`, `call` |
+| `file_ops` | `host`, `action`, `path`, `target` | Operações atômicas no sistema de arquivos (`list`, `copy`, `move`, `delete`, `mkdir`) sem spawn de shell |
+| `job` | `host`, `action`, `command` ou `argv`, `cwd`, `job_id`, `lines` | Background jobs assíncronos (`start`, `status`, `tail`, `wait`, `stop`, `list`): systemd-run nos hosts Linux, Job Object no `local` |
+| `tool_manage` | `action`, `module`, `query`, `tool`, `params` | Catálogo dinâmico e execução sob demanda (Tool RAG / MCP `listChanged`). Ações: `search`, `list`, `enable`, `disable`, `call` |
+
+### Módulos Especializados Sob Demanda (Zero-Token Inicial)
+Ferramentas de uso pontual ou avançado foram modularizadas e são acessadas via `tool_manage`:
+- **`sql`**: DuckDB analítico e SQLite via JSON puro (`tool_manage(action='call', tool='sql', params='{"query": "..."}')` ou `enable`).
+- **`homelab`**: Ferramentas de infraestrutura e transferência binária: `ping`, `get_file`, `put_file`.
+- **`docker`**: Inspeções e logs de containers: `docker_ps`, `docker_logs`.
+- **`git`**: Inspeções semânticas de repositório: `git_status`, `git_log`.
+*Nota de compatibilidade:* Chamadas diretas legadas do cliente para `sql`, `ping`, `get_file` e `put_file` continuam sendo atendidas de forma transparente no dispatcher sem falhas.
+
+### Guardas Ativas e In-Context Nudges no `exec`
+1. **Sleep / Timeout Guard**: Bloqueio ativo de `sleep` ou `timeout` artificial (retorna erro orientando a usar timeout síncrono ou `job`).
+2. **Surgical Cat / Type Guard**: Bloqueio ativo de execuções isoladas de `cat <arquivo>`, `type <arquivo>`, `Get-Content <arquivo>` (sem pipes ou redirecionamentos), orientando deterministamente a usar a tool nativa `read_file` (que não cria subprocessos e suporta paginação com limites).
+3. **In-Context Educational Nudges**: Sugestões não-bloqueantes de 1 linha adicionadas no rodapé da resposta quando comandos de shell executados têm alternativas nativas melhores (`ls`/`dir` ➔ sugere `file_ops(action='list')`; `docker ...` ➔ sugere módulo `docker`; `sqlite3 ...` ➔ sugere módulo `sql`).
 
 ## Convenções de Rede e CWD Padrão
 - `noteserver`: `192.168.31.142:9142` (Daemon Zig). Diretório de trabalho padrão automático: `/home/elvis/workspace` (elimina a necessidade de injetar `cd ~/workspace &&` nos comandos).

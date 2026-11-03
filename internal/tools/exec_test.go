@@ -81,3 +81,90 @@ func TestSleepGuardRejection(t *testing.T) {
 		}
 	}
 }
+
+func TestCatGuardRejection(t *testing.T) {
+	proibidos := []struct {
+		cmd  string
+		argv []string
+		path string
+	}{
+		{cmd: "cat main.go", path: "main.go"},
+		{cmd: "type config.json", path: "config.json"},
+		{cmd: "Get-Content src/file.txt", path: "src/file.txt"},
+		{cmd: "gc file.go", path: "file.go"},
+		{cmd: "cat /etc/os-release", path: "/etc/os-release"},
+		{argv: []string{"cat", "foo.txt"}, path: "foo.txt"},
+		{argv: []string{"type", "C:\\test\\file.txt"}, path: "C:\\test\\file.txt"},
+	}
+
+	for _, tc := range proibidos {
+		var err error
+		if len(tc.argv) > 0 {
+			err = checkCatGuard(ExecArgs{Host: "local", Argv: tc.argv})
+		} else {
+			err = checkCatGuard(ExecArgs{Host: "local", Command: tc.cmd})
+		}
+		if err == nil {
+			t.Errorf("esperava bloqueio de guarda para '%s' / %v, mas passou", tc.cmd, tc.argv)
+			continue
+		}
+		if !strings.Contains(err.Error(), "[FastExec Guard]") || !strings.Contains(err.Error(), "read_file") {
+			t.Errorf("mensagem de erro esperada não orienta para 'read_file': %v", err)
+		}
+		if tc.path != "" && !strings.Contains(err.Error(), tc.path) {
+			t.Errorf("mensagem de erro não incluiu o caminho alvo '%s': %v", tc.path, err)
+		}
+	}
+
+	permitidos := []struct {
+		cmd  string
+		argv []string
+	}{
+		{cmd: "cat file.txt | grep teste"},
+		{cmd: "cat file.txt > destino.txt"},
+		{cmd: "cat << 'EOF'\nconteudo\nEOF"},
+		{cmd: "cat file1.txt && cat file2.txt"},
+		{cmd: "type file.txt | findstr ok"},
+		{cmd: "echo 'cat file.txt'"},
+		{argv: []string{"grep", "cat", "file.txt"}},
+	}
+
+	for _, tc := range permitidos {
+		var err error
+		if len(tc.argv) > 0 {
+			err = checkCatGuard(ExecArgs{Host: "local", Argv: tc.argv})
+		} else {
+			err = checkCatGuard(ExecArgs{Host: "local", Command: tc.cmd})
+		}
+		if err != nil {
+			t.Errorf("comando legítimo '%s' disparou a guarda de cat indevidamente: %v", tc.cmd, err)
+		}
+	}
+}
+
+func TestDetectNudge(t *testing.T) {
+	cases := []struct {
+		label    string
+		args     ExecArgs
+		contains string
+	}{
+		{label: "ls -la", args: ExecArgs{Command: "ls -la"}, contains: "file_ops"},
+		{label: "dir /s", args: ExecArgs{Command: "dir /s"}, contains: "file_ops"},
+		{label: "docker ps -a", args: ExecArgs{Command: "docker ps -a"}, contains: "docker"},
+		{label: "sqlite3 my.db", args: ExecArgs{Command: "sqlite3 my.db"}, contains: "sql"},
+		{label: "ls | grep foo", args: ExecArgs{Command: "ls | grep foo"}, contains: ""},
+	}
+
+	for _, tc := range cases {
+		hint := detectNudge(tc.label, tc.args)
+		if tc.contains == "" {
+			if hint != "" {
+				t.Errorf("esperava nenhum nudge para '%s', recebeu: %s", tc.label, hint)
+			}
+		} else {
+			if !strings.Contains(hint, tc.contains) {
+				t.Errorf("esperava nudge com '%s' para '%s', recebeu: %s", tc.contains, tc.label, hint)
+			}
+		}
+	}
+}

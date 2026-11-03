@@ -50,6 +50,17 @@ func init() {
 			"docker_ps": {
 				Name:        "docker_ps",
 				Description: "Lista containers Docker ativos ou todos com status e portas",
+				Schema: map[string]any{
+					"name":        "docker_ps",
+					"description": "Lista containers Docker ativos ou todos com status e portas",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"host": map[string]any{"type": "string", "description": "Alvo: 'noteserver' (default)"},
+							"all":  map[string]any{"type": "boolean", "description": "Se true, lista todos os containers (-a)"},
+						},
+					},
+				},
 				Handler: func(rawArgs json.RawMessage) (string, error) {
 					var p struct {
 						Host string `json:"host"`
@@ -70,6 +81,19 @@ func init() {
 			"docker_logs": {
 				Name:        "docker_logs",
 				Description: "Obtém as últimas linhas de log de um container Docker",
+				Schema: map[string]any{
+					"name":        "docker_logs",
+					"description": "Obtém as últimas linhas de log de um container Docker",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"host":      map[string]any{"type": "string", "description": "Alvo: 'noteserver' (default)"},
+							"container": map[string]any{"type": "string", "description": "Nome ou ID do container"},
+							"lines":     map[string]any{"type": "integer", "description": "Linhas de log (default: 50)"},
+						},
+						"required": []string{"container"},
+					},
+				},
 				Handler: func(rawArgs json.RawMessage) (string, error) {
 					var p struct {
 						Host      string `json:"host"`
@@ -102,6 +126,17 @@ func init() {
 			"git_status": {
 				Name:        "git_status",
 				Description: "Status curto e determinístico do repositório git",
+				Schema: map[string]any{
+					"name":        "git_status",
+					"description": "Status curto e determinístico do repositório git",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"host": map[string]any{"type": "string", "description": "Alvo: 'local' (default) ou 'noteserver'"},
+							"cwd":  map[string]any{"type": "string", "description": "Diretório de trabalho do repositório"},
+						},
+					},
+				},
 				Handler: func(rawArgs json.RawMessage) (string, error) {
 					var p struct {
 						Host string `json:"host"`
@@ -114,6 +149,18 @@ func init() {
 			"git_log": {
 				Name:        "git_log",
 				Description: "Histórico resumido em 1 linha dos últimos commits",
+				Schema: map[string]any{
+					"name":        "git_log",
+					"description": "Histórico resumido em 1 linha dos últimos commits",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"host":  map[string]any{"type": "string", "description": "Alvo: 'local' (default) ou 'noteserver'"},
+							"cwd":   map[string]any{"type": "string", "description": "Diretório de trabalho do repositório"},
+							"count": map[string]any{"type": "integer", "description": "Número de commits (padrão: 10)"},
+						},
+					},
+				},
 				Handler: func(rawArgs json.RawMessage) (string, error) {
 					var p struct {
 						Host  string `json:"host"`
@@ -127,6 +174,114 @@ func init() {
 					}
 					cmd := fmt.Sprintf("git log --oneline -n %d", count)
 					return HandleExec(ExecArgs{Host: p.Host, Cwd: p.Cwd, Command: cmd})
+				},
+			},
+		},
+	})
+
+	RegisterModule(&ModuleDef{
+		Name:        "sql",
+		Description: "Execução SQL analítica em DuckDB e SQLite com saída JSON pura",
+		Tools: map[string]DynamicToolDef{
+			"sql": {
+				Name:        "sql",
+				Description: "Executa SQL analítico DuckDB (direto em arquivos ou 'session') ou SQLite ('database'). Saída sempre em JSON puro.",
+				Schema: map[string]any{
+					"name":        "sql",
+					"description": "Executa SQL analítico DuckDB (direto em arquivos ou 'session') ou SQLite ('database'). Saída sempre em JSON puro.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"session":  map[string]any{"type": "string", "description": "Nome da sessão analítica DuckDB no PC-Elvis (sandbox em W:\\Data\\sessions\\sess-<session>\\)"},
+							"database": map[string]any{"type": "string", "description": "Caminho do arquivo .db SQLite (usado com 'host')"},
+							"host":     map[string]any{"type": "string", "description": "Alvo para SQLite: 'noteserver' (default) ou 'local'"},
+							"query":    map[string]any{"type": "string", "description": "Instrução SQL a executar (no DuckDB aceita 'SELECT ... FROM \"caminho/arquivo.jsonl\"' diretamente)"},
+						},
+						"required": []string{"query"},
+					},
+				},
+				Handler: func(rawArgs json.RawMessage) (string, error) {
+					var args SqlArgs
+					if err := json.Unmarshal(rawArgs, &args); err != nil {
+						return "", fmt.Errorf("parâmetros inválidos para sql: %w", err)
+					}
+					return HandleSql(args)
+				},
+			},
+		},
+	})
+
+	RegisterModule(&ModuleDef{
+		Name:        "homelab",
+		Description: "Ferramentas especializadas de infraestrutura de homelab e transferência binária",
+		Tools: map[string]DynamicToolDef{
+			"ping": {
+				Name:        "ping",
+				Description: "Testa latência e conectividade com os nós do homelab (local, noteserver, ax6000, ax3000).",
+				Schema: map[string]any{
+					"name":        "ping",
+					"description": "Testa latência e conectividade com os nós do homelab (local, noteserver, ax6000, ax3000).",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"host": map[string]any{"type": "string", "description": "Host específico ou 'all' para todos (default: 'all')"},
+						},
+					},
+				},
+				Handler: func(rawArgs json.RawMessage) (string, error) {
+					var args PingArgs
+					if err := json.Unmarshal(rawArgs, &args); err != nil {
+						return "", fmt.Errorf("parâmetros inválidos para ping: %w", err)
+					}
+					return HandlePing(args)
+				},
+			},
+			"get_file": {
+				Name:        "get_file",
+				Description: "Baixa arquivo do nó remoto para o PC-Elvis via socket binário direto.",
+				Schema: map[string]any{
+					"name":        "get_file",
+					"description": "Baixa arquivo do nó remoto para o PC-Elvis via socket binário direto.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"host":        map[string]any{"type": "string", "description": "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
+							"remote_path": map[string]any{"type": "string", "description": "Caminho do arquivo no nó remoto"},
+							"local_path":  map[string]any{"type": "string", "description": "Caminho local no PC-Elvis (opcional, default: nome do arquivo no CWD)"},
+						},
+						"required": []string{"remote_path"},
+					},
+				},
+				Handler: func(rawArgs json.RawMessage) (string, error) {
+					var args GetFileArgs
+					if err := json.Unmarshal(rawArgs, &args); err != nil {
+						return "", fmt.Errorf("parâmetros inválidos para get_file: %w", err)
+					}
+					return HandleGetFile(args)
+				},
+			},
+			"put_file": {
+				Name:        "put_file",
+				Description: "Envia arquivo do PC-Elvis para o nó remoto de forma chunked e atômica.",
+				Schema: map[string]any{
+					"name":        "put_file",
+					"description": "Envia arquivo do PC-Elvis para o nó remoto de forma chunked e atômica.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"host":        map[string]any{"type": "string", "description": "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
+							"local_path":  map[string]any{"type": "string", "description": "Caminho local no PC-Elvis"},
+							"remote_path": map[string]any{"type": "string", "description": "Caminho de destino no nó remoto"},
+						},
+						"required": []string{"local_path", "remote_path"},
+					},
+				},
+				Handler: func(rawArgs json.RawMessage) (string, error) {
+					var args PutFileArgs
+					if err := json.Unmarshal(rawArgs, &args); err != nil {
+						return "", fmt.Errorf("parâmetros inválidos para put_file: %w", err)
+					}
+					return HandlePutFile(args)
 				},
 			},
 		},

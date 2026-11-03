@@ -80,34 +80,6 @@ var serverTools = []ToolSchema{
 		},
 	},
 	{
-		Name:        "sql",
-		Description: "Executa SQL analítico DuckDB (direto em arquivos ou 'session') ou SQLite ('database'). Saída sempre em JSON puro.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]PropertyDef{
-				"session":  {Type: "string", Description: "Nome da sessão analítica DuckDB no PC-Elvis (sandbox em W:\\Data\\sessions\\sess-<session>\\)"},
-				"database": {Type: "string", Description: "Caminho do arquivo .db SQLite (usado com 'host')"},
-				"host":     {Type: "string", Description: "Alvo para SQLite: 'noteserver' (default) ou 'local'"},
-				"query":    {Type: "string", Description: "Instrução SQL a executar (no DuckDB aceita 'SELECT ... FROM \"caminho/arquivo.jsonl\"' diretamente)"},
-			},
-			Required: []string{"query"},
-		},
-	},
-	{
-		Name:        "file_ops",
-		Description: "Operações atômicas no sistema de arquivos sem shell: copy, move, delete, mkdir, list. Use para listar diretórios ou gerenciar arquivos em vez de 'ls', 'dir', 'rm' ou 'mkdir' via exec.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]PropertyDef{
-				"host":   {Type: "string", Description: "Alvo: 'local' (default) ou 'noteserver'"},
-				"action": {Type: "string", Description: "Ação a executar: 'copy', 'move', 'delete', 'mkdir', 'list'"},
-				"path":   {Type: "string", Description: "Caminho do arquivo ou diretório de origem"},
-				"target": {Type: "string", Description: "Caminho de destino (obrigatório para 'copy' e 'move')"},
-			},
-			Required: []string{"action", "path"},
-		},
-	},
-	{
 		Name:        "read_file",
 		Description: "Lê conteúdo de arquivo local ou remoto. Use SEMPRE para inspecionar arquivos ou trechos (offset/limit) em vez de 'cat', 'type' ou 'head' via exec.",
 		InputSchema: InputSchema{
@@ -136,29 +108,17 @@ var serverTools = []ToolSchema{
 		},
 	},
 	{
-		Name:        "get_file",
-		Description: "Baixa arquivo do nó remoto para o PC-Elvis via socket binário direto.",
+		Name:        "file_ops",
+		Description: "Operações atômicas no sistema de arquivos sem shell: copy, move, delete, mkdir, list. Use para listar diretórios ou gerenciar arquivos em vez de 'ls', 'dir', 'rm' ou 'mkdir' via exec.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":        {Type: "string", Description: "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
-				"remote_path": {Type: "string", Description: "Caminho do arquivo no nó remoto"},
-				"local_path":  {Type: "string", Description: "Caminho local no PC-Elvis (opcional, default: nome do arquivo no CWD)"},
+				"host":   {Type: "string", Description: "Alvo: 'local' (default) ou 'noteserver'"},
+				"action": {Type: "string", Description: "Ação a executar: 'copy', 'move', 'delete', 'mkdir', 'list'"},
+				"path":   {Type: "string", Description: "Caminho do arquivo ou diretório de origem"},
+				"target": {Type: "string", Description: "Caminho de destino (obrigatório para 'copy' e 'move')"},
 			},
-			Required: []string{"remote_path"},
-		},
-	},
-	{
-		Name:        "put_file",
-		Description: "Envia arquivo do PC-Elvis para o nó remoto de forma chunked e atômica.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]PropertyDef{
-				"host":        {Type: "string", Description: "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
-				"local_path":  {Type: "string", Description: "Caminho local no PC-Elvis"},
-				"remote_path": {Type: "string", Description: "Caminho de destino no nó remoto"},
-			},
-			Required: []string{"local_path", "remote_path"},
+			Required: []string{"action", "path"},
 		},
 	},
 	{
@@ -179,23 +139,13 @@ var serverTools = []ToolSchema{
 		},
 	},
 	{
-		Name:        "ping",
-		Description: "Testa latência e conectividade com os nós do homelab (local, noteserver, ax6000, ax3000).",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]PropertyDef{
-				"host": {Type: "string", Description: "Host específico ou 'all' para todos (default: 'all')"},
-			},
-		},
-	},
-	{
 		Name:        "tool_manage",
-		Description: "Pesquisa, ativa e executa módulos de ferramentas especializadas sob demanda no FastExec (Tool RAG / Dynamic Loading, economizando tokens no system prompt). Ações: 'search' (pesquisa ferramentas por palavra-chave), 'list' (mostra módulos disponíveis), 'enable' (carrega módulo no MCP com list_changed), 'disable' (descarrega módulo), 'call' (executa ferramenta diretamente sem carregá-la no schema).",
+		Description: "Pesquisa, ativa e executa módulos de ferramentas especializadas sob demanda no FastExec (Tool RAG / Dynamic Loading, economizando tokens no system prompt). Módulos disponíveis: 'sql', 'homelab', 'docker', 'git'. Ações: 'search' (pesquisa ferramentas por palavra-chave), 'list' (mostra módulos disponíveis), 'enable' (carrega módulo no MCP com list_changed), 'disable' (descarrega módulo), 'call' (executa ferramenta diretamente sem carregá-la no schema).",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"action": {Type: "string", Description: "Ação: 'search', 'list', 'enable', 'disable', 'call'"},
-				"module": {Type: "string", Description: "Nome do módulo (ex: 'docker', 'git', 'alexa', 'iptv')"},
+				"module": {Type: "string", Description: "Nome do módulo (ex: 'sql', 'homelab', 'docker', 'git')"},
 				"query":  {Type: "string", Description: "Termo de busca para a ação 'search'"},
 				"tool":   {Type: "string", Description: "Nome da ferramenta para a ação 'call'"},
 				"params": {Type: "string", Description: "JSON serializado com argumentos para a ação 'call'"},

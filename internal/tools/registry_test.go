@@ -11,7 +11,7 @@ func TestToolManageList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if !strings.Contains(out, "docker") || !strings.Contains(out, "git") {
+	if !strings.Contains(out, "docker") || !strings.Contains(out, "git") || !strings.Contains(out, "sql") || !strings.Contains(out, "homelab") {
 		t.Fatalf("list output missing modules: %s", out)
 	}
 }
@@ -23,6 +23,22 @@ func TestToolManageSearch(t *testing.T) {
 	}
 	if !strings.Contains(out, "docker_ps") || !strings.Contains(out, "docker_logs") {
 		t.Fatalf("search output missing docker tools: %s", out)
+	}
+
+	outSql, err := HandleToolManage(json.RawMessage(`{"action": "search", "query": "duckdb"}`))
+	if err != nil {
+		t.Fatalf("search duckdb failed: %v", err)
+	}
+	if !strings.Contains(outSql, "sql") {
+		t.Fatalf("search output missing sql tool: %s", outSql)
+	}
+
+	outPing, err := HandleToolManage(json.RawMessage(`{"action": "search", "query": "ping"}`))
+	if err != nil {
+		t.Fatalf("search ping failed: %v", err)
+	}
+	if !strings.Contains(outPing, "ping") {
+		t.Fatalf("search output missing ping tool: %s", outPing)
 	}
 }
 
