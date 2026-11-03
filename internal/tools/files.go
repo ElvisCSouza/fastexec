@@ -48,8 +48,14 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		return "", err
 	}
 
+	filePath := args.Path
 	if target.IsLocal {
-		data, err := os.ReadFile(args.Path)
+		if strings.HasPrefix(filePath, "~/") || strings.HasPrefix(filePath, "~\\") {
+			if home, err := os.UserHomeDir(); err == nil {
+				filePath = filepath.Join(home, filePath[2:])
+			}
+		}
+		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return "", err
 		}
@@ -67,8 +73,8 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		return string(data), nil
 	}
 
-	// Remoto via daemon
-	cmd := fmt.Sprintf("if [ ! -f '%s' ]; then echo '__FILE_NOT_FOUND__' >&2; exit 1; fi; cat '%s'", args.Path, args.Path)
+	// Remoto via daemon: expande ~ no bash para $HOME do usuário remoto
+	cmd := fmt.Sprintf("TARGET='%s'; TARGET=\"${TARGET/#\\~/$HOME}\"; if [ ! -f \"$TARGET\" ]; then echo '__FILE_NOT_FOUND__' >&2; exit 1; fi; cat \"$TARGET\"", filePath)
 	res, err := transport.ExecDaemon(target.TCPAddr, cmd, transport.DefaultTimeout)
 	if err != nil {
 		return "", err
