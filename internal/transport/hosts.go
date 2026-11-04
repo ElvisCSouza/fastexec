@@ -3,6 +3,7 @@ package transport
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -36,7 +37,13 @@ var knownHosts = map[string]HostTarget{
 func ResolveHost(name string) (HostTarget, error) {
 	n := strings.ToLower(strings.TrimSpace(name))
 	if n == "" {
-		n = "noteserver"
+		if envHost := os.Getenv("FASTEXEC_DEFAULT_HOST"); envHost != "" {
+			n = envHost
+		} else if runtime.GOOS != "windows" {
+			n = "local"
+		} else {
+			n = "noteserver"
+		}
 	}
 	if target, ok := knownHosts[n]; ok {
 		return target, nil

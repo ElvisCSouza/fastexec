@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"homelab/fastexec/internal/transport"
@@ -168,8 +169,12 @@ func (a *PutFileArgs) UnmarshalJSON(data []byte) error {
 // se host não informado e path tem volume Windows (ex: C:\, W:\) ou prefixo UNC (\\), usa "local";
 // caso contrário delega a transport.ResolveHost (cujo default para caminhos Linux/posix é "noteserver").
 func ResolveTargetHost(host, path string) (transport.HostTarget, error) {
-	if host == "" && (filepath.VolumeName(path) != "" || strings.HasPrefix(path, `\\`)) {
-		host = "local"
+	if host == "" {
+		if runtime.GOOS != "windows" {
+			host = "local"
+		} else if filepath.VolumeName(path) != "" || strings.HasPrefix(path, `\\`) {
+			host = "local"
+		}
 	}
 	return transport.ResolveHost(host)
 }

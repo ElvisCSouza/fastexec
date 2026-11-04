@@ -85,7 +85,7 @@ var serverTools = []ToolSchema{
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":   {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local'"},
+				"host":   {Type: "string", Description: "Alvo: 'local' (default, host atual), 'noteserver', 'ax6000', 'ax3000'"},
 				"path":   {Type: "string", Description: "Caminho do arquivo"},
 				"offset":     {Type: "integer", Description: "Offset em bytes (opcional)"},
 				"limit":      {Type: "integer", Description: "Limite de bytes a ler (opcional)"},
@@ -115,7 +115,7 @@ var serverTools = []ToolSchema{
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":    {Type: "string", Description: "Alvo: 'noteserver' (default), 'ax6000', 'ax3000', 'local'"},
+				"host":    {Type: "string", Description: "Alvo: 'local' (default, host atual), 'noteserver', 'ax6000', 'ax3000'"},
 				"path":    {Type: "string", Description: "Caminho do arquivo de destino"},
 				"content": {Type: "string", Description: "Conteúdo a ser gravado"},
 				"atomic":  {Type: "boolean", Description: "Se true, grava em temporário e renomeia atomicamente (padrão: true)"},
