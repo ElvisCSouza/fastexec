@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 
 	"homelab/fastexec/internal/env"
@@ -77,17 +76,9 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	if spec.argv != nil {
 		effectiveArgv := ResolveShellArgv(spec.argv)
 		cmd = exec.CommandContext(ctx, effectiveArgv[0], effectiveArgv[1:]...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: 0x08000000,
-			HideWindow:    true,
-		}
+		cmd.SysProcAttr = hideWindowSysProcAttr()
 	} else {
-		cmd = exec.CommandContext(ctx, "cmd.exe")
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CmdLine:       fmt.Sprintf(`cmd.exe /s /c "%s"`, spec.cmdStr),
-			CreationFlags: 0x08000000,
-			HideWindow:    true,
-		}
+		cmd = buildShellCommand(ctx, spec.cmdStr)
 	}
 	if spec.cwd != "" {
 		cmd.Dir = spec.cwd
