@@ -53,18 +53,16 @@ func HandleExec(args ExecArgs) (string, error) {
 		label = strings.Join(args.Argv, " ")
 	}
 
+	// Remove payload de blocos heredoc da análise (evita falsos positivos com documentação/scripts)
+	cmdToCheck := stripHeredocs(label)
+
 	// Auto-remediação de sleep puro <= 15s com aviso pedagógico
-	if out, handled, err := tryRemediateSleep(label, args); handled {
+	if out, handled, err := tryRemediateSleep(cmdToCheck, args); handled {
 		return out, err
 	}
 
 	// Bloqueio determinístico de sleep / timeout artificial
-	if hasArgv {
-		exe := strings.ToLower(strings.TrimSuffix(filepath.Base(args.Argv[0]), ".exe"))
-		if exe == "sleep" || exe == "timeout" || (shellExes[exe] && sleepGuardRegex.MatchString(label)) || ((exe == "python" || exe == "python3" || exe == "py") && sleepGuardRegex.MatchString(label)) {
-			return "", fmt.Errorf(sleepGuardMsg)
-		}
-	} else if sleepGuardRegex.MatchString(label) {
+	if checkSleepGuard(cmdToCheck, args) {
 		return "", fmt.Errorf(sleepGuardMsg)
 	}
 
@@ -187,6 +185,96 @@ func isWindowsCmdletMismatch(cmd string, errMsg string) bool {
 		}
 	}
 	return false
+}
+
+// stripHeredocs remove o payload de blocos heredoc (<<'EOF' ... EOF) antes de analisar comandos.
+// Isso evita que texto de documentação, especificações ou scripts gravados via heredoc
+// acionem indevidamente palavras-chave de guards do shell (falsos positivos).
+func stripHeredocs(cmd string) string {
+	if !strings.Contains(cmd, "<<") {
+		return cmd
+	}
+
+	lines := strings.Split(cmd, "\n")
+	var result []string
+	var inHeredoc bool
+	var heredocDelim string
+	var allowTabs bool
+
+	reHeredoc := regexp.MustCompile(`<<(-)?\s*['"]?([A-Za-z0-9_]+)['"]?`)
+
+	for _, line := range lines {
+		if inHeredoc {
+			checkLine := line
+			if allowTabs {
+				checkLine = strings.TrimLeft(checkLine, "\t")
+			}
+			checkLine = strings.TrimRight(checkLine, "\r ")
+			if checkLine == heredocDelim {
+				inHeredoc = false
+				heredocDelim = ""
+				allowTabs = false
+			}
+			continue
+		}
+
+		result = append(result, line)
+		if matches := reHeredoc.FindStringSubmatch(line); len(matches) >= 3 {
+			inHeredoc = true
+			allowTabs = matches[1] == "-"
+			heredocDelim = matches[2]
+		}
+	}
+
+	return strings.Join(result, "\n")
+}
+
+// coreutilsTimeoutRegex identifica o utilitário GNU coreutils `timeout [options] <duration> <command> [args]`.
+// Ex: `timeout 40 docker exec ...` ou `timeout 10s curl http://...`.
+// O grupo 1 captura o comando filho executado com deadline.
+var coreutilsTimeoutRegex = regexp.MustCompile(`(?i)(?:^|[;&|]\s*)timeout(?:\s+-[A-Za-z0-9_-]+|\s+--[a-z0-9_-]+(?:=\S+)?)*\s+\d+(?:\.\d+)?[smhd]?\s+([a-zA-Z0-9_\.\/-]+)`)
+
+func isCoreutilsTimeout(cmd string) bool {
+	matches := coreutilsTimeoutRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return false
+	}
+	subCmd := strings.ToLower(filepath.Base(matches[1]))
+	return subCmd != "" && !strings.HasPrefix(subCmd, "-")
+}
+
+// checkSleepGuard verifica se a linha de comando tenta uma pausa passiva artificial (sleep ou timeout passivo).
+// Ele ignora wrappers de processo legítimos como o `timeout` do GNU coreutils.
+func checkSleepGuard(cmd string, args ExecArgs) bool {
+	hasArgv := len(args.Argv) > 0
+	if hasArgv {
+		exe := strings.ToLower(strings.TrimSuffix(filepath.Base(args.Argv[0]), ".exe"))
+		if exe == "sleep" {
+			return true
+		}
+		if exe == "timeout" {
+			return !isCoreutilsTimeout(cmd)
+		}
+		if (shellExes[exe] || exe == "python" || exe == "python3" || exe == "py") && sleepGuardRegex.MatchString(cmd) {
+			if isCoreutilsTimeout(cmd) {
+				cleaned := coreutilsTimeoutRegex.ReplaceAllString(cmd, " ")
+				return sleepGuardRegex.MatchString(cleaned)
+			}
+			return true
+		}
+		return false
+	}
+
+	if !sleepGuardRegex.MatchString(cmd) {
+		return false
+	}
+
+	if isCoreutilsTimeout(cmd) {
+		cleaned := coreutilsTimeoutRegex.ReplaceAllString(cmd, " ")
+		return sleepGuardRegex.MatchString(cleaned)
+	}
+
+	return true
 }
 
 var pureSleepRegex = regexp.MustCompile(`(?i)^\s*(?:sleep|timeout(?:\.exe)?(?:\s+\/t)?|start-sleep(?:\s+(?:-s|-seconds))?)\s+(\d+)\s*$`)

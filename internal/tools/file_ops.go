@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"homelab/fastexec/internal/transport"
@@ -16,6 +17,54 @@ type FileOpsArgs struct {
 	Action string `json:"action"` // "copy", "move", "delete", "mkdir", "list"
 	Path   string `json:"path"`
 	Target string `json:"target,omitempty"`
+}
+
+func (a *FileOpsArgs) UnmarshalJSON(data []byte) error {
+	type Alias FileOpsArgs
+	var aux struct {
+		Alias
+		Operation string `json:"operation"`
+		Op        string `json:"op"`
+		Type      string `json:"type"`
+		Command   string `json:"command"`
+		Cmd       string `json:"cmd"`
+		Src       string `json:"src"`
+		Source    string `json:"source"`
+		File      string `json:"file"`
+		Dest      string `json:"dest"`
+		To        string `json:"to"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*a = FileOpsArgs(aux.Alias)
+	if a.Action == "" {
+		for _, s := range []string{aux.Operation, aux.Op, aux.Type, aux.Command, aux.Cmd} {
+			if s != "" {
+				a.Action = strings.ToLower(strings.TrimSpace(s))
+				break
+			}
+		}
+	} else {
+		a.Action = strings.ToLower(strings.TrimSpace(a.Action))
+	}
+	if a.Path == "" {
+		for _, s := range []string{aux.Src, aux.Source, aux.File} {
+			if s != "" {
+				a.Path = s
+				break
+			}
+		}
+	}
+	if a.Target == "" {
+		for _, s := range []string{aux.Dest, aux.To} {
+			if s != "" {
+				a.Target = s
+				break
+			}
+		}
+	}
+	return nil
 }
 
 type FileItem struct {
@@ -33,16 +82,16 @@ func HandleFileOps(args FileOpsArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
 	}
 
-	host := args.Host
-	if host == "" {
-		host = "local"
+	target, err := ResolveTargetHost(args.Host, args.Path)
+	if err != nil {
+		return "", err
 	}
 
-	if host == "local" {
+	if target.IsLocal {
 		return handleLocalFileOp(args)
 	}
 
-	return handleRemoteFileOp(host, args)
+	return handleRemoteFileOp(target.Name, args)
 }
 
 func handleLocalFileOp(args FileOpsArgs) (string, error) {

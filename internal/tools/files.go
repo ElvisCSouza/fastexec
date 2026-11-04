@@ -86,10 +86,92 @@ type GetFileArgs struct {
 	LocalPath  string `json:"local_path,omitempty"`
 }
 
+func (a *GetFileArgs) UnmarshalJSON(data []byte) error {
+	type Alias GetFileArgs
+	var aux struct {
+		Alias
+		Path        string `json:"path"`
+		Src         string `json:"src"`
+		Source      string `json:"source"`
+		Remote      string `json:"remote"`
+		File        string `json:"file"`
+		Dest        string `json:"dest"`
+		Destination string `json:"destination"`
+		Target      string `json:"target"`
+		Out         string `json:"out"`
+		Output      string `json:"output"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*a = GetFileArgs(aux.Alias)
+	if a.RemotePath == "" {
+		for _, s := range []string{aux.Path, aux.Src, aux.Source, aux.Remote, aux.File} {
+			if s != "" {
+				a.RemotePath = s
+				break
+			}
+		}
+	}
+	if a.LocalPath == "" {
+		for _, s := range []string{aux.Dest, aux.Destination, aux.Target, aux.Out, aux.Output} {
+			if s != "" {
+				a.LocalPath = s
+				break
+			}
+		}
+	}
+	return nil
+}
+
 type PutFileArgs struct {
 	Host       string `json:"host"`
 	LocalPath  string `json:"local_path"`
 	RemotePath string `json:"remote_path"`
+}
+
+func (a *PutFileArgs) UnmarshalJSON(data []byte) error {
+	type Alias PutFileArgs
+	var aux struct {
+		Alias
+		Src    string `json:"src"`
+		Source string `json:"source"`
+		Path   string `json:"path"`
+		File   string `json:"file"`
+		Dest   string `json:"dest"`
+		Target string `json:"target"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*a = PutFileArgs(aux.Alias)
+	if a.LocalPath == "" {
+		for _, s := range []string{aux.Src, aux.Source, aux.Path, aux.File} {
+			if s != "" {
+				a.LocalPath = s
+				break
+			}
+		}
+	}
+	if a.RemotePath == "" {
+		for _, s := range []string{aux.Dest, aux.Target} {
+			if s != "" {
+				a.RemotePath = s
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// ResolveTargetHost deduz o host para operações de arquivos:
+// se host não informado e path tem volume Windows (ex: C:\, W:\) ou prefixo UNC (\\), usa "local";
+// caso contrário delega a transport.ResolveHost (cujo default para caminhos Linux/posix é "noteserver").
+func ResolveTargetHost(host, path string) (transport.HostTarget, error) {
+	if host == "" && (filepath.VolumeName(path) != "" || strings.HasPrefix(path, `\\`)) {
+		host = "local"
+	}
+	return transport.ResolveHost(host)
 }
 
 func HandleReadFile(args ReadFileArgs) (string, error) {
@@ -97,12 +179,7 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
 	}
 
-	host := args.Host
-	if host == "" && (filepath.VolumeName(args.Path) != "" || strings.HasPrefix(args.Path, `\\`)) {
-		host = "local"
-	}
-
-	target, err := transport.ResolveHost(host)
+	target, err := ResolveTargetHost(args.Host, args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -181,12 +258,7 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
 	}
 
-	host := args.Host
-	if host == "" && (filepath.VolumeName(args.Path) != "" || strings.HasPrefix(args.Path, `\\`)) {
-		host = "local"
-	}
-
-	target, err := transport.ResolveHost(host)
+	target, err := ResolveTargetHost(args.Host, args.Path)
 	if err != nil {
 		return "", err
 	}
@@ -277,17 +349,34 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'remote_path' é obrigatório")
 	}
 
-	target, err := transport.ResolveHost(args.Host)
+	target, err := ResolveTargetHost(args.Host, args.RemotePath)
 	if err != nil {
 		return "", err
-	}
-	if target.IsLocal {
-		return "", fmt.Errorf("get_file requer um host remoto (noteserver, ax6000, ax3000)")
 	}
 
 	localPath := args.LocalPath
 	if localPath == "" {
 		localPath = filepath.Base(args.RemotePath)
+	}
+
+	if target.IsLocal {
+		fi, err := os.Stat(args.RemotePath)
+		if err != nil {
+			return "", fmt.Errorf("arquivo local não encontrado: %w", err)
+		}
+		data, err := os.ReadFile(args.RemotePath)
+		if err != nil {
+			return "", err
+		}
+		if dir := filepath.Dir(localPath); dir != "" && dir != "." {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return "", fmt.Errorf("falha ao criar diretório local: %w", err)
+			}
+		}
+		if err := os.WriteFile(localPath, data, 0644); err != nil {
+			return "", fmt.Errorf("falha ao gravar arquivo local: %w", err)
+		}
+		return okReply(fi.Size()), nil
 	}
 
 	written, err := transport.GetFileDaemon(target.TCPAddr, args.RemotePath, localPath, transport.DefaultTimeout)
@@ -303,7 +392,7 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 		return "", fmt.Errorf("parâmetros 'local_path' e 'remote_path' são obrigatórios")
 	}
 
-	target, err := transport.ResolveHost(args.Host)
+	target, err := ResolveTargetHost(args.Host, args.RemotePath)
 	if err != nil {
 		return "", err
 	}
