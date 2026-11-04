@@ -14,15 +14,16 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
        └── host: "ax3000"     ──> TCP :9142 (Daemon Zig server-exec armv7l)
 ```
 
-## Ferramentas Expostas ao LLM (6 Core Tools + Módulos Dinâmicos Sob Demanda)
+## Ferramentas Expostas ao LLM (7 Core Tools + Módulos Dinâmicos Sob Demanda)
 
-Para economizar ~45% de overhead estático de tokens no system prompt (~480 tokens vs ~850 tokens anteriores), o FastExec expõe por padrão apenas as **6 ferramentas Core essenciais**:
+Para economizar ~45% de overhead estático de tokens no system prompt (~490 tokens vs ~900 tokens de catálogos inflados), o FastExec expõe por padrão apenas as **7 ferramentas Core essenciais**:
 
 | Tool Core | Parâmetros | Descrição |
 |---|---|---|
-| `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona orientada a eventos (`timeout_ms` padrão 45 s, teto 50 s). Inclui guardas ativas determinísticas e nudges contextuais educativos no rodapé |
-| `read_file` | `host`, `path`, `offset`, `limit` | Leitura determinística de arquivo local ou remoto sem subprocessos (offset/limit seguros) |
-| `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo. Retorna `ok N bytes` |
+| `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona orientada a eventos (`timeout_ms` padrão 45 s, teto 50 s). Inclui auto-remediação de `cat` e `sleep`, resolução `pwsh` e nudges educativos no rodapé |
+| `read_file` | `host`, `path`, `offset`, `limit`, `start_line`, `end_line` | Leitura determinística de arquivo local ou remoto sem subprocessos (suporta paginação por bytes e por linhas) |
+| `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo. Retorna confirmação compacta `ok N bytes` |
+| `edit_file` | `host`, `path`, `target`, `replacement` | Edição cirúrgica em arquivo existente. Exige correspondência única de `target`, evitando transferir arquivos inteiros |
 | `file_ops` | `host`, `action`, `path`, `target` | Operações atômicas no sistema de arquivos (`list`, `copy`, `move`, `delete`, `mkdir`) sem spawn de shell |
 | `job` | `host`, `action`, `command` ou `argv`, `cwd`, `job_id`, `lines` | Background jobs assíncronos (`start`, `status`, `tail`, `wait`, `stop`, `list`): systemd-run nos hosts Linux, Job Object no `local` |
 | `tool_manage` | `action`, `module`, `query`, `tool`, `params` | Catálogo dinâmico e execução sob demanda (Tool RAG / MCP `listChanged`). Ações: `search`, `list`, `enable`, `disable`, `call` |
@@ -32,13 +33,17 @@ Ferramentas de uso pontual ou avançado foram modularizadas e são acessadas via
 - **`sql`**: DuckDB analítico e SQLite via JSON puro (`tool_manage(action='call', tool='sql', params='{"query": "..."}')` ou `enable`).
 - **`homelab`**: Ferramentas de infraestrutura e transferência binária: `ping`, `get_file`, `put_file`.
 - **`docker`**: Inspeções e logs de containers: `docker_ps`, `docker_logs`.
-- **`git`**: Inspeções semânticas de repositório: `git_status`, `git_log`.
 *Nota de compatibilidade:* Chamadas diretas legadas do cliente para `sql`, `ping`, `get_file` e `put_file` continuam sendo atendidas de forma transparente no dispatcher sem falhas.
 
-### Guardas Ativas e In-Context Nudges no `exec`
-1. **Sleep / Timeout Guard**: Bloqueio ativo de `sleep` ou `timeout` artificial (retorna erro orientando a usar timeout síncrono ou `job`).
-2. **Surgical Cat / Type Guard**: Bloqueio ativo de execuções isoladas de `cat <arquivo>`, `type <arquivo>`, `Get-Content <arquivo>` (sem pipes ou redirecionamentos), orientando deterministamente a usar a tool nativa `read_file` (que não cria subprocessos e suporta paginação com limites).
-3. **In-Context Educational Nudges**: Sugestões não-bloqueantes de 1 linha adicionadas no rodapé da resposta quando comandos de shell executados têm alternativas nativas melhores (`ls`/`dir` ➔ sugere `file_ops(action='list')`; `docker ...` ➔ sugere módulo `docker`; `sqlite3 ...` ➔ sugere módulo `sql`).
+### Auto-Remediação Pedagógica e Guardas no `exec`
+1. **Auto-Remediação de `cat` / `type` / `Get-Content`**: Execuções isoladas de leitura são interceptadas no ar e convertidas automaticamente para a micro-tool `read_file` (zero subprocessos, sem shell, instantâneo). O conteúdo do arquivo é devolvido acompanhado do aviso pedagógico no topo:
+   `[FastExec Auto-Remediation] O comando 'cat ...' foi convertido automaticamente para a tool nativa 'read_file' (zero-process). Na próxima, invoque read_file diretamente.`
+2. **Auto-Remediação de `sleep` / `timeout`**: Comandos de pausa artificial são resolvidos via timer nativo em Go (sem spawn de processos inúteis) e retornam:
+   `[FastExec] Pausa de Ns concluída. (Dica: para sincronização de serviços, prefira checar a porta/log do alvo).`
+3. **Resolução Automática de PowerShell 7 (`pwsh`)**: Chamadas para `powershell` são promovidas para `pwsh` automaticamente, resolvendo caminhos fora da sandbox UWP e garantindo saída em UTF-8 nativo sem BOM, com fallback gracioso para 5.1 se o 7 não estiver instalado.
+4. **Hints Contextuais Inteligentes**:
+   - Falhas de cmdlets do PowerShell invocados no `cmd.exe` recebem orientações automáticas de uso do `pwsh` ou `file_ops`.
+   - Erros comuns de SQL (ex: funções de agregação no GROUP BY) recebem dicas de reescrita sem interromper bruscamente o raciocínio da LLM.
 
 ## Convenções de Rede e CWD Padrão
 - `noteserver`: `192.168.31.142:9142` (Daemon Zig). Diretório de trabalho padrão automático: `/home/elvis/workspace` (elimina a necessidade de injetar `cd ~/workspace &&` nos comandos).
