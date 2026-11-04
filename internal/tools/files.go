@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +27,50 @@ type EditFileArgs struct {
 	Path        string `json:"path"`
 	Target      string `json:"target"`
 	Replacement string `json:"replacement"`
+}
+
+// UnmarshalJSON aceita sinônimos frequentes de 'target' (old_string, search, find)
+// e 'replacement' (new_string, replace, content) comuns em LLMs e editores.
+func (a *EditFileArgs) UnmarshalJSON(data []byte) error {
+	type Alias EditFileArgs
+	var aux struct {
+		Alias
+		OldString string `json:"old_string"`
+		OldStr    string `json:"old_str"`
+		Search    string `json:"search"`
+		Find      string `json:"find"`
+		NewString string `json:"new_string"`
+		NewStr    string `json:"new_str"`
+		Replace   string `json:"replace"`
+		Content   string `json:"content"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*a = EditFileArgs(aux.Alias)
+	if a.Target == "" {
+		if aux.OldString != "" {
+			a.Target = aux.OldString
+		} else if aux.OldStr != "" {
+			a.Target = aux.OldStr
+		} else if aux.Search != "" {
+			a.Target = aux.Search
+		} else if aux.Find != "" {
+			a.Target = aux.Find
+		}
+	}
+	if a.Replacement == "" {
+		if aux.NewString != "" {
+			a.Replacement = aux.NewString
+		} else if aux.NewStr != "" {
+			a.Replacement = aux.NewStr
+		} else if aux.Replace != "" {
+			a.Replacement = aux.Replace
+		} else if aux.Content != "" {
+			a.Replacement = aux.Content
+		}
+	}
+	return nil
 }
 
 type WriteFileArgs struct {
@@ -147,8 +192,12 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 	}
 
 	contentBytes := []byte(args.Content)
+	var prevSize int64 = -1
 
 	if target.IsLocal {
+		if fi, err := os.Stat(args.Path); err == nil && !fi.IsDir() {
+			prevSize = fi.Size()
+		}
 		dir := filepath.Dir(args.Path)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", err
@@ -167,7 +216,11 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 				return "", err
 			}
 		}
-		return okReply(int64(len(contentBytes))), nil
+		reply := okReply(int64(len(contentBytes)))
+		if prevSize > 1500 {
+			reply += fmt.Sprintf("\n[FastExec Hint] O arquivo sobrescrito já existia (%.1f KB). Para alterar trechos pontuais em vez de regravar o arquivo inteiro, prefira a tool 'edit_file' para economizar tempo e tokens de contexto.", float64(prevSize)/1024.0)
+		}
+		return reply, nil
 	}
 
 	// Remoto via daemon chunked

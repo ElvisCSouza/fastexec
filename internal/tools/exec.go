@@ -17,7 +17,10 @@ const MaxClientTimeoutMs = 50000
 // maxClientTimeout é variável só para os testes poderem encurtar o teto.
 var maxClientTimeout = time.Duration(MaxClientTimeoutMs) * time.Millisecond
 
-var sleepGuardRegex = regexp.MustCompile(`(?i)\b(sleep\s+\d+|timeout(\.exe)?\s+(\/t\s+)?\d+)\b`)
+// execDurationWarningMs é o limiar para alertar o agente de que um comando síncrono está perigosamente longo (>30s).
+var execDurationWarningMs int64 = 30000
+
+var sleepGuardRegex = regexp.MustCompile(`(?i)\b(sleep\s+\d+|timeout(\.exe)?\s+(\/t\s+)?\d+|time\.sleep\(\s*\d+)\b`)
 
 // shellExes são os executáveis cujo argumento de texto é interpretado como comando de shell. O guard de sleep só faz
 // sentido neles: num argv para node/python o texto é código ou dado, não uma linha de shell.
@@ -58,7 +61,7 @@ func HandleExec(args ExecArgs) (string, error) {
 	// Bloqueio determinístico de sleep / timeout artificial
 	if hasArgv {
 		exe := strings.ToLower(strings.TrimSuffix(filepath.Base(args.Argv[0]), ".exe"))
-		if exe == "sleep" || exe == "timeout" || (shellExes[exe] && sleepGuardRegex.MatchString(label)) {
+		if exe == "sleep" || exe == "timeout" || (shellExes[exe] && sleepGuardRegex.MatchString(label)) || ((exe == "python" || exe == "python3" || exe == "py") && sleepGuardRegex.MatchString(label)) {
 			return "", fmt.Errorf(sleepGuardMsg)
 		}
 	} else if sleepGuardRegex.MatchString(label) {
@@ -97,6 +100,14 @@ func HandleExec(args ExecArgs) (string, error) {
 		out += fmt.Sprintf("\nO timeout_ms pedido (%d) foi limitado a %d ms, o teto antes de o cliente MCP cortar a chamada.", clampedFrom.Milliseconds(), timeout.Milliseconds())
 	}
 	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
+		if res.Duration > execDurationWarningMs {
+			warning := fmt.Sprintf("[FastExec Warning] Este comando levou %.1fs síncronos no exec. Comandos longos (>30s) correm risco de timeout rígido do cliente MCP (60s no Claude Desktop). Use a tool 'job' (action='start') para execução assíncrona desacoplada.", float64(res.Duration)/1000)
+			if out != "" {
+				out = strings.TrimRight(out, "\r\n") + "\n\n" + warning
+			} else {
+				out = warning
+			}
+		}
 		if hint := detectNudge(label, args); hint != "" {
 			if out != "" {
 				out = strings.TrimRight(out, "\r\n") + "\n\n" + hint
@@ -179,17 +190,18 @@ func isWindowsCmdletMismatch(cmd string, errMsg string) bool {
 }
 
 var pureSleepRegex = regexp.MustCompile(`(?i)^\s*(?:sleep|timeout(?:\.exe)?(?:\s+\/t)?|start-sleep(?:\s+(?:-s|-seconds))?)\s+(\d+)\s*$`)
+var pythonSleepRegex = regexp.MustCompile(`(?i)^\s*(?:python|python3|py)(?:\.exe)?\s+-c\s+["'].*time\.sleep\((\d+(?:\.\d+)?)\).*["']\s*$`)
 
 var sleepFn = time.Sleep
 
-// tryRemediateSleep intercepta comandos exclusivos de sleep / timeout.
+// tryRemediateSleep intercepta comandos exclusivos de sleep / timeout (incluindo python time.sleep).
 // Se a pausa pedida for <= 15s, executa a espera controlada em Go e retorna aviso pedagógico.
 // Se > 15s, bloqueia com instrução explícita de usar job assíncrono.
 func tryRemediateSleep(label string, args ExecArgs) (string, bool, error) {
 	var targetStr string
 	if len(args.Argv) > 0 {
 		exe := strings.ToLower(strings.TrimSuffix(filepath.Base(args.Argv[0]), ".exe"))
-		if exe == "sleep" || exe == "timeout" {
+		if exe == "sleep" || exe == "timeout" || exe == "python" || exe == "python3" || exe == "py" {
 			targetStr = strings.Join(args.Argv, " ")
 		}
 	} else {
@@ -200,15 +212,20 @@ func tryRemediateSleep(label string, args ExecArgs) (string, bool, error) {
 		return "", false, nil
 	}
 
-	matches := pureSleepRegex.FindStringSubmatch(targetStr)
-	if len(matches) < 2 {
-		return "", false, nil
-	}
-
 	var sec int
-	_, err := fmt.Sscanf(matches[1], "%d", &sec)
-	if err != nil {
-		return "", false, nil
+	matches := pureSleepRegex.FindStringSubmatch(targetStr)
+	if len(matches) >= 2 {
+		_, _ = fmt.Sscanf(matches[1], "%d", &sec)
+	} else {
+		pyMatches := pythonSleepRegex.FindStringSubmatch(targetStr)
+		if len(pyMatches) >= 2 {
+			var f float64
+			if _, err := fmt.Sscanf(pyMatches[1], "%f", &f); err == nil {
+				sec = int(f + 0.5)
+			}
+		} else {
+			return "", false, nil
+		}
 	}
 
 	if sec > 15 {
