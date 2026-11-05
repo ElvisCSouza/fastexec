@@ -215,3 +215,42 @@ func TestDetectNudge(t *testing.T) {
 		}
 	}
 }
+
+func TestCdAutoRemediation(t *testing.T) {
+	// Caso 1: puro cd ~/workspace
+	args1 := ExecArgs{Host: "noteserver", Command: "cd ~/workspace"}
+	out, handled, _ := tryRemediateCd(&args1)
+	if !handled || !strings.Contains(out, "já é ~/workspace") {
+		t.Errorf("esperava tratamento de cd ~/workspace puro, recebeu handled=%v out=%s", handled, out)
+	}
+
+	// Caso 2: cd ~/workspace && <resto>
+	args2 := ExecArgs{Host: "noteserver", Command: "cd ~/workspace && git status"}
+	_, handled, hint := tryRemediateCd(&args2)
+	if handled {
+		t.Errorf("esperava handled=false para executar resto do comando")
+	}
+	if args2.Command != "git status" {
+		t.Errorf("esperava command 'git status', recebeu: %s", args2.Command)
+	}
+	if !strings.Contains(hint, "[FastExec Auto-Remediation]") {
+		t.Errorf("esperava hint pedagógico, recebeu: %s", hint)
+	}
+
+	// Caso 3: cd /home/elvis/workspace; <resto>
+	args3 := ExecArgs{Host: "noteserver", Command: "cd /home/elvis/workspace; set -a"}
+	_, handled, hint = tryRemediateCd(&args3)
+	if args3.Command != "set -a" {
+		t.Errorf("esperava command 'set -a', recebeu: %s", args3.Command)
+	}
+
+	// Caso 4: cd ~/workspace/homeassistant/config; echo "ok"
+	args4 := ExecArgs{Host: "noteserver", Command: `cd ~/workspace/homeassistant/config; echo "ok"`}
+	_, handled, hint = tryRemediateCd(&args4)
+	if args4.Cwd != "homeassistant/config" {
+		t.Errorf("esperava Cwd 'homeassistant/config', recebeu: %s", args4.Cwd)
+	}
+	if args4.Command != `echo "ok"` {
+		t.Errorf("esperava command 'echo \"ok\"', recebeu: %s", args4.Command)
+	}
+}

@@ -47,14 +47,22 @@ func SessionID() string {
 }
 
 func getDBPath() string {
-	baseDir := `W:\Data\telemetry`
-	if _, err := os.Stat(`W:\`); err != nil {
-		localApp := os.Getenv("LOCALAPPDATA")
-		if localApp == "" {
-			localApp = os.TempDir()
-		}
-		baseDir = filepath.Join(localApp, "fastexec", "telemetry")
+	if _, err := os.Stat(`W:\`); err == nil {
+		baseDir := `W:\Data\telemetry`
+		_ = os.MkdirAll(baseDir, 0755)
+		return filepath.Join(baseDir, "fastexec.db")
 	}
+	if localApp := os.Getenv("LOCALAPPDATA"); localApp != "" {
+		baseDir := filepath.Join(localApp, "fastexec", "telemetry")
+		_ = os.MkdirAll(baseDir, 0755)
+		return filepath.Join(baseDir, "fastexec.db")
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		baseDir := filepath.Join(home, ".local", "share", "fastexec")
+		_ = os.MkdirAll(baseDir, 0755)
+		return filepath.Join(baseDir, "fastexec.db")
+	}
+	baseDir := filepath.Join(os.TempDir(), "fastexec", "telemetry")
 	_ = os.MkdirAll(baseDir, 0755)
 	return filepath.Join(baseDir, "fastexec.db")
 }

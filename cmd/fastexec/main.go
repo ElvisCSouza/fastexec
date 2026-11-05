@@ -150,11 +150,16 @@ func main() {
 		if len(subArgs) >= 3 {
 			host = subArgs[2]
 		}
+		if h, p := tools.SplitHostPath(remotePath); h != "" && h != "local" {
+			host = h
+			remotePath = p
+		}
 		out, err := tools.HandleGetFile(tools.GetFileArgs{Host: host, RemotePath: remotePath, LocalPath: localPath})
-		fmt.Println(out)
 		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		fmt.Println(out)
 
 	case "put":
 		if len(subArgs) < 2 {
@@ -167,11 +172,20 @@ func main() {
 		if len(subArgs) >= 3 {
 			host = subArgs[2]
 		}
+		if h, p := tools.SplitHostPath(remotePath); h != "" && h != "local" {
+			host = h
+			remotePath = p
+		} else if hLoc, pLoc := tools.SplitHostPath(localPath); hLoc != "" && hLoc != "local" {
+			host = hLoc
+			remotePath = pLoc
+			localPath = subArgs[1]
+		}
 		out, err := tools.HandlePutFile(tools.PutFileArgs{Host: host, LocalPath: localPath, RemotePath: remotePath})
-		fmt.Println(out)
 		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		fmt.Println(out)
 
 	case "sql":
 		if len(subArgs) < 1 {

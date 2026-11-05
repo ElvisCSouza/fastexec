@@ -111,7 +111,7 @@ func HandleJob(args JobArgs) (string, error) {
 		}
 		if strings.Contains(out, waitTimeoutMarker) {
 			out = strings.TrimSpace(strings.ReplaceAll(out, waitTimeoutMarker, ""))
-			return fmt.Sprintf("[job %s ainda em execução após %s; chame 'wait' de novo ou use 'tail']\n%s", unit, human(jobWaitMax), out), nil
+			return fmt.Sprintf("[job %s ainda em execução após %s]\nAVISO ANTI-POLLING: NÃO faça polling chamando 'wait' consecutivamente. Use o recurso nativo de agendamento do seu cliente (ex: schedule/timer do Claude Desktop) para verificar o status daqui a alguns minutos, ou finalize seu turno informando o usuário.\n%s", unit, human(jobWaitMax), out), nil
 		}
 		return fmt.Sprintf("[job %s finalizado]\n%s", unit, out), nil
 

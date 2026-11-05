@@ -165,10 +165,40 @@ func (a *PutFileArgs) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// SplitHostPath analisa strings que podem conter a sintaxe "host:path" (ex: "noteserver:/tmp/foo" ou "ax6000:/etc/config").
+// No Windows, letras de unidade como "C:\", "W:\", "D:/" NÃO são tratadas como host.
+func SplitHostPath(raw string) (host string, path string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", ""
+	}
+	// Letra de unidade Windows (ex: C:\, W:/)
+	if len(raw) >= 2 && raw[1] == ':' && ((raw[0] >= 'a' && raw[0] <= 'z') || (raw[0] >= 'A' && raw[0] <= 'Z')) {
+		return "local", raw
+	}
+	// Prefixo UNC (ex: \\server\share)
+	if strings.HasPrefix(raw, `\\`) {
+		return "local", raw
+	}
+	if idx := strings.Index(raw, ":"); idx > 1 {
+		potentialHost := strings.ToLower(raw[:idx])
+		if potentialHost != "http" && potentialHost != "https" && potentialHost != "file" && potentialHost != "ws" && potentialHost != "wss" {
+			return potentialHost, raw[idx+1:]
+		}
+	}
+	return "", raw
+}
+
 // ResolveTargetHost deduz o host para operações de arquivos:
 // se host não informado e path tem volume Windows (ex: C:\, W:\) ou prefixo UNC (\\), usa "local";
 // caso contrário delega a transport.ResolveHost (cujo default para caminhos Linux/posix é "noteserver").
 func ResolveTargetHost(host, path string) (transport.HostTarget, error) {
+	if h, p := SplitHostPath(path); h != "" {
+		if host == "" || host == "noteserver" || host == "local" {
+			host = h
+		}
+		path = p
+	}
 	if host == "" {
 		if runtime.GOOS != "windows" {
 			host = "local"
@@ -354,6 +384,13 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'remote_path' é obrigatório")
 	}
 
+	if h, p := SplitHostPath(args.RemotePath); h != "" && h != "local" {
+		if args.Host == "" || args.Host == "noteserver" || args.Host == "local" {
+			args.Host = h
+		}
+		args.RemotePath = p
+	}
+
 	target, err := ResolveTargetHost(args.Host, args.RemotePath)
 	if err != nil {
 		return "", err
@@ -395,6 +432,24 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 func HandlePutFile(args PutFileArgs) (string, error) {
 	if args.LocalPath == "" || args.RemotePath == "" {
 		return "", fmt.Errorf("parâmetros 'local_path' e 'remote_path' são obrigatórios")
+	}
+
+	// Normalização tolerante de prefixo host:path no remote_path
+	if h, p := SplitHostPath(args.RemotePath); h != "" && h != "local" {
+		if args.Host == "" || args.Host == "noteserver" || args.Host == "local" {
+			args.Host = h
+		}
+		args.RemotePath = p
+	}
+	// Se os argumentos vieram invertidos (localPath com prefixo remoto e remotePath local)
+	if h, p := SplitHostPath(args.LocalPath); h != "" && h != "local" {
+		if hDst, _ := SplitHostPath(args.RemotePath); hDst == "" || hDst == "local" {
+			args.Host = h
+			realRemote := p
+			realLocal := args.RemotePath
+			args.LocalPath = realLocal
+			args.RemotePath = realRemote
+		}
 	}
 
 	target, err := ResolveTargetHost(args.Host, args.RemotePath)

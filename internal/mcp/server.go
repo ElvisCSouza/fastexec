@@ -66,14 +66,14 @@ type PropertyDef struct {
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Executa comando síncrono rápido no nó alvo (orientado a eventos, máx 45s). Para ler arquivos prefira 'read_file'; para gerenciar arquivos/diretórios prefira 'file_ops'; para tarefas longas (> 30s) use a tool 'job' (action='start'). No noteserver, o cwd padrão é ~/workspace. Dois modos: 'command' (linha de shell; no Windows 'local' roda em cmd.exe) ou 'argv' (sem shell: cada item chega ao programa exatamente como enviado; use para código e texto com metacaracteres). Código longo vai por 'input' (stdin): argv ['node','-'] ou ['python','-'] com script em 'input'. Para PowerShell use argv ['pwsh','-NoProfile','-Command','-'] com script em 'input'. No estouro de timeout_ms a árvore de processos é encerrada e a resposta traz a saída parcial. stdin sem 'input' é EOF imediato.",
+		Description: "Executa comando síncrono rápido no nó alvo (orientado a eventos, máx 45s). CWD PADRÃO NO NOTESERVER É ~/workspace (NUNCA prefixe comandos com 'cd ~/workspace &&' ou 'cd ~/workspace;'). Para outro diretório prefira o parâmetro 'cwd'. Para ler arquivos prefira 'read_file'; para gerenciar arquivos/diretórios prefira 'file_ops'; para tarefas longas (> 30s) use a tool 'job' (action='start'). Dois modos: 'command' (linha de shell; no Windows 'local' roda em cmd.exe) ou 'argv' (sem shell: cada item chega ao programa exatamente como enviado; use para código e texto com metacaracteres). Código longo vai por 'input' (stdin): argv ['node','-'] ou ['python','-'] com script em 'input'. Para PowerShell use argv ['pwsh','-NoProfile','-Command','-'] com script em 'input'. No estouro de timeout_ms a árvore de processos é encerrada e a resposta traz a saída parcial. stdin sem 'input' é EOF imediato.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":       {Type: "string", Description: "Alvo: 'noteserver' (default, cwd ~/workspace), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:<host>'"},
-				"command":    {Type: "string", Description: "Linha de shell a executar (PROIBIDO usar sleep/timeout artificial). Informe command OU argv"},
+				"command":    {Type: "string", Description: "Linha de shell a executar (PROIBIDO usar sleep/timeout artificial; NUNCA prefixe com 'cd ~/workspace &&' pois o cwd padrão do noteserver JÁ É ~/workspace). Informe command OU argv"},
 				"argv":       {Type: "array", Description: "Alternativa sem shell: [executável, arg1, arg2...]. Nenhum metacaractere é interpretado. Informe argv OU command", Items: &PropertyDef{Type: "string"}},
-				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional, padrão no noteserver: ~/workspace)"},
+				"cwd":        {Type: "string", Description: "Diretório de trabalho para execução (opcional, padrão no noteserver: ~/workspace; para rodar em subpastas passe ex: 'homeassistant/config')"},
 				"input":      {Type: "string", Description: "Conteúdo enviado diretamente para o stdin do processo (opcional, evita criar arquivos temporários)"},
 				"timeout_ms": {Type: "integer", Description: "Teto de segurança em ms (padrão: 45000; máximo: 50000, valores maiores são limitados para respeitar o corte de 60s do Claude Desktop). Ao estourar, a árvore de processos é encerrada. Comando que precisa de mais tempo: tool 'job'"},
 			},

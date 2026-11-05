@@ -82,6 +82,43 @@ func HandleFileOps(args FileOpsArgs) (string, error) {
 		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
 	}
 
+	// Intercepta cópia/movimentação entre hosts diferentes (ex: local para remoto ou remoto para local)
+	if args.Action == "copy" || args.Action == "move" {
+		srcHost, srcPath := SplitHostPath(args.Path)
+		dstHost, dstPath := SplitHostPath(args.Target)
+
+		// 1. Local para Remoto (Put)
+		if (srcHost == "local" || srcHost == "") && (dstHost != "" && dstHost != "local") {
+			if args.Action == "copy" {
+				return HandlePutFile(PutFileArgs{Host: dstHost, LocalPath: srcPath, RemotePath: dstPath})
+			}
+			res, err := HandlePutFile(PutFileArgs{Host: dstHost, LocalPath: srcPath, RemotePath: dstPath})
+			if err == nil {
+				_ = os.RemoveAll(srcPath)
+			}
+			return res, err
+		}
+
+		// 2. Remoto para Local (Get)
+		if (srcHost != "" && srcHost != "local") && (dstHost == "local" || dstHost == "") {
+			if args.Action == "copy" {
+				return HandleGetFile(GetFileArgs{Host: srcHost, RemotePath: srcPath, LocalPath: dstPath})
+			}
+			res, err := HandleGetFile(GetFileArgs{Host: srcHost, RemotePath: srcPath, LocalPath: dstPath})
+			if err == nil {
+				_, _ = HandleFileOps(FileOpsArgs{Host: srcHost, Action: "delete", Path: srcPath})
+			}
+			return res, err
+		}
+	}
+
+	if h, p := SplitHostPath(args.Path); h != "" && h != "local" {
+		if args.Host == "" || args.Host == "noteserver" || args.Host == "local" {
+			args.Host = h
+		}
+		args.Path = p
+	}
+
 	target, err := ResolveTargetHost(args.Host, args.Path)
 	if err != nil {
 		return "", err

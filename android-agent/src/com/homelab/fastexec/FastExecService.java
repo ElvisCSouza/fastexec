@@ -634,7 +634,8 @@ public class FastExecService extends Service {
 
     private boolean launchTarget(String target) {
         try {
-            if (target.startsWith("http://") || target.startsWith("https://")) {
+            // Qualquer URI com esquema (http, https, popcorn://...) abre por ACTION_VIEW; só nome de pacote cai no launcher intent.
+            if (target.contains("://")) {
                 android.net.Uri uri = android.net.Uri.parse(target);
                 Intent intent = new Intent(Intent.ACTION_VIEW, uri);
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

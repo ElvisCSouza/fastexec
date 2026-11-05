@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -66,8 +67,30 @@ func HandleExec(args ExecArgs) (string, error) {
 		return "", fmt.Errorf(sleepGuardMsg)
 	}
 
+	// Auto-remediação de prefixo redundante 'cd ~/workspace &&' ou 'cd ~/workspace;' no noteserver
+	var cdHint string
+	if hasCmd {
+		if out, handled, hint := tryRemediateCd(&args); handled {
+			return out, nil
+		} else {
+			cdHint = hint
+			label = args.Command
+		}
+	}
+
 	// Auto-remediação de cat / type puro (conversão para read_file com notificação pedagógica)
 	if out, handled, err := tryRemediateCat(args); handled {
+		if cdHint != "" && out != "" {
+			out = cdHint + "\n---\n" + out
+		}
+		return out, err
+	}
+
+	// Auto-remediação de listagem pura dir / ls / get-childitem (conversão para file_ops list com notificação pedagógica)
+	if out, handled, err := tryRemediateList(args); handled {
+		if cdHint != "" && out != "" {
+			out = cdHint + "\n---\n" + out
+		}
 		return out, err
 	}
 
@@ -114,6 +137,13 @@ func HandleExec(args ExecArgs) (string, error) {
 			}
 		}
 	}
+	if cdHint != "" {
+		if out != "" {
+			out = cdHint + "\n---\n" + out
+		} else {
+			out = cdHint
+		}
+	}
 	return out, ferr
 }
 
@@ -127,6 +157,9 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 
 	if res.ExitCode != 0 {
 		if res.ExitCode == 1 && stdout == "" && stderr == "" {
+			return NoResultText, nil
+		}
+		if (res.ExitCode == 1 || res.ExitCode == 255) && stdout == "" && isSearchOrDiffCommand(command) {
 			return NoResultText, nil
 		}
 		errMsg := stderr
@@ -415,18 +448,239 @@ func checkCatGuard(args ExecArgs) error {
 	return fmt.Errorf("[FastExec Guard] Para leitura de arquivos use a tool nativa 'read_file' (path='%s'). Ela suporta paginação segura (offset/limit), evita criação de subprocessos e preserva integridade sem risco de estouro de buffer.", candidatePath)
 }
 
+var winDirFlagRegex = regexp.MustCompile(`(?i)^/[a-z0-9:-]{1,4}$`)
+
+func joinHostPath(host, dir, sub string) string {
+	if host != "" && host != "local" {
+		dir = strings.TrimRight(dir, "/")
+		sub = strings.TrimLeft(sub, "/")
+		return dir + "/" + sub
+	}
+	return filepath.Join(dir, sub)
+}
+
+// detectListCommand identifica comandos puros de listagem de diretório (ls, dir, Get-ChildItem, gci)
+// sem pipes, redirecionamentos ou múltiplos argumentos complexos.
+func detectListCommand(args ExecArgs) (cmdName string, candidatePath string) {
+	var fields []string
+
+	if args.Command != "" {
+		cmd := strings.TrimSpace(args.Command)
+		if strings.ContainsAny(cmd, "|><;&`$\n") {
+			return "", ""
+		}
+		fields = strings.Fields(cmd)
+	} else if len(args.Argv) > 0 {
+		fields = args.Argv
+	}
+
+	if len(fields) == 0 {
+		return "", ""
+	}
+
+	exe := strings.ToLower(filepath.Base(fields[0]))
+	exe = strings.TrimSuffix(exe, ".exe")
+
+	switch exe {
+	case "ls", "dir":
+		cmdName = exe
+	default:
+		return "", ""
+	}
+
+	// Analisa os argumentos restantes para extrair o caminho (ou "." se omitido)
+	var pathArg string
+	for i := 1; i < len(fields); i++ {
+		arg := fields[i]
+		lowerArg := strings.ToLower(arg)
+
+		// Parâmetros com nome do PowerShell: -Path <valor> ou -LiteralPath <valor>
+		if (lowerArg == "-path" || lowerArg == "-literalpath") && i+1 < len(fields) {
+			pathArg = fields[i+1]
+			i++
+			continue
+		}
+
+		// Flags tipo Unix/PowerShell (-l, -la, -r, --color, etc.)
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+
+		// Flags clássicas do cmd.exe (/b, /s, /a, /w, /p, /q, /o, etc.) apenas quando o comando for 'dir'
+		if cmdName == "dir" && winDirFlagRegex.MatchString(arg) {
+			continue
+		}
+
+		// Se já capturamos um caminho e encontramos outro argumento não-flag,
+		// pode ser listagem de múltiplos diretórios (ex: ls dir1 dir2) - delegamos para o shell.
+		if pathArg != "" {
+			return "", ""
+		}
+
+		pathArg = arg
+	}
+
+	// Limpa aspas envolventes se houver
+	pathArg = strings.Trim(pathArg, `"'`)
+
+	// Se contém curingas (* ou ?), delega para o shell expandir o glob
+	if strings.ContainsAny(pathArg, "*?") {
+		return "", ""
+	}
+
+	if pathArg == "" {
+		pathArg = "."
+	}
+
+	return cmdName, pathArg
+}
+
+// tryRemediateList intercepta listagens de diretório simples e executa via file_ops (action='list'),
+// economizando criação de processos e normalizando o retorno.
+func tryRemediateList(args ExecArgs) (string, bool, error) {
+	_, candidatePath := detectListCommand(args)
+	if candidatePath == "" {
+		return "", false, nil
+	}
+
+	filePath := candidatePath
+	if filePath == "" || filePath == "." {
+		if args.Cwd != "" {
+			filePath = args.Cwd
+		} else {
+			filePath = "."
+		}
+	} else if args.Cwd != "" && !filepath.IsAbs(filePath) && !strings.HasPrefix(filePath, "/") && !strings.HasPrefix(filePath, "\\") && (len(filePath) < 2 || filePath[1] != ':') {
+		filePath = joinHostPath(args.Host, args.Cwd, filePath)
+	}
+
+	rawJSON, err := HandleFileOps(FileOpsArgs{
+		Host:   args.Host,
+		Action: "list",
+		Path:   filePath,
+	})
+	if err != nil {
+		// Se não for um diretório ou falhar na listagem nativa, delega suavemente para o shell
+		return "", false, nil
+	}
+
+	type remediatedListItem struct {
+		Name  string `json:"name"`
+		Size  int64  `json:"size"`
+		IsDir bool   `json:"is_dir"`
+	}
+
+	var items []remediatedListItem
+	var formatted string
+	if err := json.Unmarshal([]byte(rawJSON), &items); err == nil {
+		if len(items) == 0 {
+			formatted = "(diretório vazio)"
+		} else {
+			var sb strings.Builder
+			for _, it := range items {
+				if it.IsDir {
+					sb.WriteString(fmt.Sprintf("%-6s %10s  %s/\n", "DIR", "-", it.Name))
+				} else {
+					sb.WriteString(fmt.Sprintf("%-6s %10d  %s\n", "FILE", it.Size, it.Name))
+				}
+			}
+			formatted = strings.TrimRight(sb.String(), "\n")
+		}
+	} else {
+		formatted = rawJSON
+	}
+
+	cmdLabel := args.Command
+	if cmdLabel == "" {
+		cmdLabel = strings.Join(args.Argv, " ")
+	}
+
+	out := fmt.Sprintf("[FastExec Auto-Remediation] O comando '%s' foi convertido automaticamente para a tool nativa 'file_ops' (action='list', zero-process).\nNa próxima, invoque 'file_ops' diretamente com action='list' para economizar tempo e tokens.\n---\n%s", cmdLabel, formatted)
+	return out, true, nil
+}
+
+var (
+	redundantCdWorkspaceRegex = regexp.MustCompile(`(?i)^\s*cd\s+["']?(?:~|\/home\/[^\/\s"']+)\/workspace["']?\s*(?:&&|;)\s*`)
+	redundantCdSubdirRegex    = regexp.MustCompile(`(?i)^\s*cd\s+["']?(?:~|\/home\/[^\/\s"']+)\/workspace\/([^"';&]+)["']?\s*(?:&&|;)\s*`)
+	pureCdWorkspaceRegex      = regexp.MustCompile(`(?i)^\s*cd\s+["']?(?:~|\/home\/[^\/\s"']+)\/workspace\/?["']?\s*$`)
+)
+
+// tryRemediateCd detecta e remove o prefixo redundante 'cd ~/workspace &&' quando o comando roda no noteserver,
+// onde o diretório de trabalho padrão já é /home/elvis/workspace.
+func tryRemediateCd(args *ExecArgs) (out string, handled bool, hint string) {
+	cmd := strings.TrimSpace(args.Command)
+	if cmd == "" {
+		return "", false, ""
+	}
+
+	host := strings.ToLower(strings.TrimSpace(args.Host))
+	if host != "" && host != "noteserver" && host != "servidor" && host != "192.168.31.142" && host != "192.168.31.142:9142" {
+		return "", false, ""
+	}
+
+	// 1. Comando puro 'cd ~/workspace'
+	if pureCdWorkspaceRegex.MatchString(cmd) {
+		return "[FastExec] O diretório de trabalho já é ~/workspace (cwd padrão no noteserver). Nenhum comando necessário.", true, ""
+	}
+
+	// 2. cd ~/workspace/<subpasta> && <resto>
+	if matches := redundantCdSubdirRegex.FindStringSubmatch(cmd); len(matches) >= 2 {
+		subDir := strings.TrimSpace(matches[1])
+		rest := strings.TrimSpace(cmd[len(matches[0]):])
+		if rest != "" {
+			if args.Cwd == "" {
+				args.Cwd = subDir
+				args.Command = rest
+			} else {
+				args.Command = fmt.Sprintf("cd %s && %s", subDir, rest)
+			}
+			hint = fmt.Sprintf("[FastExec Auto-Remediation] O prefixo 'cd ~/workspace/%s' foi simplificado. No noteserver o cwd padrão já é ~/workspace; prefira usar o parâmetro cwd: '%s'.", subDir, subDir)
+			return "", false, hint
+		}
+	}
+
+	// 3. cd ~/workspace && <resto> ou cd ~/workspace; <resto>
+	if loc := redundantCdWorkspaceRegex.FindStringIndex(cmd); loc != nil {
+		rest := strings.TrimSpace(cmd[loc[1]:])
+		if rest != "" {
+			args.Command = rest
+			hint = "[FastExec Auto-Remediation] O prefixo 'cd ~/workspace' foi removido automaticamente: no noteserver o diretório de trabalho padrão já é ~/workspace. Passe seus comandos diretamente ou use o parâmetro 'cwd'."
+			return "", false, hint
+		}
+	}
+
+	return "", false, ""
+}
+
+func isSearchOrDiffCommand(cmd string) bool {
+	lowerCmd := strings.ToLower(cmd)
+	searchTokens := []string{
+		"grep", "findstr", "select-string", "sls",
+		"diff", "cmp", "comm", "rg", "ripgrep",
+	}
+	for _, tok := range searchTokens {
+		if strings.Contains(lowerCmd, tok) {
+			return true
+		}
+	}
+	return false
+}
+
 func isBenignExitCode1(command, stdout, stderr string) bool {
+	lowerCmd := strings.ToLower(command)
+	// Diff / cmp: exit code 1 significa apenas que diferenças foram encontradas
+	if (strings.Contains(lowerCmd, "diff") || strings.Contains(lowerCmd, "cmp")) && stdout != "" {
+		return true
+	}
 	combined := strings.ToLower(stdout + " " + stderr)
 	// Erro semântico retornado por query SQL (psql, sqlite3, duckdb)
 	if strings.Contains(combined, "error:") || strings.Contains(combined, "syntax error") {
-		lowerCmd := strings.ToLower(command)
 		if strings.Contains(lowerCmd, "psql") || strings.Contains(lowerCmd, "sqlite") || strings.Contains(lowerCmd, "duckdb") || strings.Contains(lowerCmd, "select") {
 			return true
 		}
 	}
 	// Busca encadeada no shell que produziu saída em stdout apesar de exit code 1 no último comando
-	lowerCmd := strings.ToLower(command)
-	if (strings.Contains(lowerCmd, "findstr") || strings.Contains(lowerCmd, "grep")) && stdout != "" {
+	if (strings.Contains(lowerCmd, "findstr") || strings.Contains(lowerCmd, "grep") || strings.Contains(lowerCmd, "select-string") || strings.Contains(lowerCmd, "sls") || strings.Contains(lowerCmd, "rg") || strings.Contains(lowerCmd, "ripgrep")) && stdout != "" {
 		return true
 	}
 	return false

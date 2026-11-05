@@ -11,6 +11,8 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.READ_LOGS" />
+    <!-- Visibilidade de pacotes (target 34): sem isto getLaunchIntentForPackage devolve null e "launch <pacote>" falha. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application
         android:label="FastExec Agent"
