@@ -717,8 +717,6 @@ func detectNudge(label string, args ExecArgs) string {
 	switch exe {
 	case "ls", "dir":
 		return "[FastExec Hint] Para listar arquivos e diretórios, prefira a tool nativa 'file_ops' (action='list')."
-	case "docker":
-		return "[FastExec Hint] Módulo 'docker' disponível sob demanda via tool_manage (ex: tool_manage(action='call', tool='docker_ps'))."
 	}
 	return ""
 }
