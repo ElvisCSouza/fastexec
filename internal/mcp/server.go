@@ -386,8 +386,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	errMsg := ""
 	exitCode := 0
 	if err != nil {
-		errMsg = err.Error()
-		exitCode = 1
+		errMsg, exitCode = errorCause(err, outText)
 		if outText == "" {
 			outText = err.Error()
 		}
