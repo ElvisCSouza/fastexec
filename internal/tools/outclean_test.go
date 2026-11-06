@@ -99,21 +99,67 @@ func TestCleanOutputCollapsesRepeatedLines(t *testing.T) {
 }
 
 func TestCleanOutputCapsLongLines(t *testing.T) {
-	in := strings.Repeat("x", 450) + "\n"
-	want := strings.Repeat("x", 400) + "…(+50 chars)\n"
+	// sem termo buscado: começo (200) + marcador + fim (100)
+	in := strings.Repeat("a", 200) + strings.Repeat("x", 400) + strings.Repeat("z", 100) + "\n"
+	want := strings.Repeat("a", 200) + " … [400 chars omitted] … " + strings.Repeat("z", 100) + "\n"
 	if got := cleanOutput(in); got != want {
-		t.Fatalf("linha ASCII: got %d bytes, want %d", len(got), len(want))
+		t.Fatalf("linha ASCII: got %q", got)
 	}
 
-	in = strings.Repeat("á", 401)
-	want = strings.Repeat("á", 400) + "…(+1 chars)"
+	in = strings.Repeat("á", 501)
+	want = strings.Repeat("á", 200) + " … [201 chars omitted] … " + strings.Repeat("á", 100)
 	if got := cleanOutput(in); got != want {
 		t.Fatalf("linha UTF-8: got %q, want %q", got, want)
 	}
 
-	in = strings.Repeat("y", 400)
+	in = strings.Repeat("y", 500)
 	if got := cleanOutput(in); got != in {
-		t.Fatalf("linha de exatamente 400 não deve ser cortada")
+		t.Fatalf("linha de exatamente 500 não deve ser cortada")
+	}
+	in = strings.Repeat("y", 450) + "\n" + "linha curta\n"
+	if got := cleanOutput(in); got != in {
+		t.Fatalf("linhas até 500 passam intactas")
+	}
+}
+
+func TestCleanOutputLinhaGiganteMostraTermoBuscado(t *testing.T) {
+	// bundle minificado de 300 KB com o termo no meio
+	line := "dist/app.min.js:1:" + strings.Repeat("var a=1;", 20000) + "function handleCheckout(e){return e}" + strings.Repeat("b();", 50000)
+	got := cleanOutputFor(line, "HANDLECHECKOUT")
+	if !strings.Contains(got, "function handleCheckout(e){return e}") {
+		t.Fatalf("termo buscado sumiu: %.300q", got)
+	}
+	if !strings.HasPrefix(got, "… [") || !strings.HasSuffix(got, " chars omitted] …") {
+		t.Errorf("marcadores de omissão ausentes: %.120q … %.120q", got, got[len(got)-60:])
+	}
+	if len(got) > 600 {
+		t.Errorf("trecho devolvido grande demais: %d bytes", len(got))
+	}
+
+	// termo dentro do começo: forma começo + fim
+	head := "match aqui " + strings.Repeat("x", 900)
+	if got := cleanOutputFor(head, "match"); !strings.HasPrefix(got, "match aqui") || !strings.Contains(got, " chars omitted] … ") {
+		t.Errorf("termo no começo: %.80q", got)
+	}
+}
+
+func TestSearchNeedle(t *testing.T) {
+	cases := map[string]string{
+		`grep -rn "handleCheckout" dist`:     "handleCheckout",
+		`grep -rni -e "Foo.Bars" .`:          "Bars",
+		`grep -rn "HandleHandoff\(" .`:       "HandleHandoff",
+		`rg -n -g '*.js' checkout_total src`: "checkout_total",
+		`git grep -n "Init("`:                "Init",
+		`findstr /s /c:"api key" *.json`:     "api key",
+		`findstr /s token *.json`:            "token",
+		`cat dist/app.min.js`:                "",
+		`grep -E "^\s+$" x.txt`:              "",
+		`cat x.log | grep -i timeout`:        "timeout",
+	}
+	for cmd, want := range cases {
+		if got := searchNeedle(cmd); got != want {
+			t.Errorf("searchNeedle(%q) = %q, quer %q", cmd, got, want)
+		}
 	}
 }
 

@@ -72,6 +72,7 @@ func applyGrepExcludes(args *ExecArgs) bool {
 // grepArgs é o que importa de uma linha de grep: recursivo, se já traz --exclude-dir e os caminhos varridos.
 type grepArgs struct {
 	recursive, excludeDir bool
+	pattern               string // padrão buscado (-e/--regexp ou primeiro posicional)
 	paths                 []string
 }
 
@@ -98,9 +99,15 @@ func parseGrepArgs(tokens []string) (grepArgs, bool) {
 				g.recursive = true
 			case t == "--regexp" || t == "--file":
 				patternGiven = true
+				if t == "--regexp" && i+1 < len(tokens) && g.pattern == "" {
+					g.pattern = tokens[i+1]
+				}
 				i++
 			case strings.HasPrefix(t, "--regexp=") || strings.HasPrefix(t, "--file="):
 				patternGiven = true
+				if v, ok := strings.CutPrefix(t, "--regexp="); ok && g.pattern == "" {
+					g.pattern = v
+				}
 			case t == "--max-count" || t == "--context" || t == "--after-context" || t == "--before-context":
 				i++
 			}
@@ -113,8 +120,15 @@ func parseGrepArgs(tokens []string) (grepArgs, bool) {
 					g.recursive = true
 				case 'e', 'f':
 					patternGiven = true
+					val := cluster[j+1:]
 					if j == len(cluster)-1 {
+						if i+1 < len(tokens) {
+							val = tokens[i+1]
+						}
 						i++
+					}
+					if c == 'e' && g.pattern == "" {
+						g.pattern = val
 					}
 					break flags
 				case 'A', 'B', 'C', 'm':
@@ -132,6 +146,7 @@ func parseGrepArgs(tokens []string) (grepArgs, bool) {
 	}
 	g.paths = positional
 	if !patternGiven && len(g.paths) > 0 {
+		g.pattern = g.paths[0]
 		g.paths = g.paths[1:]
 	}
 	return g, true

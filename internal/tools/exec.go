@@ -179,8 +179,9 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 }
 
 func formatExecOutput(command string, res transport.ExecResult) (string, error) {
-	stdout := cleanOutput(res.Stdout)
-	stderr := cleanOutput(res.Stderr)
+	needle := searchNeedle(command) // termo buscado: linha gigante cortada mostra a ocorrência
+	stdout := cleanOutputFor(res.Stdout, needle)
+	stderr := cleanOutputFor(res.Stderr, needle)
 
 	if res.TimedOut {
 		return formatTimeout(res.Duration, stdout, stderr)

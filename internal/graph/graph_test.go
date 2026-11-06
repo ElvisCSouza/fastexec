@@ -258,6 +258,67 @@ func TestForaDeRepositorioGitNaoIndexa(t *testing.T) {
 	}
 }
 
+func TestLimiteDeArquivosRecusaIndexar(t *testing.T) {
+	root := fixture(t)
+	old := maxRepoFiles
+	maxRepoFiles = 3
+	t.Cleanup(func() { maxRepoFiles = old })
+	_, err := Refresh(root)
+	if err == nil || !strings.Contains(err.Error(), "[FastExec Graph]") || !strings.Contains(err.Error(), ".gitignore") {
+		t.Fatalf("repositório acima do limite deveria ser recusado: %v", err)
+	}
+	if _, err := Callers(root, "helper", 0); err == nil {
+		t.Error("consulta também deveria recusar (indexa antes)")
+	}
+	d, _ := store()
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM code_files WHERE repo_root = ?`, repoKey(root)).Scan(&n)
+	if n != 0 {
+		t.Errorf("nada deveria ter sido indexado (%d arquivos)", n)
+	}
+}
+
+func TestCleanRemoveSoORepositorioPedido(t *testing.T) {
+	a := fixture(t)
+	b := t.TempDir()
+	_ = os.Mkdir(filepath.Join(b, ".git"), 0o755)
+	_ = os.WriteFile(filepath.Join(b, "x.go"), []byte("package x\nfunc helper() {}\nfunc y() { helper() }\n"), 0o644)
+	if _, err := Refresh(a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Refresh(b); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Clean(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Files != 7 || st.Symbols == 0 || st.Edges == 0 {
+		t.Errorf("Clean(a) removeu %+v", st)
+	}
+	repos, _ := Repos()
+	if len(repos) != 1 || !strings.Contains(repos[0], "(1 files)") {
+		t.Errorf("depois do Clean(a) só o repo b deveria restar: %v", repos)
+	}
+	got, _ := Callers(b, "helper", 0)
+	if !strings.Contains(got, "- x.go:3 (calls)") {
+		t.Errorf("repo b afetado pelo Clean(a):\n%s", got)
+	}
+
+	// repositório apagado do disco: Clean pelo caminho ainda limpa
+	if err := os.RemoveAll(b); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Clean(b)
+	if err != nil || st.Files != 1 {
+		t.Errorf("Clean de repo apagado: %+v %v", st, err)
+	}
+	if repos, _ := Repos(); len(repos) != 0 {
+		t.Errorf("banco deveria estar vazio: %v", repos)
+	}
+}
+
 func TestResolveRepoRoot(t *testing.T) {
 	root := t.TempDir()
 	_ = os.Mkdir(filepath.Join(root, ".git"), 0o755)

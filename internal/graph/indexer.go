@@ -21,9 +21,12 @@ import (
 	"homelab/fastexec/internal/codescan"
 )
 
+// maxRepoFiles: acima disso o repositório quase sempre comitou dependências (node_modules, vendor, builds); a
+// indexação é recusada em vez de inflar o banco. Variável para os testes.
+var maxRepoFiles = 10000
+
 const (
 	maxFileSize   = 2 << 20
-	maxRepoFiles  = 20000
 	touchDebounce = 300 * time.Millisecond
 	// checkpointAfter: passadas que mexem em tantos arquivos fazem checkpoint do WAL (indexação inicial, rebuild)
 	checkpointAfter = 50
@@ -88,19 +91,26 @@ func indexable(rel string) bool {
 	return codescan.LangFor(rel) != nil && !codescan.IsNoisePath(rel)
 }
 
-// listFiles devolve os caminhos relativos (com '/') dos arquivos indexáveis.
-func listFiles(root string) []string {
+// listFiles devolve os caminhos relativos (com '/') dos arquivos indexáveis e o total listado (todos os arquivos
+// do git ls-files, indexáveis ou não; na varredura sem git, os indexáveis), que alimenta a trava de sanidade.
+func listFiles(root string) ([]string, int) {
 	var out []string
 	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
 		cmd := exec.Command("git", "-C", root, "ls-files", "-co", "--exclude-standard", "-z")
 		cmd.SysProcAttr = hiddenWindow()
 		if b, err := cmd.Output(); err == nil {
+			total := 0
 			for _, rel := range bytes.Split(b, []byte{0}) {
-				if r := string(rel); r != "" && indexable(r) {
+				r := string(rel)
+				if r == "" {
+					continue
+				}
+				total++
+				if indexable(r) {
 					out = append(out, r)
 				}
 			}
-			return capFiles(out)
+			return out, total
 		}
 	}
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -118,14 +128,13 @@ func listFiles(root string) []string {
 		}
 		return nil
 	})
-	return capFiles(out)
+	return out, len(out)
 }
 
-func capFiles(f []string) []string {
-	if len(f) > maxRepoFiles {
-		return f[:maxRepoFiles]
-	}
-	return f
+// ErrTooManyFiles recusa indexar repositório grande demais (dependências comitadas, quase sempre).
+func ErrTooManyFiles(total int) error {
+	return fmt.Errorf("[FastExec Graph] The repository lists %d files (limit %d): usually committed dependencies "+
+		"(node_modules, vendor, builds). Add them to .gitignore (and 'git rm -r --cached' them) before indexing", total, maxRepoFiles)
 }
 
 type fileRec struct {
@@ -205,7 +214,10 @@ func Refresh(root string) (Stats, error) {
 		return Stats{}, err
 	}
 	key := repoKey(root)
-	files := listFiles(root)
+	files, total := listFiles(root)
+	if total > maxRepoFiles {
+		return Stats{}, ErrTooManyFiles(total)
+	}
 
 	known := map[string]fileRec{}
 	rows, err := d.Query(`SELECT file_path, mtime, content_hash FROM code_files WHERE repo_root = ?`, key)

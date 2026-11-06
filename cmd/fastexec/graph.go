@@ -1,10 +1,13 @@
 package main
 
-// graph.go: subcomando "fastexec graph" (callers, def, impact, outline, index) sobre internal/graph e code_outline.
+// graph.go: subcomando "fastexec graph" (callers, def, impact, outline, index, clean, repos) sobre internal/graph e
+// code_outline.
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"homelab/fastexec/internal/graph"
 	"homelab/fastexec/internal/tools"
@@ -15,7 +18,9 @@ const graphUsage = `Usage:
   fastexec graph def <symbol> [repo_path]
   fastexec graph impact <file_or_symbol> [repo_path]
   fastexec graph outline <file>
-  fastexec graph index [repo_path]   (full rebuild)`
+  fastexec graph index [repo_path]   (full rebuild)
+  fastexec graph clean [repo_path]   (drop the repository's index; works even if the repo is gone)
+  fastexec graph repos               (list indexed repositories)`
 
 // runGraph devolve o código de saída.
 func runGraph(args []string) int {
@@ -29,6 +34,43 @@ func runGraph(args []string) int {
 			return rest[i]
 		}
 		return def
+	}
+
+	switch action {
+	case "repos":
+		repos, err := graph.Repos()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if len(repos) == 0 {
+			fmt.Println("(no repositories indexed)")
+			return 0
+		}
+		fmt.Println(strings.Join(repos, "\n"))
+		return 0
+	case "clean":
+		path := arg(0, ".")
+		root, ok := graph.ResolveRepoRoot(path)
+		if !ok {
+			abs, err := filepath.Abs(path) // repositório apagado ou sem .git: limpa pelo caminho dado
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			root = abs
+		}
+		st, err := graph.Clean(root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		msg := fmt.Sprintf("cleaned %s: %d files, %d symbols, %d edges removed", root, st.Files, st.Symbols, st.Edges)
+		if st.Vacuumed {
+			msg += " (database vacuumed)"
+		}
+		fmt.Println(msg)
+		return 0
 	}
 
 	if action == "outline" {

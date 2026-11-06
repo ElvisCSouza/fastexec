@@ -12,7 +12,6 @@ import (
 const (
 	NoResultText = "sem resultado (exit 1)"
 
-	maxLineRunes  = 400
 	outputCapSize = 64 * 1024
 	outputHeadLen = 16 * 1024
 	truncMarker   = "[truncado: "
@@ -169,7 +168,10 @@ func compressTableLine(line string) string {
 	return indent + body
 }
 
-func cleanOutput(s string) string {
+func cleanOutput(s string) string { return cleanOutputFor(s, "") }
+
+// cleanOutputFor limpa a saída e corta linhas gigantes preservando needle (termo buscado), quando houver.
+func cleanOutputFor(s, needle string) string {
 	if s == "" {
 		return s
 	}
@@ -216,7 +218,7 @@ func cleanOutput(s string) string {
 			j++
 		}
 		body := strings.TrimSuffix(lines[i], "\r")
-		b.WriteString(capLine(body))
+		b.WriteString(capLineAround(body, needle))
 		if n := j - i; n > 1 {
 			fmt.Fprintf(&b, " ×%d", n)
 		}
@@ -227,23 +229,6 @@ func cleanOutput(s string) string {
 		i = j
 	}
 	return b.String()
-}
-
-func capLine(s string) string {
-	n := utf8.RuneCountInString(s)
-	if n <= maxLineRunes {
-		return s
-	}
-	end := len(s)
-	count := 0
-	for i := range s {
-		if count == maxLineRunes {
-			end = i
-			break
-		}
-		count++
-	}
-	return s[:end] + fmt.Sprintf("…(+%d chars)", n-maxLineRunes)
 }
 
 func capOutput(s string) string {
