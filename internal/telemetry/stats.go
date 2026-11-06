@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -78,11 +79,33 @@ func RenderStats(filter StatsFilter) (string, error) {
 		return "Telemetria reinicializada com sucesso.", nil
 	}
 
+	// leitura nunca cria banco: um arquivo vazio criado aqui esconderia o banco real (caso do Claude Desktop MSIX,
+	// cujo AppData é redirecionado para dentro do pacote)
+	path := filepath.Join(dataDirPath(), "fastexec.db")
+	if _, err := os.Stat(path); err != nil {
+		msg := fmt.Sprintf("No telemetry database at %s: nothing recorded on this machine yet, or the client keeps it "+
+			"elsewhere (a packaged Claude Desktop writes under AppData\\Local\\Packages\\<app>\\LocalCache\\Local).", path)
+		if r := failureReport(); r != "" {
+			msg += "\n" + r
+		}
+		return msg, nil
+	}
+
 	db, err := GetDB()
 	if err != nil {
 		return "", err
 	}
-	return renderStats(db, filter)
+	out, err := renderStats(db, filter)
+	if err != nil {
+		return "", err
+	}
+	var total int64
+	_ = db.QueryRow(`SELECT COUNT(*) FROM audit`).Scan(&total)
+	out = fmt.Sprintf("Database: %s (%d records)\n", path, total) + out
+	if r := failureReport(); r != "" {
+		out += "\n\n" + r
+	}
+	return out, nil
 }
 
 // ParsePeriod converte "24h", "7d" etc. em horas. Retorna false para formatos não reconhecidos.

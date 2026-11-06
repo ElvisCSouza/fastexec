@@ -19,6 +19,7 @@ type Lang struct {
 	slashComment bool             // '//' e /* */
 	tripleQuote  bool             // strings """ e ''' multilinha (Python)
 	backtick     bool             // strings `...` multilinha (JS template, Go raw)
+	backtickEsc  bool             // '\' escapa dentro da crase (JS template); em Go a crase é crua, sem escape
 	indentBlocks bool             // fim de bloco por indentação (Python); senão por chaves
 	imports      []*regexp.Regexp // grupo 1 = módulo importado
 	importNames  *regexp.Regexp   // grupo 1 = lista de nomes importados ("a, b as c")
@@ -73,7 +74,7 @@ var (
 		{regexp.MustCompile(`^type\s+(?P<name>\w+)\b`), goTypeKind},
 	}}
 
-	langJS = &Lang{Name: "js", slashComment: true, backtick: true, routes: true,
+	langJS = &Lang{Name: "js", slashComment: true, backtick: true, backtickEsc: true, routes: true,
 		rules: []rule{
 			{regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*(?P<name>[\w$]+)`), fixed("func")},
 			{regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(?P<name>[\w$]+)`), fixed("class")},

@@ -51,7 +51,20 @@ func getDBPath() string {
 }
 
 // DataDir é o diretório de dados do FastExec (telemetria e índice de código), criado se não existir.
+// Leitura (stats) usa dataDirPath, que não cria nada.
 func DataDir() string {
+	baseDir := dataDirPath()
+	_ = os.MkdirAll(baseDir, 0755)
+	return baseDir
+}
+
+// dataDirOverride fixa o diretório de dados (testes).
+var dataDirOverride string
+
+func dataDirPath() string {
+	if dataDirOverride != "" {
+		return dataDirOverride
+	}
 	var baseDir string
 	switch {
 	case dirExists(`W:\`):
@@ -63,7 +76,6 @@ func DataDir() string {
 	default:
 		baseDir = filepath.Join(os.TempDir(), "fastexec", "telemetry")
 	}
-	_ = os.MkdirAll(baseDir, 0755)
 	return baseDir
 }
 
@@ -79,6 +91,8 @@ func Init() {
 		var err error
 		dbInstance, err = sql.Open("sqlite", dbPath)
 		if err != nil {
+			noteFailure("open "+dbPath, err)
+			dbInstance = nil
 			return
 		}
 
@@ -90,7 +104,10 @@ func Init() {
 			"PRAGMA temp_store=MEMORY;",
 		}
 		for _, p := range pragmas {
-			_, _ = dbInstance.Exec(p)
+			if _, err := dbInstance.Exec(p); err != nil {
+				noteFailure("open "+dbPath, err) // a primeira instrução já falha se o arquivo não abre
+				break
+			}
 		}
 
 		setupAuditSchema(dbInstance)
@@ -124,7 +141,9 @@ func setupAuditSchema(db *sql.DB) {
 	CREATE INDEX IF NOT EXISTS idx_audit_tool ON audit(tool);
 	CREATE INDEX IF NOT EXISTS idx_audit_success ON audit(success);
 	`
-	_, _ = db.Exec(createTableSQL)
+	if _, err := db.Exec(createTableSQL); err != nil {
+		noteFailure("schema", err)
+	}
 
 	existing := map[string]bool{}
 	if rows, err := db.Query("PRAGMA table_info(audit);"); err == nil {
@@ -140,7 +159,9 @@ func setupAuditSchema(db *sql.DB) {
 	}
 	for _, col := range []string{"truncated", "no_result"} {
 		if !existing[col] {
-			_, _ = db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s INTEGER NOT NULL DEFAULT 0;", col))
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s INTEGER NOT NULL DEFAULT 0;", col)); err != nil {
+				noteFailure("schema migration", err)
+			}
 		}
 	}
 }
@@ -155,10 +176,10 @@ func insertEntry(e AuditEntry) {
 	if dbInstance == nil {
 		return
 	}
-	writeEntry(dbInstance, e)
+	noteFailure("insert", writeEntry(dbInstance, e))
 }
 
-func writeEntry(db *sql.DB, e AuditEntry) {
+func writeEntry(db *sql.DB, e AuditEntry) error {
 	query := `
 	INSERT INTO audit (
 		session_id, tool, host, duration_ms,
@@ -167,13 +188,14 @@ func writeEntry(db *sql.DB, e AuditEntry) {
 		truncated, no_result
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
-	_, _ = db.Exec(
+	_, err := db.Exec(
 		query,
 		e.SessionID, e.Tool, e.Host, e.DurationMs,
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
 		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
 		boolInt(e.Truncated), boolInt(e.NoResult),
 	)
+	return err
 }
 
 func boolInt(b bool) int {
@@ -202,7 +224,8 @@ func Record(e AuditEntry) {
 	select {
 	case auditQueue <- e:
 	default:
-		// Se a fila estiver cheia, descarta silenciosamente para nunca travar a ferramenta
+		// fila cheia: descarta para nunca travar a ferramenta, mas conta como falha
+		noteFailure("queue", errQueueFull)
 	}
 }
 

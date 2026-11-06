@@ -237,7 +237,7 @@ func cleanLines(lines []string, l *Lang) ([]string, []bool) {
 				}
 				continue
 			case backtick:
-				if c == '\\' {
+				if c == '\\' && l.backtickEsc {
 					i++
 				} else if c == '`' {
 					state = none

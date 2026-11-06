@@ -81,6 +81,8 @@ Telemetria (`internal/telemetry`): tabela `audit` ganhou `truncated` e `no_resul
 
 **`stats <período>` respeita a janela** (`internal/telemetry/stats.go`: `ParsePeriod`, `periodWhere`, `periodDescription`): aceita `Nh` (horas) e `Nd` (dias), sem diferenciar maiúsculas (`stats 24h`, `stats 7d`). O cabeçalho mostra o período (ex.: `Últimos 7 dias`). Sem argumento, o relatório segue como histórico total. `--today` continua valendo e tem precedência. Valores inválidos (`0h`, `7x`) são ignorados e o relatório volta ao histórico total. Teste: `internal/telemetry/stats_period_test.go`.
 
+**`stats` só lê; falha de telemetria nunca é silenciosa** (`internal/telemetry/health.go`). Sem `fastexec.db`, o `stats` responde `No telemetry database at <caminho>` e não cria pasta nem arquivo (`dataDirPath`, sem `MkdirAll`): um banco vazio criado no AppData real faz o Claude Desktop MSIX, cujo AppData dos filhos é redirecionado para `AppData\Local\Packages\<app>\LocalCache\Local`, passar a abrir o arquivo errado. Com banco, o relatório abre com `Database: <caminho> (N records)`. Falha ao abrir, criar/migrar o esquema ou inserir, e entrada descartada por fila cheia, chamam `noteFailure`: um aviso por processo no stderr e linha em `telemetry-errors.log` ao lado do banco (1ª falha e depois 1 a cada 100; o arquivo recomeça acima de 64 KB). O `stats` mostra o resumo desse arquivo, porque quem grava é o daemon e o `stats` roda em outro processo. Teste: `internal/telemetry/health_test.go`.
+
 ## Execução no host `local` (`internal/transport/local.go`)
 
 Contrato síncrono e determinístico. Cada linha da tabela é uma regra com o motivo.

@@ -48,6 +48,24 @@ func TestFimDeBlocoPorChavesEIndentacao(t *testing.T) {
 	}
 }
 
+func TestCraseCruaDoGoNaoEscapa(t *testing.T) {
+	src := "package x\n\nfunc A() string {\n\treturn `W:\\`\n}\n\nfunc B() {}\n\nvar s = `multi\nline\\`\n\nfunc C() {}\n"
+	decls, _ := Scan([]byte(src), LangFor("a.go"))
+	var names []string
+	for _, d := range decls {
+		names = append(names, d.Name)
+	}
+	if strings.Join(names, ",") != "A,B,C" {
+		t.Errorf("Go: decls = %v (a crase depois de '\\' fecha a string crua)", names)
+	}
+
+	js := "const a = `x \\` still inside`;\nfunction after() {}\n"
+	decls, _ = Scan([]byte(js), LangFor("a.js"))
+	if len(decls) != 1 || decls[0].Name != "after" {
+		t.Errorf("JS: em template literal '\\`' escapa: %+v", decls)
+	}
+}
+
 func TestImportsPython(t *testing.T) {
 	_, refs := Scan([]byte("from pkg.mod import a, b as c\nimport os\n"), LangFor("x.py"))
 	if got := strings.Join(refsOf(refs, "imports"), ","); got != "pkg.mod,os" {
