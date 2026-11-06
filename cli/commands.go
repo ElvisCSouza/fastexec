@@ -1,7 +1,7 @@
-package main
+package cli
 
 // commands.go: subcomandos do CLI. Um subcomando novo = uma função aqui (ou em arquivo próprio) + uma linha em
-// commands; o main() não muda. Corpos extraídos do switch antigo do main() sem alteração.
+// commands (ou cli.Register, de fora do módulo); o Main() não muda. Corpos extraídos do switch antigo do main() sem alteração.
 
 import (
 	"encoding/json"
@@ -26,13 +26,13 @@ var commands = map[string]func(subArgs []string){
 	"put":           cmdPut,
 	"sql":           cmdSql,
 	"job":           cmdJob,
-	"firestick":     cmdFirestick,
 	"ping":          cmdPing,
 	"stats":         cmdStats,
 	"handoff":       cmdHandoff,
 	"memory":        cmdHandoff,
 	"graph":         cmdGraph,
 	"config":        cmdConfig,
+	"version":       cmdVersion,
 }
 
 // cmdDaemonRun atende: daemon-run.
@@ -303,11 +303,6 @@ func cmdJob(subArgs []string) {
 	if isErr {
 		os.Exit(1)
 	}
-}
-
-// cmdFirestick atende: firestick.
-func cmdFirestick(subArgs []string) {
-	runFirestick(subArgs)
 }
 
 // cmdPing atende: ping.

@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -11,13 +11,14 @@ import (
 	"homelab/fastexec/internal/golden"
 )
 
-// cliChildArg marca a re-execução do binário de teste como CLI: main() chama os.Exit, então rodamos em processo filho.
+// cliChildArg marca a re-execução do binário de teste como CLI: Main() chama os.Exit, então rodamos em processo filho.
 const cliChildArg = "__fastexec_cli_golden__"
 
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == cliChildArg {
 		os.Args = append([]string{"fastexec"}, os.Args[2:]...)
-		main()
+		Register("hello", func(args []string) { fmt.Println("hello from an extension:", args) }) // como um build próprio faz
+		Main()
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
@@ -50,7 +51,7 @@ func runCLI(t *testing.T, args ...string) string {
 
 // TestGoldenCLIUsage trava a mensagem de uso, a listagem de comandos e os erros de argumento do CLI.
 // Só casos que saem antes de tocar daemon, rede, banco ou comando real.
-// Regenerar: go test ./cmd/fastexec -run TestGoldenCLIUsage -update
+// Regenerar: go test ./cli -run TestGoldenCLIUsage -update
 func TestGoldenCLIUsage(t *testing.T) {
 	cases := [][]string{
 		{"help"},
@@ -63,6 +64,7 @@ func TestGoldenCLIUsage(t *testing.T) {
 		{"daemon", "foo"},
 		{"config", "example"},
 		{"config", "bogus"},
+		{"hello", "a", "b"},
 	}
 
 	var b strings.Builder

@@ -2,7 +2,7 @@ $ fastexec help
 exit: 1
 --- stdout
 Unknown command: 'help'
-Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, firestick, daemon
+Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, daemon, version, hello
 --- stderr
 
 
@@ -10,7 +10,7 @@ $ fastexec frobnicate
 exit: 1
 --- stdout
 Unknown command: 'frobnicate'
-Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, firestick, daemon
+Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, daemon, version, hello
 --- stderr
 
 
@@ -78,6 +78,13 @@ Usage: fastexec config [show|example|init]
   show     effective configuration: file, hosts, default host, data folders, telemetry (default)
   example  print a sample config.json
   init     write the sample to the config file if it does not exist yet
+--- stderr
+
+
+$ fastexec hello a b
+exit: 0
+--- stdout
+hello from an extension: [a b]
 --- stderr
 
 

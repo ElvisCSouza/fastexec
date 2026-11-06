@@ -1,4 +1,4 @@
-package main
+package cli
 
 // graph.go: subcomando "fastexec graph" (callers, def, impact, outline, index, clean, repos) sobre internal/graph e
 // code_outline.
