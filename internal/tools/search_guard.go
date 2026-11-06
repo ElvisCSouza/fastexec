@@ -7,15 +7,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"homelab/fastexec/internal/codescan"
 )
 
 const searchMaxLines = 40
 
 var (
-	noiseDirs  = []string{".git", "node_modules", "dist", "build", "vendor", ".next", ".agent", "tmp", "cache", "__pycache__"}
-	noiseFiles = []string{"*.min.js", "*.min.css", "*.map", "package-lock.json", "pnpm-lock.yaml"}
-
 	searchPrograms = map[string]bool{"grep": true, "egrep": true, "fgrep": true, "rg": true, "findstr": true}
 	limitPrograms  = map[string]bool{"head": true, "tail": true, "wc": true, "select-object": true, "measure-object": true}
 )
@@ -24,32 +24,15 @@ const searchExcludedNote = "[FastExec Guard] Skipped .git, node_modules, dist, b
 
 func searchGuardOff() bool { return os.Getenv("FASTEXEC_NO_SEARCH_GUARD") != "" }
 
-// isNoiseDir: diretório de dependência/build/cache ou oculto (.idea, .vscode...), que não vale varrer.
-func isNoiseDir(name string) bool {
-	for _, d := range noiseDirs {
-		if strings.EqualFold(name, d) {
-			return true
-		}
-	}
-	return strings.HasPrefix(name, ".") && name != "." && name != ".."
-}
-
-func isNoiseFile(name string) bool {
-	lower := strings.ToLower(name)
-	for _, pat := range noiseFiles {
-		if ok, _ := filepath.Match(pat, lower); ok {
-			return true
-		}
-	}
-	return false
-}
+func isNoiseDir(name string) bool  { return codescan.IsNoiseDir(name) }
+func isNoiseFile(name string) bool { return codescan.IsNoiseFile(name) }
 
 func grepExcludeArgs() []string {
-	out := make([]string, 0, len(noiseDirs)+len(noiseFiles))
-	for _, d := range noiseDirs {
+	out := make([]string, 0, len(codescan.NoiseDirs)+len(codescan.NoiseFiles))
+	for _, d := range codescan.NoiseDirs {
 		out = append(out, "--exclude-dir="+d)
 	}
-	for _, f := range noiseFiles {
+	for _, f := range codescan.NoiseFiles {
 		out = append(out, "--exclude="+f)
 	}
 	return out
@@ -86,12 +69,19 @@ func applyGrepExcludes(args *ExecArgs) bool {
 	return true
 }
 
-// needsGrepExcludes analisa os argumentos do grep: recursivo, sem --exclude-dir, e caminho ausente ou ".".
-func needsGrepExcludes(tokens []string) bool {
+// grepArgs é o que importa de uma linha de grep: recursivo, se já traz --exclude-dir e os caminhos varridos.
+type grepArgs struct {
+	recursive, excludeDir bool
+	paths                 []string
+}
+
+// parseGrepArgs lê flags e posicionais do grep (o padrão é o primeiro posicional, salvo -e/-f).
+func parseGrepArgs(tokens []string) (grepArgs, bool) {
+	var g grepArgs
 	if len(tokens) == 0 || !isGrepProgram(tokens[0]) {
-		return false
+		return g, false
 	}
-	recursive, patternGiven, endFlags := false, false, false
+	patternGiven, endFlags := false, false
 	var positional []string
 	for i := 1; i < len(tokens); i++ {
 		t := tokens[i]
@@ -103,9 +93,9 @@ func needsGrepExcludes(tokens []string) bool {
 		case strings.HasPrefix(t, "--"):
 			switch {
 			case strings.HasPrefix(t, "--exclude-dir"):
-				return false
+				g.excludeDir = true
 			case t == "--recursive" || t == "--dereference-recursive":
-				recursive = true
+				g.recursive = true
 			case t == "--regexp" || t == "--file":
 				patternGiven = true
 				i++
@@ -120,7 +110,7 @@ func needsGrepExcludes(tokens []string) bool {
 			for j, c := range cluster {
 				switch c {
 				case 'r', 'R':
-					recursive = true
+					g.recursive = true
 				case 'e', 'f':
 					patternGiven = true
 					if j == len(cluster)-1 {
@@ -140,18 +130,26 @@ func needsGrepExcludes(tokens []string) bool {
 			positional = append(positional, t)
 		}
 	}
-	if !recursive {
+	g.paths = positional
+	if !patternGiven && len(g.paths) > 0 {
+		g.paths = g.paths[1:]
+	}
+	return g, true
+}
+
+func isDotPath(p string) bool { return p == "." || p == "./" || p == `.\` }
+
+// needsGrepExcludes: grep recursivo, sem --exclude-dir próprio, sobre a raiz (caminho ausente ou ".").
+func needsGrepExcludes(tokens []string) bool {
+	g, ok := parseGrepArgs(tokens)
+	if !ok || !g.recursive || g.excludeDir {
 		return false
 	}
-	paths := positional
-	if !patternGiven && len(paths) > 0 {
-		paths = paths[1:]
-	}
-	if len(paths) == 0 {
+	if len(g.paths) == 0 {
 		return true
 	}
-	for _, p := range paths {
-		if p == "." || p == "./" || p == `.\` {
+	for _, p := range g.paths {
+		if isDotPath(p) {
 			return true
 		}
 	}
@@ -260,4 +258,14 @@ func shellWords(s string) []string {
 		out = append(out, cur.String())
 	}
 	return out
+}
+
+// reCallSearch: o padrão buscado é um identificador seguido de '(' (ou '\(' escapado), isto é, procura de chamadas.
+var reCallSearch = regexp.MustCompile(`[A-Za-z_]\w{2,}\\?\(`)
+
+const callSearchHint = "[FastExec FastHint] For call sites use tool 'code_graph' (action 'callers'): graph lookup, no file reading."
+
+// isCallSearch: busca de texto cujo padrão parece chamada de função.
+func isCallSearch(label string) bool {
+	return isTextSearch(label) && reCallSearch.MatchString(label)
 }

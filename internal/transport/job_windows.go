@@ -5,6 +5,7 @@ package transport
 import (
 	"path/filepath"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -73,12 +74,27 @@ type jobPIDList struct {
 	PIDs     [64]uintptr
 }
 
-// alive conta, numa consulta só e sem espera, os processos ainda vivos no job, ignorando o conhost.exe que o console
-// do cmd deixa saindo nos mesmos milissegundos (não é filho solto). 0 se o job não recebeu processo ou a consulta falhar.
+// alive conta os processos ainda vivos no job, ignorando o conhost.exe (host de console, não é filho solto).
+// Caso normal: uma consulta, sem espera. Se a primeira contagem não der zero, recontagem por até aliveSettle: logo
+// depois do Wait o job ainda lista por milissegundos processos em fim de vida; filho solto de verdade continua lá.
 func (j *jobObject) alive() uint32 {
 	if !j.assigned {
 		return 0
 	}
+	n := j.countAlive()
+	for deadline := time.Now().Add(aliveSettle); n > 0 && time.Now().Before(deadline); {
+		time.Sleep(aliveStep)
+		n = j.countAlive()
+	}
+	return n
+}
+
+const (
+	aliveSettle = 50 * time.Millisecond
+	aliveStep   = 5 * time.Millisecond
+)
+
+func (j *jobObject) countAlive() uint32 {
 	var list jobPIDList
 	if err := windows.QueryInformationJobObject(j.h, windows.JobObjectBasicProcessIdList,
 		uintptr(unsafe.Pointer(&list)), uint32(unsafe.Sizeof(list)), nil); err != nil && err != windows.ERROR_MORE_DATA {

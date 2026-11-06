@@ -2,7 +2,7 @@ $ fastexec help
 exit: 1
 --- stdout
 Comando desconhecido: 'help'
-Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, firestick, daemon
+Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, firestick, daemon
 --- stderr
 
 
@@ -10,7 +10,7 @@ $ fastexec frobnicate
 exit: 1
 --- stdout
 Comando desconhecido: 'frobnicate'
-Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, firestick, daemon
+Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, firestick, daemon
 --- stderr
 
 

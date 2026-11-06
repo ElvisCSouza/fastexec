@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"homelab/fastexec/internal/graph"
 	"homelab/fastexec/internal/transport"
 )
 
@@ -323,6 +324,7 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 				return "", err
 			}
 		}
+		graph.Touch(args.Path) // índice de código: reindexa em segundo plano se o repositório já é indexado
 		reply := okReply(int64(len(contentBytes)))
 		if prevSize > 1500 {
 			reply += fmt.Sprintf("\n[FastExec Hint] O arquivo sobrescrito já existia (%.1f KB). Para alterar trechos pontuais em vez de regravar o arquivo inteiro, prefira a tool 'edit_file' para economizar tempo e tokens de contexto.", float64(prevSize)/1024.0)

@@ -85,8 +85,8 @@ var serverTools = []ToolSchema{
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":   {Type: "string", Description: "Alvo: 'local' (default, host atual), 'noteserver', 'ax6000', 'ax3000'"},
-				"path":   {Type: "string", Description: "Caminho do arquivo"},
+				"host":       {Type: "string", Description: "Alvo: 'local' (default, host atual), 'noteserver', 'ax6000', 'ax3000'"},
+				"path":       {Type: "string", Description: "Caminho do arquivo"},
 				"offset":     {Type: "integer", Description: "Offset em bytes (opcional)"},
 				"limit":      {Type: "integer", Description: "Limite de bytes a ler (opcional)"},
 				"start_line": {Type: "integer", Description: "Linha inicial a ler (1-based, opcional)"},
@@ -107,6 +107,21 @@ var serverTools = []ToolSchema{
 				"max":    {Type: "integer", Description: "Max results (default 200)"},
 			},
 			Required: []string{"path"},
+		},
+	},
+	{
+		Name:        "code_graph",
+		Description: "Code graph of a local repository (incremental index, built on first use, refreshed on every call): 'callers' = where a symbol is called or referenced; 'def' = where it is declared (line range, signature); 'impact' = files that use what a file or symbol defines (check before refactoring). Go via go/ast; TS/JS, Python, shell by line scanners; matched by name, no type resolution.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"action":    {Type: "string", Description: "'callers', 'def', 'impact' or 'index' (full rebuild)"},
+				"symbol":    {Type: "string", Description: "Symbol name (pkg.Name accepted) for callers/def/impact"},
+				"target":    {Type: "string", Description: "File (relative to repo or absolute) for impact"},
+				"repo_path": {Type: "string", Description: "Repository root or any path inside it (host 'local')"},
+				"max":       {Type: "integer", Description: "Max lines (default 200)"},
+			},
+			Required: []string{"action", "repo_path"},
 		},
 	},
 	{
@@ -310,6 +325,10 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		var args tools.WriteFileArgs
 		_ = json.Unmarshal(rawArgs, &args)
 		outText, err = tools.HandleWriteFile(args)
+	case "code_graph":
+		var args tools.CodeGraphArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleCodeGraph(args)
 	case "edit_file":
 		var args tools.EditFileArgs
 		_ = json.Unmarshal(rawArgs, &args)

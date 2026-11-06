@@ -207,6 +207,23 @@ func TestApplyGrepExcludes(t *testing.T) {
 	}
 }
 
+func TestIsCallSearch(t *testing.T) {
+	cases := map[string]bool{
+		`grep -rn "HandleHandoff(" .`: true,
+		`rg 'HandleHandoff\('`:        true,
+		`git grep -n "Init("`:         true,
+		`grep -rn HandleHandoff .`:    false,
+		`echo foo(`:                   false,
+		`grep -E "(a|b)" x.txt`:       false,
+		`grep -rn "if (" .`:           false,
+	}
+	for c, want := range cases {
+		if got := isCallSearch(c); got != want {
+			t.Errorf("isCallSearch(%q) = %v, quer %v", c, got, want)
+		}
+	}
+}
+
 func TestIsTextSearchAndTruncate(t *testing.T) {
 	cases := map[string]bool{
 		"grep -rn foo .":            true,

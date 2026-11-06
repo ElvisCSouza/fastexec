@@ -47,24 +47,29 @@ func SessionID() string {
 }
 
 func getDBPath() string {
-	if _, err := os.Stat(`W:\`); err == nil {
-		baseDir := `W:\Data\telemetry`
-		_ = os.MkdirAll(baseDir, 0755)
-		return filepath.Join(baseDir, "fastexec.db")
+	return filepath.Join(DataDir(), "fastexec.db")
+}
+
+// DataDir é o diretório de dados do FastExec (telemetria e índice de código), criado se não existir.
+func DataDir() string {
+	var baseDir string
+	switch {
+	case dirExists(`W:\`):
+		baseDir = `W:\Data\telemetry`
+	case os.Getenv("LOCALAPPDATA") != "":
+		baseDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "fastexec", "telemetry")
+	case os.Getenv("HOME") != "":
+		baseDir = filepath.Join(os.Getenv("HOME"), ".local", "share", "fastexec")
+	default:
+		baseDir = filepath.Join(os.TempDir(), "fastexec", "telemetry")
 	}
-	if localApp := os.Getenv("LOCALAPPDATA"); localApp != "" {
-		baseDir := filepath.Join(localApp, "fastexec", "telemetry")
-		_ = os.MkdirAll(baseDir, 0755)
-		return filepath.Join(baseDir, "fastexec.db")
-	}
-	if home := os.Getenv("HOME"); home != "" {
-		baseDir := filepath.Join(home, ".local", "share", "fastexec")
-		_ = os.MkdirAll(baseDir, 0755)
-		return filepath.Join(baseDir, "fastexec.db")
-	}
-	baseDir := filepath.Join(os.TempDir(), "fastexec", "telemetry")
 	_ = os.MkdirAll(baseDir, 0755)
-	return filepath.Join(baseDir, "fastexec.db")
+	return baseDir
+}
+
+func dirExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // Init inicializa a conexão SQLite, cria a tabela e inicia o worker em background.

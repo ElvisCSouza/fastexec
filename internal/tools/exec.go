@@ -103,6 +103,11 @@ func HandleExec(args ExecArgs) (string, error) {
 		clampedFrom, timeout = timeout, maxClientTimeout
 	}
 
+	// Guard de sistema: varredura recursiva de raiz ampla (C:\, C:\Users, /, /home) não executa.
+	if root := broadScan(args); root != "" {
+		return "", broadScanError(root)
+	}
+
 	// Guard de busca: grep recursivo na raiz ganha exclusões de diretórios de build/dependência (label segue o original).
 	excluded := applyGrepExcludes(&args)
 
@@ -131,6 +136,9 @@ func HandleExec(args ExecArgs) (string, error) {
 		out = strings.TrimRight(out, "\r\n") + "\n" + searchHint
 	} else if excluded && out == NoResultText {
 		out += "\n" + searchExcludedNote
+	}
+	if !searchGuardOff() && isCallSearch(label) {
+		out = strings.TrimRight(out, "\r\n") + "\n" + callSearchHint
 	}
 	if res.TimedOut && clampedFrom > 0 {
 		out += fmt.Sprintf("\nO timeout_ms pedido (%d) foi limitado a %d ms, o teto antes de o cliente MCP cortar a chamada.", clampedFrom.Milliseconds(), timeout.Milliseconds())

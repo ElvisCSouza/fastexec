@@ -375,9 +375,12 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "graph":
+		os.Exit(runGraph(subArgs))
+
 	default:
 		fmt.Printf("Comando desconhecido: '%s'\n", cmd)
-		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, firestick, daemon")
+		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, firestick, daemon")
 		os.Exit(1)
 	}
 }

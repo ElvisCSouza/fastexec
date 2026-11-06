@@ -1,5 +1,5 @@
 {
-  "wire_bytes": 10028,
+  "wire_bytes": 10975,
   "result": {
     "tools": [
       {
@@ -100,6 +100,39 @@
           },
           "required": [
             "path"
+          ]
+        }
+      },
+      {
+        "name": "code_graph",
+        "description": "Code graph of a local repository (incremental index, built on first use, refreshed on every call): 'callers' = where a symbol is called or referenced; 'def' = where it is declared (line range, signature); 'impact' = files that use what a file or symbol defines (check before refactoring). Go via go/ast; TS/JS, Python, shell by line scanners; matched by name, no type resolution.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "'callers', 'def', 'impact' or 'index' (full rebuild)"
+            },
+            "max": {
+              "type": "integer",
+              "description": "Max lines (default 200)"
+            },
+            "repo_path": {
+              "type": "string",
+              "description": "Repository root or any path inside it (host 'local')"
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Symbol name (pkg.Name accepted) for callers/def/impact"
+            },
+            "target": {
+              "type": "string",
+              "description": "File (relative to repo or absolute) for impact"
+            }
+          },
+          "required": [
+            "action",
+            "repo_path"
           ]
         }
       },
