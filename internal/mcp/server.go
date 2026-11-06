@@ -96,6 +96,20 @@ var serverTools = []ToolSchema{
 		},
 	},
 	{
+		Name:        "code_outline",
+		Description: "List a source file's declarations (funcs, types, classes, methods, routes) as 'L<line>: <signature>', or find where a symbol is declared across a directory (skips .git, node_modules, dist, vendor...). Use before read_file or grep to locate code. Go, TS/JS, Python, shell, PowerShell.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"host":   {Type: "string", Description: "'local' (default) or a remote host; directories only on 'local'"},
+				"path":   {Type: "string", Description: "File or directory"},
+				"symbol": {Type: "string", Description: "Name or part of it (case-insensitive); omit for the full outline"},
+				"max":    {Type: "integer", Description: "Max results (default 200)"},
+			},
+			Required: []string{"path"},
+		},
+	},
+	{
 		Name:        "edit_file",
 		Description: "Substitui cirurgicamente um trecho específico de texto em um arquivo local ou remoto (target -> replacement). Use para pequenas alterações ou refatorações pontuais sem precisar regravar o arquivo inteiro com write_file, economizando tokens e evitando truncamento.",
 		InputSchema: InputSchema{
@@ -288,6 +302,10 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		var args tools.ReadFileArgs
 		_ = json.Unmarshal(rawArgs, &args)
 		outText, err = tools.HandleReadFile(args)
+	case "code_outline":
+		var args tools.CodeOutlineArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleCodeOutline(args)
 	case "write_file":
 		var args tools.WriteFileArgs
 		_ = json.Unmarshal(rawArgs, &args)

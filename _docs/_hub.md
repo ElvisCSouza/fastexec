@@ -14,14 +14,15 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
        └── host: "ax3000"     ──> TCP :9142 (Daemon Zig server-exec armv7l)
 ```
 
-## Ferramentas Expostas ao LLM (7 Core Tools + Módulos Dinâmicos Sob Demanda)
+## Ferramentas Expostas ao LLM (8 Core Tools + Módulos Dinâmicos Sob Demanda)
 
-Para economizar ~45% de overhead estático de tokens no system prompt (~490 tokens vs ~900 tokens de catálogos inflados), o FastExec expõe por padrão apenas as **7 ferramentas Core essenciais**:
+Para economizar ~45% de overhead estático de tokens no system prompt (~490 tokens vs ~900 tokens de catálogos inflados), o FastExec expõe por padrão apenas as **8 ferramentas Core essenciais**:
 
 | Tool Core | Parâmetros | Descrição |
 |---|---|---|
 | `exec` | `host`, `command` **ou** `argv`, `cwd`, `input`, `timeout_ms` | Execução síncrona orientada a eventos (`timeout_ms` padrão 45 s, teto 50 s). Inclui auto-remediação de `cat` e `sleep`, resolução `pwsh` e nudges educativos no rodapé |
 | `read_file` | `host`, `path`, `offset`, `limit`, `start_line`, `end_line` | Leitura determinística de arquivo local ou remoto sem subprocessos (suporta paginação por bytes e por linhas) |
+| `code_outline` | `host`, `path`, `symbol`, `max` | Declarações (funções, tipos, classes, métodos, rotas HTTP) como `L<linha>: <assinatura>`, por scanners de linha em Go puro (`internal/tools/code_nav.go`): Go, TS/JS, Python, shell, PowerShell. Arquivo: outline (filtrado por `symbol`, substring sem caixa). Diretório (só host `local`): varredura paralela pulando diretórios de ruído e ocultos, `*.min.js`, linhas > 400 colunas e arquivos > 2 MB; saída `caminho:L<n>: ...`, teto `max` (200). Medido neste repo: achar `HandleExec` = 74 bytes em 2,5 ms (grep -rn: 3.249 bytes); outline do `exec.go` = 1.256 bytes (arquivo: 25.805) |
 | `write_file` | `host`, `path`, `content`, `atomic` | Escrita atômica ou padrão em arquivo. Retorna confirmação compacta `ok N bytes` |
 | `edit_file` | `host`, `path`, `target`, `replacement` | Edição cirúrgica em arquivo existente. Exige correspondência única de `target`, evitando transferir arquivos inteiros |
 | `file_ops` | `host`, `action`, `path`, `target` | Operações atômicas no sistema de arquivos (`list`, `copy`, `move`, `delete`, `mkdir`) sem spawn de shell |
@@ -183,6 +184,12 @@ cd W:\ReposHomeLab
 - **Medido PC -> noteserver:** `ls -d /` 7,2 ms -> 3,2 ms; comando dominado pelo programa (git) não muda. Medição: `FASTEXEC_BENCH=1 go test -run MedicaoViaRede ./internal/transport/`; no servidor: `ops/tools/server-exec/bench/`.
 - **Reversão:** cliente: `bin\fastexec-old.exe` (renomear de volta para `fastexec.exe`); servidor: `ops/backups/server-exec-pre-v2/server-exec`. Roteadores e Firesticks seguem com o daemon antigo (sem SX), por isso o cliente os trata pelo SE.
 - **Limite do SE em daemon Windows:** o caminho SE monta linha POSIX (`export CI=1 ...;`, `cd "..." &&`, `printf | base64 -d |` para `input`). Daemon Windows sem SX (build anterior a 06/nov) executa isso no PowerShell: erro de `export` em todo comando, `input` e `cwd` quebrados e o resto da linha roda mesmo assim. Correção: atualizar o daemon Windows para o build com SX (`server-exec-windows.exe`).
+
+## Guard de busca no `exec` (`internal/tools/search_guard.go`)
+
+- **Exclusões automáticas:** `grep`/`egrep`/`fgrep` recursivo (`-r`, `-R`, `--recursive`) sobre `.`/`./` ou sem caminho, e sem `--exclude-dir` próprio, recebe `--exclude-dir=` para `.git`, `node_modules`, `dist`, `build`, `vendor`, `.next`, `.agent`, `tmp`, `cache`, `__pycache__` e `--exclude=` para `*.min.js`, `*.min.css`, `*.map`, `package-lock.json`, `pnpm-lock.yaml`, logo depois do programa (`command` e `argv`). Uma flag por item, nunca `{a,b}`: a expansão de chaves só existe no bash (quebraria no `cmd.exe` e no argv do SX). `rg` não é tocado (já respeita `.gitignore`). Sem resultado com exclusão aplicada → nota dizendo o que foi pulado.
+- **Corte de saída:** pipeline com busca (`grep`, `rg`, `findstr`, `git grep`) sem `head`/`tail`/`wc`/`Select-Object` depois mantém as 40 primeiras linhas e anexa `[FastExec Guard] Search returned N lines...` sugerindo `--include`, subpasta, `-l` ou `code_outline`.
+- **Desligar:** `FASTEXEC_NO_SEARCH_GUARD=1`. Testes: `internal/tools/code_nav_test.go`.
 
 ## Testes e Goldens (`internal/golden`)
 

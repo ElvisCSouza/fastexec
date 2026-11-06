@@ -103,6 +103,9 @@ func HandleExec(args ExecArgs) (string, error) {
 		clampedFrom, timeout = timeout, maxClientTimeout
 	}
 
+	// Guard de busca: grep recursivo na raiz ganha exclusões de diretórios de build/dependência (label segue o original).
+	excluded := applyGrepExcludes(&args)
+
 	var (
 		res *transport.ExecResult
 		err error
@@ -116,7 +119,19 @@ func HandleExec(args ExecArgs) (string, error) {
 		return "", err
 	}
 
+	searchHint := ""
+	if !res.TimedOut && !searchGuardOff() && isTextSearch(label) {
+		if cut, total, truncated := truncateSearchOutput(res.Stdout); truncated {
+			res.Stdout, searchHint = cut, searchTruncatedHint(total)
+		}
+	}
+
 	out, ferr := formatExecResult(label, *res)
+	if searchHint != "" {
+		out = strings.TrimRight(out, "\r\n") + "\n" + searchHint
+	} else if excluded && out == NoResultText {
+		out += "\n" + searchExcludedNote
+	}
 	if res.TimedOut && clampedFrom > 0 {
 		out += fmt.Sprintf("\nO timeout_ms pedido (%d) foi limitado a %d ms, o teto antes de o cliente MCP cortar a chamada.", clampedFrom.Milliseconds(), timeout.Milliseconds())
 	}

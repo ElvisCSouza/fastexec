@@ -1,5 +1,5 @@
 {
-  "wire_bytes": 11164,
+  "wire_bytes": 11914,
   "result": {
     "tools": [
       {
@@ -68,6 +68,34 @@
             "start_line": {
               "type": "integer",
               "description": "Linha inicial a ler (1-based, opcional)"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "code_outline",
+        "description": "List a source file's declarations (funcs, types, classes, methods, routes) as 'L\u003cline\u003e: \u003csignature\u003e', or find where a symbol is declared across a directory (skips .git, node_modules, dist, vendor...). Use before read_file or grep to locate code. Go, TS/JS, Python, shell, PowerShell.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "'local' (default) or a remote host; directories only on 'local'"
+            },
+            "max": {
+              "type": "integer",
+              "description": "Max results (default 200)"
+            },
+            "path": {
+              "type": "string",
+              "description": "File or directory"
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Name or part of it (case-insensitive); omit for the full outline"
             }
           },
           "required": [
