@@ -23,7 +23,7 @@ func TestStatsSemBancoNaoCriaNada(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "No telemetry database at "+filepath.Join(dir, "fastexec.db")) || !strings.Contains(out, "Packages") {
+	if !strings.Contains(out, "No telemetry database at "+filepath.Join(dir, "fastexec.db")) || !strings.Contains(out, "fastexec doctor") {
 		t.Errorf("mensagem sem banco: %s", out)
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {

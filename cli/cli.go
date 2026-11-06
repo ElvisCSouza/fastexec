@@ -18,7 +18,7 @@ import (
 )
 
 // builtinOrder é a ordem dos comandos na mensagem de uso (aliases e internos como daemon-run ficam de fora).
-var builtinOrder = []string{"mcp", "exec", "get", "put", "sql", "job", "ping", "stats", "handoff", "graph", "config", "daemon", "token", "version"}
+var builtinOrder = []string{"setup", "doctor", "mcp", "exec", "get", "put", "sql", "job", "ping", "stats", "handoff", "graph", "config", "daemon", "token", "version"}
 
 // Version é gravada no build (-ldflags "-X homelab/fastexec/cli.Version=..."); 'dev' em build local sem ela.
 var Version = "dev"
@@ -62,6 +62,10 @@ func Main() {
 
 	args := os.Args[1:]
 	if len(args) == 0 || args[0] == "mcp" {
+		// executável trocado desde que o daemon subiu: troca o daemon, senão as tools rodam o código antigo
+		if replaced, err := daemon.EnsureCurrent(); replaced || err != nil {
+			logger.Info("[daemon] replaced a daemon from another binary (err: %v)", err)
+		}
 		server := mcp.NewServer()
 		server.Forwarder = func(name string, rawArgs json.RawMessage) (mcp.ToolCallResult, error) {
 			res, err := daemon.CallTool(name, rawArgs)

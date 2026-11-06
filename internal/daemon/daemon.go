@@ -90,6 +90,8 @@ func handleConn(conn net.Conn) {
 				Status: map[string]any{
 					"status": "ok",
 					"pid":    os.Getpid(),
+					"exe":    self.Exe,
+					"id":     self.ID,
 				},
 			})
 		case "stop":

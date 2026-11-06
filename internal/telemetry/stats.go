@@ -79,12 +79,11 @@ func RenderStats(filter StatsFilter) (string, error) {
 		return "Telemetry reset.", nil
 	}
 
-	// leitura nunca cria banco: um arquivo vazio criado aqui esconderia o banco real (caso do Claude Desktop MSIX,
-	// cujo AppData é redirecionado para dentro do pacote)
+	// leitura nunca cria banco: um arquivo vazio criado aqui esconderia o banco real
 	path := filepath.Join(dataDirPath(), "fastexec.db")
 	if _, err := os.Stat(path); err != nil {
-		msg := fmt.Sprintf("No telemetry database at %s: nothing recorded on this machine yet, or the client keeps it "+
-			"elsewhere (a packaged Claude Desktop writes under AppData\\Local\\Packages\\<app>\\LocalCache\\Local).", path)
+		msg := fmt.Sprintf("No telemetry database at %s: nothing recorded yet (or telemetry is off). "+
+			"`fastexec doctor` checks where the data goes.", path)
 		if r := failureReport(); r != "" {
 			msg += "\n" + r
 		}
@@ -106,6 +105,22 @@ func RenderStats(filter StatsFilter) (string, error) {
 		out += "\n\n" + r
 	}
 	return out, nil
+}
+
+// Peek lê o banco sem criá-lo: caminho, total de registros e o horário do último ("" se vazio). exists=false
+// quando ainda não há banco.
+func Peek() (path string, exists bool, total int64, last string, err error) {
+	path = filepath.Join(dataDirPath(), "fastexec.db")
+	if _, serr := os.Stat(path); serr != nil {
+		return path, false, 0, "", nil
+	}
+	db, err := GetDB()
+	if err != nil {
+		return path, true, 0, "", err
+	}
+	var ts sql.NullString
+	err = db.QueryRow(`SELECT COUNT(*), MAX(timestamp) FROM audit`).Scan(&total, &ts)
+	return path, true, total, ts.String, err
 }
 
 // ParsePeriod converte "24h", "7d" etc. em horas. Retorna false para formatos não reconhecidos.
