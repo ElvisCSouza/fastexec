@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"homelab/fastexec/internal/telemetry"
@@ -457,56 +456,5 @@ func handleHandoffList(dir string, limit int) (string, error) {
 		}
 	}
 	return sb.String(), nil
-}
-
-var (
-	autoCheckpointMu    sync.Mutex
-	autoCheckpointTimer *time.Timer
-	lastAutoSavedCount  int
-)
-
-// ScheduleAutoCheckpoint agenda a sincronização silenciosa do handoff (debounce de 15 segundos).
-func ScheduleAutoCheckpoint() {
-	autoCheckpointMu.Lock()
-	defer autoCheckpointMu.Unlock()
-
-	if autoCheckpointTimer != nil {
-		autoCheckpointTimer.Stop()
-	}
-
-	autoCheckpointTimer = time.AfterFunc(15*time.Second, func() {
-		FlushAutoCheckpoint()
-	})
-}
-
-// FlushAutoCheckpoint executa o auto-checkpoint imediato se houver novos dados.
-func FlushAutoCheckpoint() {
-	autoCheckpointMu.Lock()
-	if autoCheckpointTimer != nil {
-		autoCheckpointTimer.Stop()
-		autoCheckpointTimer = nil
-	}
-	autoCheckpointMu.Unlock()
-
-	handoffDir := GetHandoffDir()
-	facts, err := extractHandoffFacts()
-	if err != nil || facts == nil {
-		return
-	}
-
-	totalEvents := len(facts.ModifiedFiles) + len(facts.Failures) + len(facts.RecentValidations)
-	if totalEvents == 0 || totalEvents == lastAutoSavedCount {
-		return
-	}
-
-	autoCheckpointMu.Lock()
-	lastAutoSavedCount = totalEvents
-	autoCheckpointMu.Unlock()
-
-	_, _ = handleHandoffSave(handoffDir, HandoffArgs{
-		Action: "save",
-		Topic:  "auto-session",
-		Notes:  "Checkpoint contínuo gerado automaticamente pelo FastExec em background.",
-	})
 }
 

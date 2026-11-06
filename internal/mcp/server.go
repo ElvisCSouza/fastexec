@@ -368,10 +368,6 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		NoResult:       name == "exec" && tools.IsNoResult(outText),
 	})
 
-	if name != "handoff" && name != "ping" {
-		tools.ScheduleAutoCheckpoint()
-	}
-
 	return ToolCallResult{
 		Content: []ToolContent{{Type: "text", Text: outText}},
 		IsError: !success,
@@ -384,7 +380,6 @@ func (s *Server) Run() error {
 	tools.SetOnListChanged(func() {
 		s.writeNotification("notifications/tools/list_changed", map[string]any{})
 	})
-	defer tools.FlushAutoCheckpoint()
 
 	scanner := bufio.NewScanner(os.Stdin)
 
