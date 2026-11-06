@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -53,15 +52,11 @@ func PutFileDaemon(tcpAddr string, localPath string, remotePath string, timeout 
 	}
 	fileSize := uint64(stat.Size())
 
-	conn, err := net.DialTimeout("tcp", tcpAddr, DialTimeout)
+	conn, err := dialDaemon(tcpAddr)
 	if err != nil {
-		return fmt.Errorf("host unreachable (%s): %w", tcpAddr, err)
+		return err
 	}
 	defer conn.Close()
-
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		_ = tcpConn.SetNoDelay(true)
-	}
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 
 	remotePathBytes := []byte(filepath.ToSlash(remotePath))
@@ -120,15 +115,11 @@ func GetFileDaemon(tcpAddr string, remotePath string, localPath string, timeout 
 		timeout = DefaultTimeout
 	}
 
-	conn, err := net.DialTimeout("tcp", tcpAddr, DialTimeout)
+	conn, err := dialDaemon(tcpAddr)
 	if err != nil {
-		return 0, fmt.Errorf("host unreachable (%s): %w", tcpAddr, err)
+		return 0, err
 	}
 	defer conn.Close()
-
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		_ = tcpConn.SetNoDelay(true)
-	}
 	_ = conn.SetDeadline(time.Now().Add(timeout))
 
 	remotePathBytes := []byte(filepath.ToSlash(remotePath))

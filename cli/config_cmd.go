@@ -87,6 +87,9 @@ func renderConfig(c *config.Config) string {
 		if h.Hidden {
 			extra += " hidden"
 		}
+		if h.Token != "" {
+			extra += " token=set"
+		}
 		fmt.Fprintf(&b, "  %s: %s%s\n", name, where, extra)
 	}
 	return b.String()

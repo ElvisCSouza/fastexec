@@ -88,7 +88,7 @@ func dialDaemon(addr string) (net.Conn, error) {
 	if tc, ok := conn.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
 	}
-	return conn, nil
+	return withAuth(conn, addr)
 }
 
 func getConn(addr string) (net.Conn, bool, error) {
@@ -169,7 +169,12 @@ func roundTrip(addr string, req []byte, timeout time.Duration, parse respParser)
 func parseSE(addr string) respParser {
 	return func(r io.Reader) (*ExecResult, error) {
 		h := make([]byte, 10)
-		if _, err := io.ReadFull(r, h); err != nil {
+		if n, err := io.ReadFull(r, h); err != nil {
+			if n >= 2 {
+				if aerr := authRequired(addr, binary.LittleEndian.Uint16(h[0:2])); aerr != nil {
+					return nil, aerr
+				}
+			}
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				return nil, fmt.Errorf("timeout waiting for %s: the command exceeded the limit", addr)
 			}
@@ -284,7 +289,12 @@ func encodeX(q XRequest) ([]byte, error) {
 func parseX(addr string) respParser {
 	return func(r io.Reader) (*ExecResult, error) {
 		h := make([]byte, xHeaderResp)
-		if _, err := io.ReadFull(r, h); err != nil {
+		if n, err := io.ReadFull(r, h); err != nil {
+			if n >= 2 {
+				if aerr := authRequired(addr, binary.LittleEndian.Uint16(h[0:2])); aerr != nil {
+					return nil, aerr
+				}
+			}
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				return nil, fmt.Errorf("timeout waiting for %s: the command exceeded the limit", addr)
 			}
@@ -322,7 +332,7 @@ func DaemonSupportsX(addr string) (bool, error) {
 	req, _ := encodeX(XRequest{Argv: []string{"true"}})
 	_, got, err := roundTrip(addr, req, probeTimeout, parseX(addr))
 	if err != nil {
-		if strings.Contains(err.Error(), "host unreachable") {
+		if strings.Contains(err.Error(), "host unreachable") || errors.Is(err, ErrAuth) {
 			return false, err
 		}
 		if got {

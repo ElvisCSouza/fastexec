@@ -14,10 +14,11 @@ import (
 	"homelab/fastexec/internal/daemon"
 	"homelab/fastexec/internal/logger"
 	"homelab/fastexec/internal/mcp"
+	"homelab/fastexec/internal/transport"
 )
 
 // builtinOrder é a ordem dos comandos na mensagem de uso (aliases e internos como daemon-run ficam de fora).
-var builtinOrder = []string{"mcp", "exec", "get", "put", "sql", "job", "ping", "stats", "handoff", "graph", "config", "daemon", "version"}
+var builtinOrder = []string{"mcp", "exec", "get", "put", "sql", "job", "ping", "stats", "handoff", "graph", "config", "daemon", "token", "version"}
 
 // Version é gravada no build (-ldflags "-X homelab/fastexec/cli.Version=..."); 'dev' em build local sem ela.
 var Version = "dev"
@@ -51,6 +52,9 @@ func cmdVersion(_ []string) {
 	}
 	fmt.Println(line)
 }
+
+// cmdToken atende: token. Gera um token novo para um daemon (arquivo do --token-file) e a config ('token').
+func cmdToken(_ []string) { fmt.Println(transport.NewToken()) }
 
 // Main roda o FastExec com os argumentos do processo.
 func Main() {

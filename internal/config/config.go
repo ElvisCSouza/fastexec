@@ -29,6 +29,7 @@ type Host struct {
 	Cwd     string   `json:"cwd,omitempty"`     // diretório de trabalho padrão no host
 	Aliases []string `json:"aliases,omitempty"` // outros nomes aceitos para o mesmo host
 	Hidden  bool     `json:"hidden,omitempty"`  // fora das descrições das tools (menos tokens); continua acessível
+	Token   string   `json:"token,omitempty"`   // token do daemon (server-exec --token-file); só com addr
 }
 
 // Config é o conteúdo do arquivo, já com os padrões e as variáveis de ambiente aplicados.
@@ -166,6 +167,9 @@ func (c *Config) validate() error {
 		}
 		if name != "local" && (h.Addr == "") == (h.SSH == "") {
 			return fmt.Errorf("host '%s' needs exactly one of 'addr' or 'ssh'", name)
+		}
+		if h.Token != "" && (h.Addr == "" || len(h.Token) > 256) {
+			return fmt.Errorf("host '%s': 'token' needs 'addr' and at most 256 characters", name)
 		}
 		for _, n := range append([]string{name}, h.Aliases...) {
 			n = strings.ToLower(strings.TrimSpace(n))
