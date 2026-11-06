@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	NoResultText = "sem resultado (exit 1)"
+	NoResultText = "no result (exit 1)"
 
 	outputCapSize = 64 * 1024
 	outputHeadLen = 16 * 1024
-	truncMarker   = "[truncado: "
+	truncMarker   = "[truncated: "
 )
 
 var (
@@ -239,7 +239,7 @@ func capOutput(s string) string {
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return fmt.Sprintf("%s\n%s%d bytes; só os primeiros 16 KB foram devolvidos]", s[:cut], truncMarker, len(s))
+	return fmt.Sprintf("%s\n%s%d bytes; only the first 16 KB returned]", s[:cut], truncMarker, len(s))
 }
 
 func IsNoResult(out string) bool {

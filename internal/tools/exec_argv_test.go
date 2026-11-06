@@ -19,7 +19,7 @@ func TestExecArgvLiteral(t *testing.T) {
 
 func TestExecCommandEArgvJuntosSaoRejeitados(t *testing.T) {
 	_, err := HandleExec(ExecArgs{Host: "local", Command: "echo x", Argv: []string{"node"}})
-	if err == nil || !strings.Contains(err.Error(), "só um") {
+	if err == nil || !strings.Contains(err.Error(), "only one") {
 		t.Errorf("esperava erro de exclusividade, veio %v", err)
 	}
 	_, err = HandleExec(ExecArgs{Host: "local"})
@@ -69,10 +69,10 @@ func TestExecTimeoutFormatado(t *testing.T) {
 	if err == nil {
 		t.Fatalf("timeout deveria ser erro, veio %q", out)
 	}
-	if !strings.HasPrefix(out, "[timeout após ") || !strings.Contains(out, "árvore de processos encerrada") {
+	if !strings.HasPrefix(out, "[timeout after ") || !strings.Contains(out, "process tree killed") {
 		t.Errorf("formato do timeout inesperado: %q", out)
 	}
-	if !strings.Contains(out, "Saída parcial capturada até o corte:") || !strings.Contains(out, "antes do corte") {
+	if !strings.Contains(out, "Partial output before the cut:") || !strings.Contains(out, "antes do corte") {
 		t.Errorf("faltou a saída parcial: %q", out)
 	}
 }
@@ -92,7 +92,7 @@ func TestExecHintPowerShellComMensagemLegivel(t *testing.T) {
 
 func TestExecCwdInvalido(t *testing.T) {
 	_, err := HandleExec(ExecArgs{Host: "local", Command: "echo x", Cwd: `C:\nao\existe\fx`})
-	if err == nil || !strings.Contains(err.Error(), "cwd inexistente") {
+	if err == nil || !strings.Contains(err.Error(), "cwd does not exist") {
 		t.Errorf("esperava erro claro de cwd: %v", err)
 	}
 }

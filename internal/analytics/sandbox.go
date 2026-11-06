@@ -132,14 +132,14 @@ func ValidateSQL(sql string) error {
 	// Bloqueia comandos destrutivos / expansão de extensões
 	for _, kw := range forbiddenKeywords {
 		if kw.MatchString(sql) {
-			return fmt.Errorf("sandboxing violation: comando perigoso proibido: %s", kw.String())
+			return fmt.Errorf("sandboxing violation: dangerous command blocked: %s", kw.String())
 		}
 	}
 
 	// Bloqueia acesso a arquivos de credenciais ou do sistema operacional
 	for _, sp := range sensitivePatterns {
 		if sp.MatchString(sql) {
-			return errors.New("sandboxing violation: acesso a caminhos sensíveis do sistema proibido")
+			return errors.New("sandboxing violation: access to sensitive system paths blocked")
 		}
 	}
 

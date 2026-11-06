@@ -37,7 +37,7 @@ func TestExecTimeoutAcimaDoTetoEhLimitado(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("devia voltar no teto, não nos 350 s pedidos: %v", time.Since(start))
 	}
-	for _, want := range []string{"[timeout após 1.5s", "árvore de processos encerrada", "parcial", "foi limitado a 1500 ms", "tool 'job'"} {
+	for _, want := range []string{"[timeout after 1.5s", "process tree killed", "Partial", "was capped at 1500 ms", "'job' tool"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("faltou %q em: %q", want, out)
 		}
@@ -46,7 +46,7 @@ func TestExecTimeoutAcimaDoTetoEhLimitado(t *testing.T) {
 
 func TestExecTimeoutNormalTambemOrientaOJob(t *testing.T) {
 	out, err := HandleExec(ExecArgs{Host: "local", Argv: []string{"node", "-e", "setTimeout(function(){},60000)"}, TimeoutMs: 1000})
-	if err == nil || !strings.Contains(out, "tool 'job'") || strings.Contains(out, "foi limitado") {
+	if err == nil || !strings.Contains(out, "'job' tool") || strings.Contains(out, "was capped") {
 		t.Errorf("timeout normal deve orientar o job sem a nota de limite: %v %q", err, out)
 	}
 }

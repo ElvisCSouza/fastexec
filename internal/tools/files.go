@@ -232,7 +232,7 @@ func ResolveTargetHost(host, path string) (transport.HostTarget, error) {
 
 func HandleReadFile(args ReadFileArgs) (string, error) {
 	if args.Path == "" {
-		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
+		return "", fmt.Errorf("parameter 'path' is required")
 	}
 
 	target, err := ResolveTargetHost(args.Host, args.Path)
@@ -304,14 +304,14 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		return "", err
 	}
 	if res.ExitCode != 0 {
-		return "", fmt.Errorf("erro lendo arquivo remoto: %s", strings.TrimSpace(res.Stderr))
+		return "", fmt.Errorf("could not read the remote file: %s", strings.TrimSpace(res.Stderr))
 	}
 	return res.Stdout, nil
 }
 
 func HandleWriteFile(args WriteFileArgs) (string, error) {
 	if args.Path == "" {
-		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
+		return "", fmt.Errorf("parameter 'path' is required")
 	}
 
 	target, err := ResolveTargetHost(args.Host, args.Path)
@@ -383,7 +383,7 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 			chunkCmd := fmt.Sprintf("echo '%s' | base64 -d %s '%s'", b64Chunk, op, targetFile)
 			res, err := transport.ExecDaemon(target.TCPAddr, chunkCmd, transport.DefaultTimeout)
 			if err != nil || res.ExitCode != 0 {
-				return "", fmt.Errorf("falha ao gravar chunk %d/%d: %v", i+1, numChunks, err)
+				return "", fmt.Errorf("could not write chunk %d/%d: %v", i+1, numChunks, err)
 			}
 		}
 	}
@@ -392,7 +392,7 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 		renameCmd := fmt.Sprintf("mv -f '%s' '%s'", tmpRemote, normalizedPath)
 		res, err := transport.ExecDaemon(target.TCPAddr, renameCmd, transport.DefaultTimeout)
 		if err != nil || res.ExitCode != 0 {
-			return "", fmt.Errorf("falha no rename atômico remoto: %v", err)
+			return "", fmt.Errorf("remote atomic rename failed: %v", err)
 		}
 	}
 
@@ -401,7 +401,7 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 
 func HandleGetFile(args GetFileArgs) (string, error) {
 	if args.RemotePath == "" {
-		return "", fmt.Errorf("parâmetro 'remote_path' é obrigatório")
+		return "", fmt.Errorf("parameter 'remote_path' is required")
 	}
 
 	if h, p := SplitHostPath(args.RemotePath); h != "" && h != "local" {
@@ -424,7 +424,7 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 	if target.IsLocal {
 		fi, err := os.Stat(args.RemotePath)
 		if err != nil {
-			return "", fmt.Errorf("arquivo local não encontrado: %w", err)
+			return "", fmt.Errorf("local file not found: %w", err)
 		}
 		data, err := os.ReadFile(args.RemotePath)
 		if err != nil {
@@ -432,11 +432,11 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 		}
 		if dir := filepath.Dir(localPath); dir != "" && dir != "." {
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				return "", fmt.Errorf("falha ao criar diretório local: %w", err)
+				return "", fmt.Errorf("could not create local directory: %w", err)
 			}
 		}
 		if err := os.WriteFile(localPath, data, 0644); err != nil {
-			return "", fmt.Errorf("falha ao gravar arquivo local: %w", err)
+			return "", fmt.Errorf("could not write local file: %w", err)
 		}
 		return okReply(fi.Size()), nil
 	}
@@ -451,7 +451,7 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 
 func HandlePutFile(args PutFileArgs) (string, error) {
 	if args.LocalPath == "" || args.RemotePath == "" {
-		return "", fmt.Errorf("parâmetros 'local_path' e 'remote_path' são obrigatórios")
+		return "", fmt.Errorf("parameters 'local_path' and 'remote_path' are required")
 	}
 
 	// Normalização tolerante de prefixo host:path no remote_path
@@ -479,7 +479,7 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 
 	fileInfo, err := os.Stat(args.LocalPath)
 	if err != nil {
-		return "", fmt.Errorf("arquivo local não encontrado: %w", err)
+		return "", fmt.Errorf("local file not found: %w", err)
 	}
 
 	if target.IsLocal {
@@ -503,7 +503,7 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 
 func HandleEditFile(args EditFileArgs) (string, error) {
 	if args.Path == "" {
-		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
+		return "", fmt.Errorf("parameter 'path' is required")
 	}
 	ops := args.Edits
 	if args.Target != "" {

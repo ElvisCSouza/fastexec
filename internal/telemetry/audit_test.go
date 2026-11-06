@@ -30,7 +30,7 @@ func TestTelemetryRecordAndStats(t *testing.T) {
 		t.Fatalf("RenderStats falhou: %v", err)
 	}
 
-	if !strings.Contains(report, "TELEMETRIA & AUDITORIA FASTEXEC") {
+	if !strings.Contains(report, "FASTEXEC TELEMETRY & AUDIT") {
 		t.Errorf("Relatório não contém cabeçalho esperado: %s", report)
 	}
 	if !strings.Contains(report, "exec") {

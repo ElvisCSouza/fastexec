@@ -156,7 +156,7 @@ func HandleHandoff(args HandoffArgs) (string, error) {
 	case "list", "ls":
 		return handleHandoffList(handoffDir, args.Limit)
 	default:
-		return "", fmt.Errorf("ação desconhecida: '%s' (use: save, latest, search, list)", args.Action)
+		return "", fmt.Errorf("unknown action '%s' (use save, latest, search or list)", args.Action)
 	}
 }
 
@@ -255,43 +255,43 @@ func handleHandoffSave(dir string, args HandoffArgs) (string, error) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Handoff — %s — %s\n\n", strings.Title(strings.ReplaceAll(topic, "-", " ")), now.Format("2006-01-02 15:04")))
 
-	sb.WriteString("## Meta / Resumo\n")
+	sb.WriteString("## Goal / summary\n")
 	if strings.TrimSpace(args.Notes) != "" {
 		sb.WriteString(strings.TrimSpace(args.Notes))
 		sb.WriteString("\n\n")
 	} else {
-		sb.WriteString(fmt.Sprintf("Sessão de trabalho em %s consolidada automaticamente via FastExec Telemetry.\n\n", topic))
+		sb.WriteString(fmt.Sprintf("Work session on %s, consolidated automatically from FastExec telemetry.\n\n", topic))
 	}
 
-	sb.WriteString(fmt.Sprintf("## Arquivos Modificados (%d)\n", len(modifiedFiles)))
+	sb.WriteString(fmt.Sprintf("## Files changed (%d)\n", len(modifiedFiles)))
 	if len(modifiedFiles) > 0 {
 		for _, f := range modifiedFiles {
 			sb.WriteString(fmt.Sprintf("- `%s`\n", f))
 		}
 	} else {
-		sb.WriteString("- Nenhum arquivo gravado via write_file/edit_file nesta janela.\n")
+		sb.WriteString("- No file written via write_file/edit_file in this window.\n")
 	}
 	sb.WriteString("\n")
 
-	sb.WriteString(fmt.Sprintf("## Falhas Registradas (Negative Knowledge / O que Evitar)\n"))
+	sb.WriteString(fmt.Sprintf("## Recorded failures (what to avoid)\n"))
 	if len(failures) > 0 {
 		for _, fail := range failures {
-			sb.WriteString(fmt.Sprintf("- ⚠️ `%s`\n  - *Erro:* %s\n", fail.Command, fail.Error))
+			sb.WriteString(fmt.Sprintf("- ⚠️ `%s`\n  - *Error:* %s\n", fail.Command, fail.Error))
 		}
 	} else {
-		sb.WriteString("- Nenhuma falha crítica recente registrada.\n")
+		sb.WriteString("- No recent critical failure recorded.\n")
 	}
 	sb.WriteString("\n")
 
 	if len(recentValidations) > 0 {
-		sb.WriteString("## Validações Recentes\n")
+		sb.WriteString("## Recent validations\n")
 		for _, v := range recentValidations {
 			sb.WriteString(fmt.Sprintf("- ✔ `%s`\n", v))
 		}
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("## Pendente / Próximos Passos\n")
+	sb.WriteString("## Pending / next steps\n")
 	if strings.TrimSpace(args.Pending) != "" {
 		sb.WriteString(strings.TrimSpace(args.Pending))
 		sb.WriteString("\n")
@@ -303,13 +303,13 @@ func handleHandoffSave(dir string, args HandoffArgs) (string, error) {
 
 	// Grava o arquivo datado
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
-		return "", fmt.Errorf("falha ao gravar handoff em '%s': %w", filePath, err)
+		return "", fmt.Errorf("could not write the handoff to '%s': %w", filePath, err)
 	}
 
 	// Atualiza o ponteiro latest.md
 	_ = os.WriteFile(latestPath, []byte(content), 0644)
 
-	res := fmt.Sprintf("[FastExec Handoff] Salvo com sucesso:\n- Arquivo: %s\n- Ponteiro Atualizado: %s\n\n---\n%s", filePath, latestPath, content)
+	res := fmt.Sprintf("[FastExec Handoff] Saved:\n- File: %s\n- Pointer updated: %s\n\n---\n%s", filePath, latestPath, content)
 	return res, nil
 }
 
@@ -322,7 +322,7 @@ func handleHandoffLatest(dir string) (string, error) {
 	// Se latest.md não existe, busca o mais recente na pasta
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return "", fmt.Errorf("pasta de handoff não encontrada: %w", err)
+		return "", fmt.Errorf("handoff folder not found: %w", err)
 	}
 
 	var mdFiles []string
@@ -333,7 +333,7 @@ func handleHandoffLatest(dir string) (string, error) {
 	}
 
 	if len(mdFiles) == 0 {
-		return "Nenhum handoff registrado anteriormente em " + dir, nil
+		return "No handoff recorded yet in " + dir, nil
 	}
 
 	sort.Strings(mdFiles)
@@ -351,7 +351,7 @@ func handleHandoffLatest(dir string) (string, error) {
 func handleHandoffSearch(dir, query string, limit int) (string, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return "", fmt.Errorf("informe o parâmetro 'query' para pesquisa")
+		return "", fmt.Errorf("parameter 'query' is required for search")
 	}
 	if limit <= 0 {
 		limit = 5
@@ -359,7 +359,7 @@ func handleHandoffSearch(dir, query string, limit int) (string, error) {
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return "", fmt.Errorf("erro lendo pasta de handoff: %w", err)
+		return "", fmt.Errorf("could not read the handoff folder: %w", err)
 	}
 
 	lowerQ := strings.ToLower(query)
@@ -410,10 +410,10 @@ func handleHandoffSearch(dir, query string, limit int) (string, error) {
 	}
 
 	if len(matches) == 0 {
-		return fmt.Sprintf("Nenhuma correspondência encontrada para '%s' em %s", query, dir), nil
+		return fmt.Sprintf("No match for '%s' in %s", query, dir), nil
 	}
 
-	return fmt.Sprintf("=== RESULTADOS DA BUSCA PARA '%s' ===\n\n%s", query, strings.Join(matches, "\n\n")), nil
+	return fmt.Sprintf("=== SEARCH RESULTS FOR '%s' ===\n\n%s", query, strings.Join(matches, "\n\n")), nil
 }
 
 func handleHandoffList(dir string, limit int) (string, error) {
@@ -423,7 +423,7 @@ func handleHandoffList(dir string, limit int) (string, error) {
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return "", fmt.Errorf("erro ao listar handoffs: %w", err)
+		return "", fmt.Errorf("could not list handoffs: %w", err)
 	}
 
 	var mdFiles []os.DirEntry
@@ -434,7 +434,7 @@ func handleHandoffList(dir string, limit int) (string, error) {
 	}
 
 	if len(mdFiles) == 0 {
-		return "Nenhum arquivo de handoff em " + dir, nil
+		return "No handoff file in " + dir, nil
 	}
 
 	sort.Slice(mdFiles, func(i, j int) bool {

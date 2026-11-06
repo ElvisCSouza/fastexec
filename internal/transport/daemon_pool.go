@@ -82,8 +82,8 @@ var (
 func dialDaemon(addr string) (net.Conn, error) {
 	conn, err := net.DialTimeout("tcp", addr, DialTimeout)
 	if err != nil {
-		logger.Error("Falha de conexão com %s: %v", addr, err)
-		return nil, fmt.Errorf("host inacessível (%s): %w", addr, err)
+		logger.Error("Connection to %s failed: %v", addr, err)
+		return nil, fmt.Errorf("host unreachable (%s): %w", addr, err)
 	}
 	if tc, ok := conn.(*net.TCPConn); ok {
 		_ = tc.SetNoDelay(true)
@@ -149,7 +149,7 @@ func roundTrip(addr string, req []byte, timeout time.Duration, parse respParser)
 			if reused && attempt == 0 {
 				continue // pedido incompleto não executa: refaz com conexão nova
 			}
-			return nil, false, fmt.Errorf("falha ao enviar para %s: %w", addr, werr)
+			return nil, false, fmt.Errorf("could not send to %s: %w", addr, werr)
 		}
 		cr := &countingReader{r: conn}
 		res, perr := parse(cr)
@@ -160,7 +160,7 @@ func roundTrip(addr string, req []byte, timeout time.Duration, parse respParser)
 		putConn(addr, conn)
 		return res, true, nil
 	}
-	return nil, false, fmt.Errorf("falha ao enviar para %s", addr)
+	return nil, false, fmt.Errorf("could not send to %s", addr)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -171,33 +171,33 @@ func parseSE(addr string) respParser {
 		h := make([]byte, 10)
 		if _, err := io.ReadFull(r, h); err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				return nil, fmt.Errorf("timeout aguardando resposta de %s: o comando excedeu o limite", addr)
+				return nil, fmt.Errorf("timeout waiting for %s: the command exceeded the limit", addr)
 			}
-			return nil, fmt.Errorf("falha ao ler cabeçalho da resposta de %s: %w", addr, err)
+			return nil, fmt.Errorf("could not read the response header from %s: %w", addr, err)
 		}
 		if m := binary.LittleEndian.Uint16(h[0:2]); m != MagicExec {
-			return nil, fmt.Errorf("protocolo inválido de %s: magic esperado 0x%x, recebido 0x%x", addr, MagicExec, m)
+			return nil, fmt.Errorf("invalid protocol from %s: expected magic 0x%x, got 0x%x", addr, MagicExec, m)
 		}
 		exit := int(int32(binary.LittleEndian.Uint32(h[2:6])))
 		outLen := binary.LittleEndian.Uint32(h[6:10])
 		if outLen > MaxOutputLen {
-			return nil, fmt.Errorf("stdout excedeu limite físico do daemon (%d bytes)", outLen)
+			return nil, fmt.Errorf("stdout exceeded the daemon limit (%d bytes)", outLen)
 		}
 		stdout := make([]byte, outLen)
 		if _, err := io.ReadFull(r, stdout); err != nil {
-			return nil, fmt.Errorf("falha ao ler stdout de %s: %w", addr, err)
+			return nil, fmt.Errorf("could not read stdout from %s: %w", addr, err)
 		}
 		var l [4]byte
 		if _, err := io.ReadFull(r, l[:]); err != nil {
-			return nil, fmt.Errorf("falha ao ler tamanho de stderr de %s: %w", addr, err)
+			return nil, fmt.Errorf("could not read the stderr size from %s: %w", addr, err)
 		}
 		errLen := binary.LittleEndian.Uint32(l[:])
 		if errLen > MaxOutputLen {
-			return nil, fmt.Errorf("stderr excedeu limite físico do daemon (%d bytes)", errLen)
+			return nil, fmt.Errorf("stderr exceeded the daemon limit (%d bytes)", errLen)
 		}
 		stderr := make([]byte, errLen)
 		if _, err := io.ReadFull(r, stderr); err != nil {
-			return nil, fmt.Errorf("falha ao ler stderr de %s: %w", addr, err)
+			return nil, fmt.Errorf("could not read stderr from %s: %w", addr, err)
 		}
 		return &ExecResult{ExitCode: exit, Stdout: string(stdout), Stderr: string(stderr)}, nil
 	}
@@ -210,7 +210,7 @@ func ExecDaemon(tcpAddr string, cmd string, timeout time.Duration) (*ExecResult,
 	}
 	cmdBytes := []byte(cmd)
 	if len(cmdBytes) > MaxCmdLen {
-		return nil, fmt.Errorf("comando excede tamanho máximo permitido (1MB)")
+		return nil, fmt.Errorf("command exceeds the 1 MB limit")
 	}
 	req := make([]byte, 6+len(cmdBytes))
 	binary.LittleEndian.PutUint16(req[0:2], MagicExec)
@@ -246,11 +246,11 @@ func encodeX(q XRequest) ([]byte, error) {
 		flags = flagDirect
 		argc = len(q.Argv)
 		if argc == 0 || argc > 0xFFFF {
-			return nil, fmt.Errorf("argv inválido")
+			return nil, fmt.Errorf("invalid argv")
 		}
 		for _, a := range q.Argv {
 			if strings.IndexByte(a, 0) >= 0 {
-				return nil, fmt.Errorf("argumento com byte NUL não é suportado no modo direto")
+				return nil, fmt.Errorf("arguments with a NUL byte are not supported in direct mode")
 			}
 			body = append(body, a...)
 			body = append(body, 0)
@@ -259,7 +259,7 @@ func encodeX(q XRequest) ([]byte, error) {
 		body = []byte(q.Shell)
 	}
 	if len(body) > MaxCmdLen {
-		return nil, fmt.Errorf("comando excede tamanho máximo permitido (1MB)")
+		return nil, fmt.Errorf("command exceeds the 1 MB limit")
 	}
 	if len(q.Cwd) > maxCwdLen {
 		return nil, fmt.Errorf("cwd excede 4096 bytes")
@@ -286,22 +286,22 @@ func parseX(addr string) respParser {
 		h := make([]byte, xHeaderResp)
 		if _, err := io.ReadFull(r, h); err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				return nil, fmt.Errorf("timeout aguardando resposta de %s: o comando excedeu o limite", addr)
+				return nil, fmt.Errorf("timeout waiting for %s: the command exceeded the limit", addr)
 			}
-			return nil, fmt.Errorf("falha ao ler cabeçalho da resposta de %s: %w", addr, err)
+			return nil, fmt.Errorf("could not read the response header from %s: %w", addr, err)
 		}
 		if m := binary.LittleEndian.Uint16(h[0:2]); m != MagicX {
-			return nil, fmt.Errorf("protocolo inválido de %s: magic esperado 0x%x, recebido 0x%x", addr, MagicX, m)
+			return nil, fmt.Errorf("invalid protocol from %s: expected magic 0x%x, got 0x%x", addr, MagicX, m)
 		}
 		exit := int(int32(binary.LittleEndian.Uint32(h[4:8])))
 		outLen := binary.LittleEndian.Uint32(h[8:12])
 		errLen := binary.LittleEndian.Uint32(h[12:16])
 		if outLen > MaxOutputLen || errLen > MaxOutputLen {
-			return nil, fmt.Errorf("saída excedeu limite físico do daemon (%d/%d bytes)", outLen, errLen)
+			return nil, fmt.Errorf("output exceeded the daemon limit (%d/%d bytes)", outLen, errLen)
 		}
 		body := make([]byte, int(outLen)+int(errLen))
 		if _, err := io.ReadFull(r, body); err != nil {
-			return nil, fmt.Errorf("falha ao ler saída de %s: %w", addr, err)
+			return nil, fmt.Errorf("could not read output from %s: %w", addr, err)
 		}
 		return &ExecResult{ExitCode: exit, Stdout: string(body[:outLen]), Stderr: string(body[outLen:])}, nil
 	}
@@ -322,7 +322,7 @@ func DaemonSupportsX(addr string) (bool, error) {
 	req, _ := encodeX(XRequest{Argv: []string{"true"}})
 	_, got, err := roundTrip(addr, req, probeTimeout, parseX(addr))
 	if err != nil {
-		if strings.Contains(err.Error(), "host inacessível") {
+		if strings.Contains(err.Error(), "host unreachable") {
 			return false, err
 		}
 		if got {
@@ -331,7 +331,7 @@ func DaemonSupportsX(addr string) (bool, error) {
 		poolMu.Lock()
 		xKnown[addr], xSupport[addr] = true, false // sem nenhum byte de volta: daemon antigo
 		poolMu.Unlock()
-		logger.Debug("[%s] daemon sem SX; usando SE", addr)
+		logger.Debug("[%s] daemon without SX; using SE", addr)
 		return false, nil
 	}
 	poolMu.Lock()

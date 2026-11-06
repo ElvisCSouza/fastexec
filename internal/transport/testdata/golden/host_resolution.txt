@@ -19,4 +19,4 @@
 "ssh:outro-host" -> name=ssh:outro-host local=false ssh=true sshHost=outro-host tcp= cwd=
 "10.0.0.5" -> name=10.0.0.5 local=false ssh=false sshHost= tcp=10.0.0.5:9142 cwd=
 "10.0.0.6:9200" -> name=10.0.0.6:9200 local=false ssh=false sshHost= tcp=10.0.0.6:9200 cwd=
-"host-inexistente" -> erro: host desconhecido: 'host-inexistente' (hosts válidos: local, noteserver, ax6000, ax3000, vm-ia-core, prefixo ssh:<host> ou IP direto)
+"host-inexistente" -> erro: unknown host 'host-inexistente' (valid: local, noteserver, ax6000, ax3000, ssh:<host> or an IP)

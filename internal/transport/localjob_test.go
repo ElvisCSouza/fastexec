@@ -107,7 +107,7 @@ func TestLocalJobLimiteDeCinco(t *testing.T) {
 		}
 	}
 	_, err := StartLocalJob("", tickJob(marker), "", "")
-	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("limite de %d jobs", LocalJobMaxActive)) || !strings.Contains(err.Error(), "stop") {
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("limit of %d active local Windows jobs", LocalJobMaxActive)) || !strings.Contains(err.Error(), "stop") {
 		t.Errorf("o próximo deveria falhar orientando a parar um job: %v", err)
 	}
 }
@@ -169,10 +169,10 @@ func TestLocalJobIDeCwd(t *testing.T) {
 	if _, err := StartLocalJob("echo x", nil, "", "id invalido!"); err == nil {
 		t.Errorf("id inválido deveria ser rejeitado")
 	}
-	if _, err := StartLocalJob("echo x", nil, `C:\nao\existe\fx_job`, ""); err == nil || !strings.Contains(err.Error(), "cwd inexistente") {
+	if _, err := StartLocalJob("echo x", nil, `C:\nao\existe\fx_job`, ""); err == nil || !strings.Contains(err.Error(), "cwd does not exist") {
 		t.Errorf("cwd inexistente deveria dar erro claro: %v", err)
 	}
-	if _, err := LocalJobStatus("nao-existe"); err == nil || !strings.Contains(err.Error(), "não encontrado") {
+	if _, err := LocalJobStatus("nao-existe"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("job inexistente: %v", err)
 	}
 	m, err := StartLocalJob("", []string{"node", "-e", "setInterval(function(){},1000)"}, "", "meu-job")

@@ -29,7 +29,7 @@ func TestJobWaitLinuxLimitadoDevolveJobAtivo(t *testing.T) {
 	if el := time.Since(start); el > 15*time.Second {
 		t.Errorf("wait deveria voltar no prazo de 2 s, levou %v", el)
 	}
-	if !strings.Contains(out, "ainda em execução") || !strings.Contains(out, "AVISO ANTI-POLLING") || strings.Contains(out, waitTimeoutMarker) {
+	if !strings.Contains(out, "still running") || !strings.Contains(out, "ANTI-POLLING") || strings.Contains(out, waitTimeoutMarker) {
 		t.Errorf("mensagem de job ativo inesperada: %q", out)
 	}
 }

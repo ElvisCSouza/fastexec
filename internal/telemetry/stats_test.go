@@ -70,7 +70,7 @@ func TestRenderStatsReturnPercentiles(t *testing.T) {
 	}
 
 	var execLine string
-	for _, line := range sectionLines(report, "RETORNO POR FERRAMENTA") {
+	for _, line := range sectionLines(report, "RETURN SIZE BY TOOL") {
 		if strings.HasPrefix(line, "exec") {
 			execLine = line
 		}
@@ -82,7 +82,7 @@ func TestRenderStatsReturnPercentiles(t *testing.T) {
 	}
 
 	var topLine string
-	for _, line := range sectionLines(report, "MAIORES RETORNOS DO PERÍODO") {
+	for _, line := range sectionLines(report, "LARGEST RETURNS IN THE PERIOD") {
 		if strings.Contains(line, "read_file") {
 			topLine = line
 			break

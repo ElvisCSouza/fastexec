@@ -31,7 +31,7 @@ func TestRenderStatsPeriodFiltersByWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(total, "Histórico Total") || !strings.Contains(total, "old_tool") {
+	if !strings.Contains(total, "All time") || !strings.Contains(total, "old_tool") {
 		t.Fatalf("histórico total deveria incluir tudo:\n%s", total)
 	}
 
@@ -39,10 +39,10 @@ func TestRenderStatsPeriodFiltersByWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(week, "Histórico Total") {
+	if strings.Contains(week, "All time") {
 		t.Errorf("stats 7d não deveria mais dizer Histórico Total:\n%s", week)
 	}
-	if !strings.Contains(week, "Últimos 7 dias") {
+	if !strings.Contains(week, "Last 7 days") {
 		t.Errorf("cabeçalho de 7d ausente:\n%s", week)
 	}
 	if strings.Contains(week, "old_tool") {
@@ -61,7 +61,7 @@ func TestRenderStatsPeriodFiltersByWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(empty, "Nenhum registro de telemetria encontrado (na última hora).") {
+	if !strings.Contains(empty, "No telemetry records (in the last hour).") {
 		t.Errorf("mensagem de janela vazia inesperada:\n%s", empty)
 	}
 }

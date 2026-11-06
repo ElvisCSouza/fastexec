@@ -38,15 +38,15 @@ type ExecArgs struct {
 	TimeoutMs int      `json:"timeout_ms,omitempty"`
 }
 
-const sleepGuardMsg = "[FastExec Guard] Uso de 'sleep' ou 'timeout' é proibido. O FastExec é síncrono e orientado a eventos (retorna no milissegundo exato da conclusão do processo). Para tarefas longas, aumente o 'timeout_ms' (ex: timeout_ms: 300000). Para processos assíncronos, use 'fastexec.job' com action 'wait'"
+const sleepGuardMsg = "[FastExec Guard] 'sleep' and 'timeout' are blocked: exec is event-driven and returns the moment the process exits. For long work raise 'timeout_ms' (e.g. 300000); for asynchronous work use the 'job' tool with action 'wait'"
 
 func HandleExec(args ExecArgs) (string, error) {
 	hasCmd, hasArgv := args.Command != "", len(args.Argv) > 0
 	switch {
 	case hasCmd && hasArgv:
-		return "", fmt.Errorf("informe só um: 'command' (linha de shell) ou 'argv' (sem shell)")
+		return "", fmt.Errorf("give only one: 'command' (shell line) or 'argv' (no shell)")
 	case !hasCmd && !hasArgv:
-		return "", fmt.Errorf("parâmetro 'command' (ou 'argv') é obrigatório")
+		return "", fmt.Errorf("parameter 'command' (or 'argv') is required")
 	}
 
 	label := args.Command
@@ -141,11 +141,11 @@ func HandleExec(args ExecArgs) (string, error) {
 		out = strings.TrimRight(out, "\r\n") + "\n" + callSearchHint
 	}
 	if res.TimedOut && clampedFrom > 0 {
-		out += fmt.Sprintf("\nO timeout_ms pedido (%d) foi limitado a %d ms, o teto antes de o cliente MCP cortar a chamada.", clampedFrom.Milliseconds(), timeout.Milliseconds())
+		out += fmt.Sprintf("\nThe requested timeout_ms (%d) was capped at %d ms, the ceiling before the MCP client cuts the call.", clampedFrom.Milliseconds(), timeout.Milliseconds())
 	}
 	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
 		if res.Duration > execDurationWarningMs {
-			warning := fmt.Sprintf("[FastExec Warning] Este comando levou %.1fs síncronos no exec. Comandos longos (>30s) correm risco de timeout rígido do cliente MCP (60s no Claude Desktop). Use a tool 'job' (action='start') para execução assíncrona desacoplada.", float64(res.Duration)/1000)
+			warning := fmt.Sprintf("[FastExec Warning] This command took %.1fs synchronously. Commands over ~30 s risk the MCP client's hard 60 s timeout; use the 'job' tool (action 'start') instead.", float64(res.Duration)/1000)
 			if out != "" {
 				out = strings.TrimRight(out, "\r\n") + "\n\n" + warning
 			} else {
@@ -199,7 +199,7 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 			errMsg = stdout
 		}
 		if errMsg == "" {
-			errMsg = fmt.Sprintf("comando falhou com exit code %d (sem saída)", res.ExitCode)
+			errMsg = fmt.Sprintf("command failed with exit code %d (no output)", res.ExitCode)
 		}
 		errMsg = capOutput(errMsg)
 		if res.Local && isWindowsCmdletMismatch(command, errMsg) {
@@ -208,7 +208,7 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 		if isBenignExitCode1(command, stdout, stderr) {
 			return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), nil
 		}
-		return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), fmt.Errorf("comando falhou com código %d", res.ExitCode)
+		return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), fmt.Errorf("command failed with exit code %d", res.ExitCode)
 	}
 
 	if stdout == "" && stderr != "" {
@@ -221,7 +221,7 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 // formatTimeout devolve ao agente um desfecho inequívoco: estourou o prazo, a árvore foi encerrada e o que foi emitido
 // até o corte. Assim ele nunca precisa adivinhar se o comando rodou.
 func formatTimeout(elapsedMs int64, stdout, stderr string) (string, error) {
-	head := fmt.Sprintf("[timeout após %.1fs; árvore de processos encerrada]", float64(elapsedMs)/1000)
+	head := fmt.Sprintf("[timeout after %.1fs; process tree killed]", float64(elapsedMs)/1000)
 	partial := stdout
 	if stderr != "" {
 		if partial != "" {
@@ -231,10 +231,10 @@ func formatTimeout(elapsedMs int64, stdout, stderr string) (string, error) {
 	}
 	msg := head
 	if partial != "" {
-		msg += "\nSaída parcial capturada até o corte:\n" + capOutput(partial)
+		msg += "\nPartial output before the cut:\n" + capOutput(partial)
 	}
-	msg += "\n[FastExec Guidance] Para tarefas longas (> 30s), use a tool 'job' (action='start')."
-	return msg, fmt.Errorf("timeout após %.1fs", float64(elapsedMs)/1000)
+	msg += "\n[FastExec Guidance] For long work (> 30 s) use the 'job' tool (action 'start')."
+	return msg, fmt.Errorf("timeout after %.1fs", float64(elapsedMs)/1000)
 }
 
 func isWindowsCmdletMismatch(cmd string, errMsg string) bool {
@@ -382,11 +382,11 @@ func tryRemediateSleep(label string, args ExecArgs) (string, bool, error) {
 	}
 
 	if sec > 15 {
-		return "", true, fmt.Errorf("[FastExec Guard] Pausa de %ds bloqueada no exec síncrono (>15s excede o limite aceitável de espera). Para processos em background, inicie um job ou utilize agendamentos para não prender a sessão do LLM.", sec)
+		return "", true, fmt.Errorf("[FastExec Guard] A %ds pause is blocked in the synchronous exec (over 15 s). For background work start a job, or schedule a later check instead of holding the session.", sec)
 	}
 
 	sleepFn(time.Duration(sec) * time.Second)
-	out := fmt.Sprintf("[FastExec Auto-Remediation] Pausa de %ds concluída via timer nativo em Go.\n(Dica: o FastExec é orientado a eventos. Para sincronização de processos, prefira aguardar a porta/arquivo do alvo ou usar 'job').", sec)
+	out := fmt.Sprintf("[FastExec Auto-Remediation] %ds pause done with a native Go timer.\n(Tip: FastExec is event-driven; to synchronize, wait for the target's port or file, or use 'job'.)", sec)
 	return out, true, nil
 }
 
@@ -457,7 +457,7 @@ func tryRemediateCat(args ExecArgs) (string, bool, error) {
 		Path: filePath,
 	})
 	if err != nil {
-		return "", true, fmt.Errorf("[FastExec Auto-Remediation] O comando '%s' foi identificado como leitura de arquivo, mas falhou ao ler '%s' via read_file: %w", cmdName, candidatePath, err)
+		return "", true, fmt.Errorf("[FastExec Auto-Remediation] '%s' looked like a file read, but read_file failed on '%s': %w", cmdName, candidatePath, err)
 	}
 
 	cmdLabel := args.Command
@@ -465,7 +465,7 @@ func tryRemediateCat(args ExecArgs) (string, bool, error) {
 		cmdLabel = strings.Join(args.Argv, " ")
 	}
 
-	out := fmt.Sprintf("[FastExec Auto-Remediation] O comando '%s' foi convertido automaticamente para a tool nativa 'read_file' (zero-process).\nNa próxima, invoque 'read_file' diretamente para economizar tempo e tokens.\n---\n%s", cmdLabel, content)
+	out := fmt.Sprintf("[FastExec Auto-Remediation] '%s' was run as the native 'read_file' tool (no process).\nNext time call 'read_file' directly to save time and tokens.\n---\n%s", cmdLabel, content)
 	return out, true, nil
 }
 
@@ -477,7 +477,7 @@ func checkCatGuard(args ExecArgs) error {
 	if candidatePath == "" {
 		return nil
 	}
-	return fmt.Errorf("[FastExec Guard] Para leitura de arquivos use a tool nativa 'read_file' (path='%s'). Ela suporta paginação segura (offset/limit), evita criação de subprocessos e preserva integridade sem risco de estouro de buffer.", candidatePath)
+	return fmt.Errorf("[FastExec Guard] To read files use the native 'read_file' tool (path='%s'): it pages safely (offset/limit) and spawns no process.", candidatePath)
 }
 
 var winDirFlagRegex = regexp.MustCompile(`(?i)^/[a-z0-9:-]{1,4}$`)
@@ -606,7 +606,7 @@ func tryRemediateList(args ExecArgs) (string, bool, error) {
 	var formatted string
 	if err := json.Unmarshal([]byte(rawJSON), &items); err == nil {
 		if len(items) == 0 {
-			formatted = "(diretório vazio)"
+			formatted = "(empty directory)"
 		} else {
 			var sb strings.Builder
 			for _, it := range items {
@@ -627,7 +627,7 @@ func tryRemediateList(args ExecArgs) (string, bool, error) {
 		cmdLabel = strings.Join(args.Argv, " ")
 	}
 
-	out := fmt.Sprintf("[FastExec Auto-Remediation] O comando '%s' foi convertido automaticamente para a tool nativa 'file_ops' (action='list', zero-process).\nNa próxima, invoque 'file_ops' diretamente com action='list' para economizar tempo e tokens.\n---\n%s", cmdLabel, formatted)
+	out := fmt.Sprintf("[FastExec Auto-Remediation] '%s' was run as the native 'file_ops' tool (action='list', no process).\nNext time call 'file_ops' with action='list' directly to save time and tokens.\n---\n%s", cmdLabel, formatted)
 	return out, true, nil
 }
 
@@ -652,7 +652,7 @@ func tryRemediateCd(args *ExecArgs) (out string, handled bool, hint string) {
 
 	// 1. Comando puro 'cd ~/workspace'
 	if pureCdWorkspaceRegex.MatchString(cmd) {
-		return "[FastExec] O diretório de trabalho já é ~/workspace (cwd padrão no noteserver). Nenhum comando necessário.", true, ""
+		return "[FastExec] The working directory is already ~/workspace (noteserver default cwd); nothing to run.", true, ""
 	}
 
 	// 2. cd ~/workspace/<subpasta> && <resto>
@@ -666,7 +666,7 @@ func tryRemediateCd(args *ExecArgs) (out string, handled bool, hint string) {
 			} else {
 				args.Command = fmt.Sprintf("cd %s && %s", subDir, rest)
 			}
-			hint = fmt.Sprintf("[FastExec Auto-Remediation] O prefixo 'cd ~/workspace/%s' foi simplificado. No noteserver o cwd padrão já é ~/workspace; prefira usar o parâmetro cwd: '%s'.", subDir, subDir)
+			hint = fmt.Sprintf("[FastExec Auto-Remediation] The 'cd ~/workspace/%s' prefix was simplified: on noteserver the default cwd is already ~/workspace; prefer the cwd parameter: '%s'.", subDir, subDir)
 			return "", false, hint
 		}
 	}
@@ -676,7 +676,7 @@ func tryRemediateCd(args *ExecArgs) (out string, handled bool, hint string) {
 		rest := strings.TrimSpace(cmd[loc[1]:])
 		if rest != "" {
 			args.Command = rest
-			hint = "[FastExec Auto-Remediation] O prefixo 'cd ~/workspace' foi removido automaticamente: no noteserver o diretório de trabalho padrão já é ~/workspace. Passe seus comandos diretamente ou use o parâmetro 'cwd'."
+			hint = "[FastExec Auto-Remediation] The 'cd ~/workspace' prefix was removed: on noteserver the default working directory is already ~/workspace. Pass commands directly or use the 'cwd' parameter."
 			return "", false, hint
 		}
 	}
@@ -727,7 +727,7 @@ func detectNudge(label string, args ExecArgs) string {
 	lower := strings.ToLower(cmd)
 	if strings.Contains(lower, "sqlite3 ") || strings.Contains(lower, "duckdb ") || strings.Contains(lower, "psql ") ||
 		strings.HasPrefix(lower, "select ") || strings.HasPrefix(lower, "insert ") || strings.HasPrefix(lower, "update ") {
-		return "[FastExec Hint] Para consultas SQL (SQLite/DuckDB), use a tool nativa 'sql' que devolve JSON estruturado e não infla o shell."
+		return "[FastExec Hint] For SQL (SQLite/DuckDB) use the 'sql' tool (module 'sql'): it returns structured JSON."
 	}
 
 	if strings.ContainsAny(cmd, "|><;&`$\n") {
@@ -748,7 +748,7 @@ func detectNudge(label string, args ExecArgs) string {
 
 	switch exe {
 	case "ls", "dir":
-		return "[FastExec Hint] Para listar arquivos e diretórios, prefira a tool nativa 'file_ops' (action='list')."
+		return "[FastExec Hint] To list files and directories prefer the native 'file_ops' tool (action='list')."
 	}
 	return ""
 }

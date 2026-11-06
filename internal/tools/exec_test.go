@@ -220,7 +220,7 @@ func TestCdAutoRemediation(t *testing.T) {
 	// Caso 1: puro cd ~/workspace
 	args1 := ExecArgs{Host: "noteserver", Command: "cd ~/workspace"}
 	out, handled, _ := tryRemediateCd(&args1)
-	if !handled || !strings.Contains(out, "já é ~/workspace") {
+	if !handled || !strings.Contains(out, "already ~/workspace") {
 		t.Errorf("esperava tratamento de cd ~/workspace puro, recebeu handled=%v out=%s", handled, out)
 	}
 

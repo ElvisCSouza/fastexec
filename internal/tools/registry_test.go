@@ -49,12 +49,12 @@ func TestToolManageEnableDisable(t *testing.T) {
 	})
 
 	out, err := HandleToolManage(json.RawMessage(`{"action": "enable", "module": "docker"}`))
-	if err != nil || !strings.Contains(out, "ativado com sucesso") {
+	if err != nil || !strings.Contains(out, "enabled (") {
 		t.Fatalf("enable failed: (%q, %v)", out, err)
 	}
 
 	out, err = HandleToolManage(json.RawMessage(`{"action": "disable", "module": "docker"}`))
-	if err != nil || !strings.Contains(out, "desativado") {
+	if err != nil || !strings.Contains(out, "disabled") {
 		t.Fatalf("disable failed: (%q, %v)", out, err)
 	}
 	_ = notified

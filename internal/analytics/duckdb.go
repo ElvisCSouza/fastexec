@@ -27,7 +27,7 @@ func FindDuckDB() (string, error) {
 		return p, nil
 	}
 
-	return "", fmt.Errorf("duckdb.exe não encontrado em ~/.local/bin ou PATH")
+	return "", fmt.Errorf("duckdb.exe not found in ~/.local/bin or PATH")
 }
 
 func ExecuteDuckDBQuery(sessionName, sql string, timeoutMs int) (string, error) {

@@ -54,7 +54,7 @@ func TestHandoffLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleHandoffSearch falhou: %v", err)
 	}
-	if !strings.Contains(searchRes, "RESULTADOS DA BUSCA") || !strings.Contains(searchRes, "Adicionar benchmarks") {
+	if !strings.Contains(searchRes, "SEARCH RESULTS") || !strings.Contains(searchRes, "Adicionar benchmarks") {
 		t.Errorf("search não encontrou a palavra-chave: %s", searchRes)
 	}
 
@@ -63,7 +63,7 @@ func TestHandoffLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("searchNotFound retornou erro inesperado: %v", err)
 	}
-	if !strings.Contains(searchNotFound, "Nenhuma correspondência") {
+	if !strings.Contains(searchNotFound, "No match") {
 		t.Errorf("esperava mensagem amigável de não encontrado: %s", searchNotFound)
 	}
 

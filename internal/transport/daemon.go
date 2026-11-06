@@ -43,19 +43,19 @@ func PutFileDaemon(tcpAddr string, localPath string, remotePath string, timeout 
 
 	file, err := os.Open(localPath)
 	if err != nil {
-		return fmt.Errorf("falha ao abrir arquivo local '%s': %w", localPath, err)
+		return fmt.Errorf("could not open local file '%s': %w", localPath, err)
 	}
 	defer file.Close()
 
 	stat, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("falha ao obter metadados do arquivo local: %w", err)
+		return fmt.Errorf("could not stat the local file: %w", err)
 	}
 	fileSize := uint64(stat.Size())
 
 	conn, err := net.DialTimeout("tcp", tcpAddr, DialTimeout)
 	if err != nil {
-		return fmt.Errorf("host inacessível (%s): %w", tcpAddr, err)
+		return fmt.Errorf("host unreachable (%s): %w", tcpAddr, err)
 	}
 	defer conn.Close()
 
@@ -74,27 +74,27 @@ func PutFileDaemon(tcpAddr string, localPath string, remotePath string, timeout 
 	binary.LittleEndian.PutUint64(header[4:12], fileSize)
 
 	if _, err := conn.Write(header); err != nil {
-		return fmt.Errorf("falha ao enviar cabeçalho de put para %s: %w", tcpAddr, err)
+		return fmt.Errorf("could not send the put header to %s: %w", tcpAddr, err)
 	}
 	if _, err := conn.Write(remotePathBytes); err != nil {
-		return fmt.Errorf("falha ao enviar caminho para %s: %w", tcpAddr, err)
+		return fmt.Errorf("could not send the path to %s: %w", tcpAddr, err)
 	}
 
 	// Stream raw file bytes directly to socket (64KB buffer)
 	buf := make([]byte, 64*1024)
 	if _, err := io.CopyBuffer(conn, file, buf); err != nil {
-		return fmt.Errorf("falha ao transmitir arquivo para %s: %w", tcpAddr, err)
+		return fmt.Errorf("could not stream the file to %s: %w", tcpAddr, err)
 	}
 
 	// Read response: 2 bytes magic (0x5350) + 4 bytes status + 4 bytes msg_len = 10 bytes
 	respHeader := make([]byte, 10)
 	if _, err := io.ReadFull(conn, respHeader); err != nil {
-		return fmt.Errorf("falha ao ler resposta de put de %s: %w", tcpAddr, err)
+		return fmt.Errorf("could not read the put response from %s: %w", tcpAddr, err)
 	}
 
 	magic := binary.LittleEndian.Uint16(respHeader[0:2])
 	if magic != MagicPut {
-		return fmt.Errorf("protocolo inválido de %s: magic esperado 0x%x, recebido 0x%x", tcpAddr, MagicPut, magic)
+		return fmt.Errorf("invalid protocol from %s: expected magic 0x%x, got 0x%x", tcpAddr, MagicPut, magic)
 	}
 
 	status := int32(binary.LittleEndian.Uint32(respHeader[2:6]))
@@ -103,12 +103,12 @@ func PutFileDaemon(tcpAddr string, localPath string, remotePath string, timeout 
 	msgBuf := make([]byte, msgLen)
 	if msgLen > 0 {
 		if _, err := io.ReadFull(conn, msgBuf); err != nil {
-			return fmt.Errorf("falha ao ler mensagem de resposta de %s: %w", tcpAddr, err)
+			return fmt.Errorf("could not read the response message from %s: %w", tcpAddr, err)
 		}
 	}
 
 	if status != 0 {
-		return fmt.Errorf("falha remota no daemon (%s): %s", tcpAddr, string(msgBuf))
+		return fmt.Errorf("remote daemon failure (%s): %s", tcpAddr, string(msgBuf))
 	}
 
 	return nil
@@ -122,7 +122,7 @@ func GetFileDaemon(tcpAddr string, remotePath string, localPath string, timeout 
 
 	conn, err := net.DialTimeout("tcp", tcpAddr, DialTimeout)
 	if err != nil {
-		return 0, fmt.Errorf("host inacessível (%s): %w", tcpAddr, err)
+		return 0, fmt.Errorf("host unreachable (%s): %w", tcpAddr, err)
 	}
 	defer conn.Close()
 
@@ -140,21 +140,21 @@ func GetFileDaemon(tcpAddr string, remotePath string, localPath string, timeout 
 	binary.LittleEndian.PutUint16(header[2:4], pathLen)
 
 	if _, err := conn.Write(header); err != nil {
-		return 0, fmt.Errorf("falha ao enviar cabeçalho de get para %s: %w", tcpAddr, err)
+		return 0, fmt.Errorf("could not send the get header to %s: %w", tcpAddr, err)
 	}
 	if _, err := conn.Write(remotePathBytes); err != nil {
-		return 0, fmt.Errorf("falha ao enviar caminho para %s: %w", tcpAddr, err)
+		return 0, fmt.Errorf("could not send the path to %s: %w", tcpAddr, err)
 	}
 
 	// Read response: 2 bytes magic (0x5347) + 4 bytes status + 8 bytes file_size + 4 bytes msg_len = 18 bytes
 	respHeader := make([]byte, 18)
 	if _, err := io.ReadFull(conn, respHeader); err != nil {
-		return 0, fmt.Errorf("falha ao ler resposta de get de %s: %w", tcpAddr, err)
+		return 0, fmt.Errorf("could not read the get response from %s: %w", tcpAddr, err)
 	}
 
 	magic := binary.LittleEndian.Uint16(respHeader[0:2])
 	if magic != MagicGet {
-		return 0, fmt.Errorf("protocolo inválido de %s: magic esperado 0x%x, recebido 0x%x", tcpAddr, MagicGet, magic)
+		return 0, fmt.Errorf("invalid protocol from %s: expected magic 0x%x, got 0x%x", tcpAddr, MagicGet, magic)
 	}
 
 	status := int32(binary.LittleEndian.Uint32(respHeader[2:6]))
@@ -164,12 +164,12 @@ func GetFileDaemon(tcpAddr string, remotePath string, localPath string, timeout 
 	msgBuf := make([]byte, msgLen)
 	if msgLen > 0 {
 		if _, err := io.ReadFull(conn, msgBuf); err != nil {
-			return 0, fmt.Errorf("falha ao ler mensagem de resposta de %s: %w", tcpAddr, err)
+			return 0, fmt.Errorf("could not read the response message from %s: %w", tcpAddr, err)
 		}
 	}
 
 	if status != 0 {
-		return 0, fmt.Errorf("falha remota no daemon (%s): %s", tcpAddr, string(msgBuf))
+		return 0, fmt.Errorf("remote daemon failure (%s): %s", tcpAddr, string(msgBuf))
 	}
 
 	localDir := filepath.Dir(localPath)
@@ -179,14 +179,14 @@ func GetFileDaemon(tcpAddr string, remotePath string, localPath string, timeout 
 
 	outFile, err := os.Create(localPath)
 	if err != nil {
-		return 0, fmt.Errorf("falha ao criar arquivo local '%s': %w", localPath, err)
+		return 0, fmt.Errorf("could not create local file '%s': %w", localPath, err)
 	}
 	defer outFile.Close()
 
 	buf := make([]byte, 64*1024)
 	written, err := io.CopyBuffer(outFile, io.LimitReader(conn, int64(fileSize)), buf)
 	if err != nil {
-		return written, fmt.Errorf("falha ao receber dados de %s: %w", tcpAddr, err)
+		return written, fmt.Errorf("could not receive data from %s: %w", tcpAddr, err)
 	}
 
 	return written, nil

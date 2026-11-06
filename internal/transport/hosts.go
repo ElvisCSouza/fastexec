@@ -66,5 +66,5 @@ func ResolveHost(name string) (HostTarget, error) {
 		return HostTarget{Name: name, TCPAddr: n}, nil
 	}
 
-	return HostTarget{}, fmt.Errorf("host desconhecido: '%s' (hosts válidos: local, noteserver, ax6000, ax3000, vm-ia-core, prefixo ssh:<host> ou IP direto)", name)
+	return HostTarget{}, fmt.Errorf("unknown host '%s' (valid: local, noteserver, ax6000, ax3000, ssh:<host> or an IP)", name)
 }

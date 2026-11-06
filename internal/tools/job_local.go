@@ -27,7 +27,7 @@ func human(d time.Duration) string {
 }
 
 func statusLine(j *transport.LocalJobInfo) string {
-	return fmt.Sprintf("%s | id=%s | processos=%d | no ar há %s | último log há %s | log %d B | %s",
+	return fmt.Sprintf("%s | id=%s | processes=%d | up %s | last log %s ago | log %d B | %s",
 		j.State, j.Meta.ID, j.Active, human(time.Since(j.Meta.CreatedAt)), human(time.Since(j.LastActivity)), j.LogSize, jobLabel(j.Meta))
 }
 
@@ -37,7 +37,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 	case "start":
 		hasCmd, hasArgv := args.Command != "", len(args.Argv) > 0
 		if hasCmd == hasArgv {
-			return "", fmt.Errorf("ação 'start' requer 'command' (linha de shell) ou 'argv' (sem shell), só um dos dois")
+			return "", fmt.Errorf("action 'start' needs 'command' (shell line) or 'argv' (no shell), only one")
 		}
 		var argv []string
 		if hasArgv {
@@ -49,14 +49,14 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		}
 		note := ""
 		if m.State != "RUNNING" {
-			note = "\n(o processo já terminou; veja a saída com tail)"
+			note = "\n(the process already exited; see the output with tail)"
 		}
 		return fmt.Sprintf("[job] iniciado (local)\nid:      %s\ncomando: %s\nlog:     %s%s\nUse job(host='local', action='status'|'tail'|'wait'|'stop', job_id='%s')",
 			m.ID, jobLabel(*m), m.LogPath, note, m.ID), nil
 
 	case "status", "tail", "stop", "kill", "wait":
 		if args.JobID == "" {
-			return "", fmt.Errorf("ação '%s' requer o parâmetro 'job_id'", action)
+			return "", fmt.Errorf("action '%s' needs 'job_id'", action)
 		}
 	}
 
@@ -89,7 +89,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("[job] %s encerrado (%s); árvore de processos terminada pelo Job Object.", j.Meta.ID, j.State), nil
+		return fmt.Sprintf("[job] %s stopped (%s); process tree killed by the Job Object.", j.Meta.ID, j.State), nil
 
 	case "wait":
 		j, finished, err := transport.LocalJobWait(args.JobID, jobWaitMax)
@@ -99,7 +99,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		tail, _ := transport.TailLocalJob(args.JobID, 20)
 		tail = capOutput(cleanOutput(tail))
 		if !finished {
-			return fmt.Sprintf("[job %s ainda em execução após %s]\nAVISO ANTI-POLLING: NÃO faça polling chamando 'wait' consecutivamente. Use o recurso nativo de agendamento do seu cliente (ex: schedule/timer do Claude Desktop) para verificar o status daqui a alguns minutos, ou finalize seu turno informando o usuário.\n%s", j.Meta.ID, human(jobWaitMax), tail), nil
+			return fmt.Sprintf("[job %s still running after %s]\nANTI-POLLING: do not call 'wait' back to back. Use your client's scheduling (e.g. a timer) to check again in a few minutes, or end your turn telling the user.\n%s", j.Meta.ID, human(jobWaitMax), tail), nil
 		}
 		return fmt.Sprintf("[job %s finalizado: %s]\n%s", j.Meta.ID, j.State, tail), nil
 
@@ -109,7 +109,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 			return "", err
 		}
 		if len(jobs) == 0 {
-			return "Nenhum job local.", nil
+			return "No local job.", nil
 		}
 		const maxRows = 20
 		var b strings.Builder
@@ -122,5 +122,5 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		}
 		return strings.TrimRight(b.String(), "\n"), nil
 	}
-	return "", fmt.Errorf("ação de job desconhecida: '%s' (ações válidas: start, wait, status, list, tail, stop)", action)
+	return "", fmt.Errorf("unknown job action '%s' (valid: start, wait, status, list, tail, stop)", action)
 }

@@ -141,7 +141,7 @@ func TestInputViaStdinComScriptComMetacaracteres(t *testing.T) {
 
 func TestCwdInexistente(t *testing.T) {
 	_, err := ExecLocalWithInput("echo x", `C:\nao\existe\fastexec_teste`, "", 5*time.Second)
-	if err == nil || !strings.Contains(err.Error(), "cwd inexistente") {
+	if err == nil || !strings.Contains(err.Error(), "cwd does not exist") {
 		t.Errorf("esperava erro claro de cwd, veio %v", err)
 	}
 }
@@ -164,7 +164,7 @@ func TestCapBuffer(t *testing.T) {
 	if out[0] != 'a' || !strings.HasSuffix(string(out), "bbbFIM") {
 		t.Errorf("começo e fim deveriam ser preservados")
 	}
-	if !strings.Contains(string(out), "descartados pelo limite de captura") {
+	if !strings.Contains(string(out), "dropped by the capture limit") {
 		t.Errorf("faltou o marcador do corte")
 	}
 }

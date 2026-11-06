@@ -18,7 +18,7 @@ type SqlArgs struct {
 
 func HandleSql(args SqlArgs) (string, error) {
 	if args.Query == "" {
-		return "", fmt.Errorf("parâmetro 'query' é obrigatório")
+		return "", fmt.Errorf("parameter 'query' is required")
 	}
 
 	// 1. Modo DuckDB Analítico (Sessão Sandboxed no PC-Elvis)
@@ -32,7 +32,7 @@ func HandleSql(args SqlArgs) (string, error) {
 
 	// 2. Modo SQLite (NoteServer ou Local)
 	if args.Database == "" {
-		return "", fmt.Errorf("informe 'database' (para SQLite) ou 'session' (para DuckDB analítico)")
+		return "", fmt.Errorf("give 'database' (SQLite) or 'session' (analytic DuckDB)")
 	}
 
 	host := args.Host
@@ -49,7 +49,7 @@ func HandleSql(args SqlArgs) (string, error) {
 	}
 
 	if res.ExitCode != 0 {
-		return fmt.Sprintf("[SQL Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("sql falhou com código %d", res.ExitCode)
+		return fmt.Sprintf("[SQL Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("sql failed with exit code %d", res.ExitCode)
 	}
 
 	trimmed := strings.TrimSpace(res.Stdout)

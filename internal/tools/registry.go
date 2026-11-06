@@ -45,19 +45,19 @@ func init() {
 	// Módulos especializados pré-registrados para expansão modular zero-token
 	RegisterModule(&ModuleDef{
 		Name:        "docker",
-		Description: "Gerenciamento e monitoramento de containers Docker no homelab",
+		Description: "Docker container management and monitoring",
 		Tools: map[string]DynamicToolDef{
 			"docker_ps": {
 				Name:        "docker_ps",
-				Description: "Lista containers Docker ativos ou todos com status e portas",
+				Description: "List running (or all) Docker containers with status and ports",
 				Schema: map[string]any{
 					"name":        "docker_ps",
-					"description": "Lista containers Docker ativos ou todos com status e portas",
+					"description": "List running (or all) Docker containers with status and ports",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"host": map[string]any{"type": "string", "description": "Alvo: 'noteserver' (default)"},
-							"all":  map[string]any{"type": "boolean", "description": "Se true, lista todos os containers (-a)"},
+							"host": map[string]any{"type": "string", "description": "Target: 'noteserver' (default)"},
+							"all":  map[string]any{"type": "boolean", "description": "List all containers (-a)"},
 						},
 					},
 				},
@@ -80,16 +80,16 @@ func init() {
 			},
 			"docker_logs": {
 				Name:        "docker_logs",
-				Description: "Obtém as últimas linhas de log de um container Docker",
+				Description: "Last log lines of a Docker container",
 				Schema: map[string]any{
 					"name":        "docker_logs",
-					"description": "Obtém as últimas linhas de log de um container Docker",
+					"description": "Last log lines of a Docker container",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"host":      map[string]any{"type": "string", "description": "Alvo: 'noteserver' (default)"},
-							"container": map[string]any{"type": "string", "description": "Nome ou ID do container"},
-							"lines":     map[string]any{"type": "integer", "description": "Linhas de log (default: 50)"},
+							"host":      map[string]any{"type": "string", "description": "Target: 'noteserver' (default)"},
+							"container": map[string]any{"type": "string", "description": "Container name or ID"},
+							"lines":     map[string]any{"type": "integer", "description": "Log lines (default 50)"},
 						},
 						"required": []string{"container"},
 					},
@@ -102,7 +102,7 @@ func init() {
 					}
 					_ = json.Unmarshal(rawArgs, &p)
 					if p.Container == "" {
-						return "", fmt.Errorf("parâmetro 'container' é obrigatório")
+						return "", fmt.Errorf("parameter 'container' is required")
 					}
 					h := p.Host
 					if h == "" {
@@ -121,21 +121,21 @@ func init() {
 
 	RegisterModule(&ModuleDef{
 		Name:        "sql",
-		Description: "Execução SQL analítica em DuckDB e SQLite com saída JSON pura",
+		Description: "Analytic SQL on DuckDB and SQLite with plain JSON output",
 		Tools: map[string]DynamicToolDef{
 			"sql": {
 				Name:        "sql",
-				Description: "Executa SQL analítico DuckDB (direto em arquivos ou 'session') ou SQLite ('database'). Saída sempre em JSON puro.",
+				Description: "Run analytic SQL: DuckDB (straight on files, or a 'session') or SQLite ('database'). Output is plain JSON.",
 				Schema: map[string]any{
 					"name":        "sql",
-					"description": "Executa SQL analítico DuckDB (direto em arquivos ou 'session') ou SQLite ('database'). Saída sempre em JSON puro.",
+					"description": "Run analytic SQL: DuckDB (straight on files, or a 'session') or SQLite ('database'). Output is plain JSON.",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"session":  map[string]any{"type": "string", "description": "Nome da sessão analítica DuckDB no PC-Elvis (sandbox em W:\\Data\\sessions\\sess-<session>\\)"},
-							"database": map[string]any{"type": "string", "description": "Caminho do arquivo .db SQLite (usado com 'host')"},
-							"host":     map[string]any{"type": "string", "description": "Alvo para SQLite: 'noteserver' (default) ou 'local'"},
-							"query":    map[string]any{"type": "string", "description": "Instrução SQL a executar (no DuckDB aceita 'SELECT ... FROM \"caminho/arquivo.jsonl\"' diretamente)"},
+							"session":  map[string]any{"type": "string", "description": "DuckDB analytic session name (one sandbox folder per session)"},
+							"database": map[string]any{"type": "string", "description": "SQLite .db file path (with 'host')"},
+							"host":     map[string]any{"type": "string", "description": "Target for SQLite: 'noteserver' (default) or 'local'"},
+							"query":    map[string]any{"type": "string", "description": "SQL to run (DuckDB accepts 'SELECT ... FROM \"path/file.jsonl\"' directly)"},
 						},
 						"required": []string{"query"},
 					},
@@ -143,7 +143,7 @@ func init() {
 				Handler: func(rawArgs json.RawMessage) (string, error) {
 					var args SqlArgs
 					if err := json.Unmarshal(rawArgs, &args); err != nil {
-						return "", fmt.Errorf("parâmetros inválidos para sql: %w", err)
+						return "", fmt.Errorf("invalid parameters for sql: %w", err)
 					}
 					return HandleSql(args)
 				},
@@ -153,41 +153,41 @@ func init() {
 
 	RegisterModule(&ModuleDef{
 		Name:        "homelab",
-		Description: "Ferramentas especializadas de infraestrutura de homelab e transferência binária",
+		Description: "Host tools: connectivity check and binary file transfer",
 		Tools: map[string]DynamicToolDef{
 			"ping": {
 				Name:        "ping",
-				Description: "Testa latência e conectividade com os nós do homelab (local, noteserver, ax6000, ax3000).",
+				Description: "Latency and connectivity check against the configured hosts (local, noteserver, ax6000, ax3000).",
 				Schema: map[string]any{
 					"name":        "ping",
-					"description": "Testa latência e conectividade com os nós do homelab (local, noteserver, ax6000, ax3000).",
+					"description": "Latency and connectivity check against the configured hosts (local, noteserver, ax6000, ax3000).",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"host": map[string]any{"type": "string", "description": "Host específico ou 'all' para todos (default: 'all')"},
+							"host": map[string]any{"type": "string", "description": "A host, or 'all' (default)"},
 						},
 					},
 				},
 				Handler: func(rawArgs json.RawMessage) (string, error) {
 					var args PingArgs
 					if err := json.Unmarshal(rawArgs, &args); err != nil {
-						return "", fmt.Errorf("parâmetros inválidos para ping: %w", err)
+						return "", fmt.Errorf("invalid parameters for ping: %w", err)
 					}
 					return HandlePing(args)
 				},
 			},
 			"get_file": {
 				Name:        "get_file",
-				Description: "Baixa arquivo do nó remoto para o PC-Elvis via socket binário direto.",
+				Description: "Download a file from a remote host over the binary socket.",
 				Schema: map[string]any{
 					"name":        "get_file",
-					"description": "Baixa arquivo do nó remoto para o PC-Elvis via socket binário direto.",
+					"description": "Download a file from a remote host over the binary socket.",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
 							"host":        map[string]any{"type": "string", "description": "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
-							"remote_path": map[string]any{"type": "string", "description": "Caminho do arquivo no nó remoto"},
-							"local_path":  map[string]any{"type": "string", "description": "Caminho local no PC-Elvis (opcional, default: nome do arquivo no CWD)"},
+							"remote_path": map[string]any{"type": "string", "description": "File path on the remote host"},
+							"local_path":  map[string]any{"type": "string", "description": "Local path (default: the file name in the current directory)"},
 						},
 						"required": []string{"remote_path"},
 					},
@@ -195,23 +195,23 @@ func init() {
 				Handler: func(rawArgs json.RawMessage) (string, error) {
 					var args GetFileArgs
 					if err := json.Unmarshal(rawArgs, &args); err != nil {
-						return "", fmt.Errorf("parâmetros inválidos para get_file: %w", err)
+						return "", fmt.Errorf("invalid parameters for get_file: %w", err)
 					}
 					return HandleGetFile(args)
 				},
 			},
 			"put_file": {
 				Name:        "put_file",
-				Description: "Envia arquivo do PC-Elvis para o nó remoto de forma chunked e atômica.",
+				Description: "Upload a local file to a remote host (chunked, atomic).",
 				Schema: map[string]any{
 					"name":        "put_file",
-					"description": "Envia arquivo do PC-Elvis para o nó remoto de forma chunked e atômica.",
+					"description": "Upload a local file to a remote host (chunked, atomic).",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
 							"host":        map[string]any{"type": "string", "description": "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
-							"local_path":  map[string]any{"type": "string", "description": "Caminho local no PC-Elvis"},
-							"remote_path": map[string]any{"type": "string", "description": "Caminho de destino no nó remoto"},
+							"local_path":  map[string]any{"type": "string", "description": "Local file path"},
+							"remote_path": map[string]any{"type": "string", "description": "Destination path on the remote host"},
 						},
 						"required": []string{"local_path", "remote_path"},
 					},
@@ -219,7 +219,7 @@ func init() {
 				Handler: func(rawArgs json.RawMessage) (string, error) {
 					var args PutFileArgs
 					if err := json.Unmarshal(rawArgs, &args); err != nil {
-						return "", fmt.Errorf("parâmetros inválidos para put_file: %w", err)
+						return "", fmt.Errorf("invalid parameters for put_file: %w", err)
 					}
 					return HandlePutFile(args)
 				},
@@ -292,7 +292,7 @@ func GetActiveDynamicSchemas() []any {
 func HandleToolManage(rawArgs json.RawMessage) (string, error) {
 	var args ToolManageArgs
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
-		return "", fmt.Errorf("parâmetros inválidos: %w", err)
+		return "", fmt.Errorf("invalid parameters: %w", err)
 	}
 
 	action := strings.ToLower(strings.TrimSpace(args.Action))
@@ -306,7 +306,7 @@ func HandleToolManage(rawArgs json.RawMessage) (string, error) {
 	switch action {
 	case "list":
 		var b strings.Builder
-		b.WriteString("MÓDULOS DISPONÍVEIS NO FASTEXEC (Ativação Sob Demanda):\n")
+		b.WriteString("FASTEXEC MODULES (loaded on demand):\n")
 		var names []string
 		for k := range globalRegistry.modules {
 			names = append(names, k)
@@ -321,11 +321,11 @@ func HandleToolManage(rawArgs json.RawMessage) (string, error) {
 			}
 			fmt.Fprintf(&b, "- %s: %s (%d tools) %s\n", mod.Name, mod.Description, len(mod.Tools), status)
 		}
-		b.WriteString("\nAções disponíveis:\n")
-		b.WriteString("* tool_manage(action='search', query='<termo>') ➔ pesquisa ferramentas sem carregá-las no schema\n")
-		b.WriteString("* tool_manage(action='call', tool='<nome>', params='{...}') ➔ executa ferramenta direto (zero-token de schema)\n")
-		b.WriteString("* tool_manage(action='enable', module='<nome>') ➔ carrega ferramentas no catálogo ativo\n")
-		b.WriteString("* tool_manage(action='disable', module='<nome>') ➔ descarrega ferramentas do catálogo\n")
+		b.WriteString("\nActions:\n")
+		b.WriteString("* tool_manage(action='search', query='<term>') ➔ find tools without loading them into the schema\n")
+		b.WriteString("* tool_manage(action='call', tool='<name>', params='{...}') ➔ run a tool directly (no schema tokens)\n")
+		b.WriteString("* tool_manage(action='enable', module='<name>') ➔ load the module's tools into the active catalog\n")
+		b.WriteString("* tool_manage(action='disable', module='<name>') ➔ unload them\n")
 		return b.String(), nil
 
 	case "search":
@@ -341,47 +341,47 @@ func HandleToolManage(rawArgs json.RawMessage) (string, error) {
 					strings.Contains(strings.ToLower(modName), query)
 				if match {
 					found++
-					fmt.Fprintf(&b, "\n• %s (módulo: %s)\n  Descrição: %s\n  Chamada direta: tool_manage(action='call', tool='%s', params='{...}')\n",
+					fmt.Fprintf(&b, "\n• %s (module: %s)\n  Description: %s\n  Direct call: tool_manage(action='call', tool='%s', params='{...}')\n",
 						toolName, modName, t.Description, toolName)
 				}
 			}
 		}
 
 		if found == 0 {
-			return fmt.Sprintf("Nenhuma ferramenta encontrada para '%s'. Use tool_manage(action='list') para ver os módulos.", query), nil
+			return fmt.Sprintf("No tool found for '%s'. Use tool_manage(action='list') to see the modules.", query), nil
 		}
 		return b.String(), nil
 
 	case "enable":
 		modName := strings.ToLower(strings.TrimSpace(args.Module))
 		if modName == "" {
-			return "", fmt.Errorf("parâmetro 'module' é obrigatório para ação 'enable'")
+			return "", fmt.Errorf("parameter 'module' is required for 'enable'")
 		}
 		mod, ok := globalRegistry.modules[modName]
 		if !ok {
-			return "", fmt.Errorf("módulo '%s' não encontrado. Use tool_manage(action='list')", modName)
+			return "", fmt.Errorf("module '%s' not found. Use tool_manage(action='list')", modName)
 		}
 		globalRegistry.activeModules[modName] = true
 		if globalRegistry.onListChanged != nil {
 			go globalRegistry.onListChanged()
 		}
-		return fmt.Sprintf("Módulo '%s' ativado com sucesso (%d ferramentas carregadas no catálogo).", modName, len(mod.Tools)), nil
+		return fmt.Sprintf("Module '%s' enabled (%d tools loaded into the catalog).", modName, len(mod.Tools)), nil
 
 	case "disable":
 		modName := strings.ToLower(strings.TrimSpace(args.Module))
 		if modName == "" {
-			return "", fmt.Errorf("parâmetro 'module' é obrigatório para ação 'disable'")
+			return "", fmt.Errorf("parameter 'module' is required for 'disable'")
 		}
 		delete(globalRegistry.activeModules, modName)
 		if globalRegistry.onListChanged != nil {
 			go globalRegistry.onListChanged()
 		}
-		return fmt.Sprintf("Módulo '%s' desativado (ferramentas descarregadas do catálogo).", modName), nil
+		return fmt.Sprintf("Module '%s' disabled (its tools were unloaded).", modName), nil
 
 	case "call":
 		toolName := strings.TrimSpace(args.Tool)
 		if toolName == "" {
-			return "", fmt.Errorf("parâmetro 'tool' é obrigatório para ação 'call'")
+			return "", fmt.Errorf("parameter 'tool' is required for 'call'")
 		}
 		var handler func(rawArgs json.RawMessage) (string, error)
 		for _, mod := range globalRegistry.modules {
@@ -391,7 +391,7 @@ func HandleToolManage(rawArgs json.RawMessage) (string, error) {
 			}
 		}
 		if handler == nil {
-			return "", fmt.Errorf("ferramenta dinâmica '%s' não encontrada", toolName)
+			return "", fmt.Errorf("dynamic tool '%s' not found", toolName)
 		}
 
 		rawParams := json.RawMessage([]byte(args.Params))
@@ -401,6 +401,6 @@ func HandleToolManage(rawArgs json.RawMessage) (string, error) {
 		return handler(rawParams)
 
 	default:
-		return "", fmt.Errorf("ação desconhecida '%s'. Ações suportadas: list, search, enable, disable, call", action)
+		return "", fmt.Errorf("unknown action '%s' (supported: list, search, enable, disable, call)", action)
 	}
 }

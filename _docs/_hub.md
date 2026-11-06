@@ -14,6 +14,8 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
        └── host: "ax3000"     ──> TCP :9142 (Daemon Zig server-exec armv7l)
 ```
 
+**Idioma:** schemas, mensagens de erro, dicas e o relatório do `stats` em inglês (06/nov/2026), para o projeto público e porque inglês custa menos tokens: `tools/list` do núcleo 10.423 → 8.613 bytes. Exceção deliberada: `"não é reconhecido"` em `isWindowsCmdletMismatch` casa com o stderr do Windows em português (é detecção, não mensagem). Docs internos (`_docs/`) seguem em português.
+
 **Onde mexer:** tool nativa nova = handler em `internal/tools` + uma linha em `internal/mcp/tool_handlers.go` (tabela nome → handler, adaptador `typed` decodifica os argumentos) + o schema em `internal/mcp/tool_schemas.go` (só dados, travado pelo golden do `tools/list`); o `DispatchTool` (`server.go`) não muda. Subcomando novo do CLI = função em `cmd/fastexec` + uma linha na tabela `commands` (`commands.go`); o `main()` só consulta a tabela.
 
 ## Ferramentas Expostas ao LLM (9 Core Tools + Módulos Dinâmicos Sob Demanda)

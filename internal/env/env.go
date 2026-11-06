@@ -139,7 +139,7 @@ func MountForCurrentProcess() []string {
 	reg, err := ReadRegistry()
 	if err != nil {
 		// Log, mas não falha: processo segue com o herdado
-		fmt.Fprintf(os.Stderr, "[env] registro ilegível, seguindo com o env herdado: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[env] registry unreadable, using the inherited environment: %v\n", err)
 		return os.Environ()
 	}
 

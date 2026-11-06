@@ -180,7 +180,7 @@ func TestFormatExecResultKeepsOtherFailures(t *testing.T) {
 	}
 
 	out, err = formatExecResult("cmd", transport.ExecResult{ExitCode: 2})
-	if out != "[exit 2] comando falhou com exit code 2 (sem saída)" || err == nil {
+	if out != "[exit 2] command failed with exit code 2 (no output)" || err == nil {
 		t.Errorf("exit 2 vazio: got (%q, %v)", out, err)
 	}
 
@@ -232,7 +232,7 @@ func TestFormatExecResultCapAt65KB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err inesperado: %v", err)
 	}
-	marker := fmt.Sprintf("\n[truncado: %d bytes; só os primeiros 16 KB foram devolvidos]", len(in))
+	marker := fmt.Sprintf("\n[truncated: %d bytes; only the first 16 KB returned]", len(in))
 	if !strings.HasSuffix(out, marker) {
 		t.Fatalf("marcador de truncamento ausente; fim=%q", out[len(out)-120:])
 	}
@@ -247,7 +247,7 @@ func TestFormatExecResultCapAt65KB(t *testing.T) {
 func TestCapOutputDoesNotSplitUTF8(t *testing.T) {
 	in := strings.Repeat("a", outputHeadLen-1) + strings.Repeat("á", 300*1024)
 	out := capOutput(in)
-	head := out[:strings.Index(out, "\n[truncado: ")]
+	head := out[:strings.Index(out, "\n[truncated: ")]
 	if !utf8.ValidString(head) {
 		t.Fatalf("corte no meio de caractere UTF-8")
 	}

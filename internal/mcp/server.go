@@ -82,7 +82,7 @@ func (s *Server) writeResponse(resp JSONRPCResponse) {
 
 	data, err := json.Marshal(resp)
 	if err != nil {
-		logger.Error("Erro serializando resposta JSON-RPC: %v", err)
+		logger.Error("JSON-RPC response serialization error: %v", err)
 		return
 	}
 	_, _ = s.writer.Write(data)
@@ -126,9 +126,9 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Error("PANIC interceptado na ferramenta %s: %v\nStack: %s", name, r, string(debug.Stack()))
+			logger.Error("PANIC caught in tool %s: %v\nStack: %s", name, r, string(debug.Stack()))
 			result = ToolCallResult{
-				Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("[FATAL ERROR INTERCEPTED] Panic na ferramenta %s: %v", name, r)}},
+				Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("[FATAL ERROR INTERCEPTED] Panic in tool %s: %v", name, r)}},
 				IsError: true,
 			}
 			telemetry.Record(telemetry.AuditEntry{
@@ -154,7 +154,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		if dynamicHandler := tools.GetDynamicHandler(name); dynamicHandler != nil {
 			outText, err = dynamicHandler(rawArgs)
 		} else {
-			errMsg := fmt.Sprintf("Ferramenta '%s' não encontrada", name)
+			errMsg := fmt.Sprintf("Tool '%s' not found", name)
 			telemetry.Record(telemetry.AuditEntry{
 				Tool:           name,
 				Host:           host,
@@ -230,7 +230,7 @@ func (s *Server) serve(r io.Reader) error {
 
 		var req JSONRPCRequest
 		if err := json.Unmarshal(line, &req); err != nil {
-			logger.Error("Erro parsing JSON-RPC: %v", err)
+			logger.Error("JSON-RPC parse error: %v", err)
 			s.writeResponse(JSONRPCResponse{
 				JSONRPC: "2.0",
 				Error:   &RPCError{Code: -32700, Message: "Parse error"},
@@ -318,7 +318,7 @@ func (s *Server) serve(r io.Reader) error {
 	}
 
 	if err := scanner.Err(); err != nil && err != io.EOF {
-		logger.Error("Erro lendo stdin: %v", err)
+		logger.Error("stdin read error: %v", err)
 		return err
 	}
 	return nil

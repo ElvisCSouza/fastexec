@@ -121,7 +121,7 @@ func LocalJobsDir() (string, error) {
 		} else if base := os.Getenv("LOCALAPPDATA"); base != "" {
 			dir = filepath.Join(base, "fastexec", "jobs")
 		} else {
-			return "", fmt.Errorf("sem pasta para jobs: W: ausente e LOCALAPPDATA indefinido")
+			return "", fmt.Errorf("no folder for jobs: W: missing and LOCALAPPDATA unset")
 		}
 	}
 	return dir, os.MkdirAll(dir, 0o755)
@@ -131,7 +131,7 @@ var procOpenJobObject = windows.NewLazySystemDLL("kernel32.dll").NewProc("OpenJo
 
 // openJobObject abre um job existente pelo nome. Devolve (0, errJobGone) se ele não existe mais: um job só existe
 // enquanto tiver processo vivo ou handle aberto.
-var errJobGone = errors.New("job object não existe mais")
+var errJobGone = errors.New("job object no longer exists")
 
 func openJobObject(access uint32, name string) (windows.Handle, error) {
 	p, err := windows.UTF16PtrFromString(name)
@@ -180,12 +180,12 @@ func saveMeta(dir string, m LocalJobMeta) error {
 func loadMeta(dir, id string) (LocalJobMeta, error) {
 	var m LocalJobMeta
 	if !jobIDRegex.MatchString(id) {
-		return m, fmt.Errorf("job_id inválido: %q", id)
+		return m, fmt.Errorf("invalid job_id: %q", id)
 	}
 	b, err := os.ReadFile(metaPath(dir, id))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return m, fmt.Errorf("job '%s' não encontrado (use action='list')", id)
+			return m, fmt.Errorf("job '%s' not found (use action='list')", id)
 		}
 		return m, err
 	}
@@ -312,7 +312,7 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 	}
 	if cwd != "" {
 		if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
-			return nil, fmt.Errorf("cwd inexistente ou não é diretório: %s", cwd)
+			return nil, fmt.Errorf("cwd does not exist or is not a directory: %s", cwd)
 		}
 	}
 
@@ -323,7 +323,7 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 		}
 	}
 	if len(running) >= LocalJobMaxActive {
-		return nil, fmt.Errorf("limite de %d jobs ativos no Windows local atingido (%s); pare um com job(action='stop', job_id='...')",
+		return nil, fmt.Errorf("limit of %d active local Windows jobs reached (%s); stop one with job(action='stop', job_id='...')",
 			LocalJobMaxActive, strings.Join(running, ", "))
 	}
 
@@ -331,10 +331,10 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 	if id == "" {
 		id = newJobID()
 	} else if !jobIDRegex.MatchString(id) {
-		return nil, fmt.Errorf("job_id inválido: %q (use letras, números, '_' e '-', até 40 caracteres)", id)
+		return nil, fmt.Errorf("invalid job_id: %q (letters, digits, '_' and '-', up to 40 characters)", id)
 	}
 	if _, err := os.Stat(metaPath(dir, id)); err == nil {
-		return nil, fmt.Errorf("já existe um job com id '%s'", id)
+		return nil, fmt.Errorf("a job with id '%s' already exists", id)
 	}
 
 	logPath := filepath.Join(dir, id+".log")
@@ -348,7 +348,7 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 	// O job aninha dentro de qualquer job do host (Windows 8+), então não precisa de breakaway.
 	job, err := newNamedJobObject(jobName)
 	if err != nil {
-		return nil, fmt.Errorf("não consegui criar o job object: %v", err)
+		return nil, fmt.Errorf("could not create the job object: %v", err)
 	}
 	keep := false
 	defer func() {
@@ -376,7 +376,7 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 
 	if err := cmd.Start(); err != nil {
 		os.Remove(logPath)
-		return nil, fmt.Errorf("falha ao iniciar: %v", err)
+		return nil, fmt.Errorf("could not start: %v", err)
 	}
 	meta := LocalJobMeta{
 		ID: id, Command: command, Argv: argv, Cwd: cwd, PID: cmd.Process.Pid,
@@ -398,7 +398,7 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 		case <-time.After(500 * time.Millisecond):
 			_ = cmd.Process.Kill()
 			os.Remove(logPath)
-			return nil, fmt.Errorf("não consegui associar o processo ao job object (%v); processo encerrado", aerr)
+			return nil, fmt.Errorf("could not assign the process to the job object (%v); process killed", aerr)
 		}
 	}
 	_ = cmd.Process.Release()
@@ -450,7 +450,7 @@ func LocalJobStop(id string) (*LocalJobInfo, error) {
 		return nil, err
 	}
 	if err := terminateByName(m.JobObjectName); err != nil {
-		return nil, fmt.Errorf("falha ao encerrar o job: %v", err)
+		return nil, fmt.Errorf("could not stop the job: %v", err)
 	}
 	if m.State == jobStateRunning {
 		now := time.Now()

@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-var update = flag.Bool("update", false, "regrava os arquivos golden em vez de comparar")
+var update = flag.Bool("update", false, "rewrite the golden files instead of comparing")
 
 // Check compara got com testdata/golden/<name>. Com -update, grava got no arquivo.
 func Check(t *testing.T, name string, got []byte) {
@@ -33,9 +33,9 @@ func Check(t *testing.T, name string, got []byte) {
 
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("golden ausente (%v); gere com: go test -run Golden -update", err)
+		t.Fatalf("golden file missing (%v); create it with: go test -run Golden -update", err)
 	}
 	if !bytes.Equal(want, got) {
-		t.Errorf("saída difere de %s (se a mudança for intencional, regere com -update)\n--- esperado\n%s\n--- obtido\n%s", path, want, got)
+		t.Errorf("output differs from %s (if the change is intended, regenerate with -update)\n--- expected\n%s\n--- got\n%s", path, want, got)
 	}
 }

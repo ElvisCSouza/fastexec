@@ -43,16 +43,16 @@ type RPCError struct {
 func RunDaemon() error {
 	l, err := net.Listen("tcp", Addr)
 	if err != nil {
-		return fmt.Errorf("daemon já em execução ou porta ocupada: %w", err)
+		return fmt.Errorf("daemon already running or port in use: %w", err)
 	}
 	defer l.Close()
 
-	logger.Info("[daemon] FastExec Local Daemon ouvindo em %s (PID: %d)", Addr, os.Getpid())
+	logger.Info("[daemon] FastExec local daemon listening on %s (PID %d)", Addr, os.Getpid())
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			logger.Error("[daemon] erro no accept: %v", err)
+			logger.Error("[daemon] accept error: %v", err)
 			continue
 		}
 		go handleConn(conn)
@@ -212,7 +212,7 @@ func PingDaemon() (int, error) {
 func StopDaemon() error {
 	conn, err := net.DialTimeout("tcp", Addr, DialTimeout)
 	if err != nil {
-		return fmt.Errorf("daemon não está em execução: %w", err)
+		return fmt.Errorf("daemon is not running: %w", err)
 	}
 	defer conn.Close()
 
@@ -249,5 +249,5 @@ func ensureDaemon() (net.Conn, error) {
 			return conn, nil
 		}
 	}
-	return nil, fmt.Errorf("daemon não iniciou a tempo: %w", err)
+	return nil, fmt.Errorf("daemon did not start in time: %w", err)
 }

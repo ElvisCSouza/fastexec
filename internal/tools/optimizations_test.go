@@ -235,7 +235,7 @@ func TestExecDurationWarning(t *testing.T) {
 	if !strings.Contains(out, "[FastExec Warning]") {
 		t.Errorf("esperava FastExec Warning de duração longa, recebeu: %s", out)
 	}
-	if !strings.Contains(out, "tool 'job'") {
+	if !strings.Contains(out, "'job' tool") {
 		t.Errorf("aviso deveria recomendar a tool 'job': %s", out)
 	}
 }

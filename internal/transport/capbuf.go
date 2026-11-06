@@ -61,7 +61,7 @@ func (b *capBuffer) Bytes() []byte {
 	out := make([]byte, 0, len(b.head)+len(tail)+80)
 	out = append(out, b.head...)
 	if b.dropped > 0 {
-		out = append(out, fmt.Sprintf("\n[... %d bytes descartados pelo limite de captura ...]\n", b.dropped)...)
+		out = append(out, fmt.Sprintf("\n[... %d bytes dropped by the capture limit ...]\n", b.dropped)...)
 	}
 	return append(out, tail...)
 }

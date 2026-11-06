@@ -58,7 +58,7 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	}
 	if spec.cwd != "" {
 		if st, err := os.Stat(spec.cwd); err != nil || !st.IsDir() {
-			return nil, fmt.Errorf("cwd inexistente ou não é diretório: %s", spec.cwd)
+			return nil, fmt.Errorf("cwd does not exist or is not a directory: %s", spec.cwd)
 		}
 	}
 
@@ -72,7 +72,7 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	// Job Object: toda a árvore de processos do comando morre junto no timeout e ao fim da chamada (nada fica órfão).
 	job, jerr := newJobObject()
 	if jerr != nil {
-		logger.Debug("[local] job object indisponível, seguindo só com kill do processo principal: %v", jerr)
+		logger.Debug("[local] job object unavailable, falling back to killing only the main process: %v", jerr)
 	}
 
 	var cmd *exec.Cmd
@@ -114,7 +114,7 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	}
 	if job != nil {
 		if aerr := job.assign(cmd.Process.Pid); aerr != nil {
-			logger.Debug("[local] não consegui pôr o processo no job: %v", aerr)
+			logger.Debug("[local] could not assign the process to the job: %v", aerr)
 		}
 	}
 

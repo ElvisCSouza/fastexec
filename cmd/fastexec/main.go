@@ -25,7 +25,7 @@ func main() {
 			return *res, nil
 		}
 		if err := server.Run(); err != nil {
-			logger.Error("MCP server finalizado com erro: %v", err)
+			logger.Error("MCP server stopped with error: %v", err)
 			os.Exit(1)
 		}
 		return
@@ -39,7 +39,7 @@ func main() {
 		run(subArgs)
 		return
 	}
-	fmt.Printf("Comando desconhecido: '%s'\n", cmd)
-	fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, firestick, daemon")
+	fmt.Printf("Unknown command: '%s'\n", cmd)
+	fmt.Println("Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, firestick, daemon")
 	os.Exit(1)
 }

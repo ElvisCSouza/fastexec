@@ -46,9 +46,9 @@ func cmdDaemonRun(subArgs []string) {
 func cmdDaemonStatus(subArgs []string) {
 	pid, err := daemon.PingDaemon()
 	if err != nil {
-		fmt.Println("Daemon local: inativo")
+		fmt.Println("Local daemon: not running")
 	} else {
-		fmt.Printf("Daemon local: ativo (PID %d em %s)\n", pid, daemon.Addr)
+		fmt.Printf("Local daemon: running (PID %d on %s)\n", pid, daemon.Addr)
 	}
 }
 
@@ -58,7 +58,7 @@ func cmdDaemonStop(subArgs []string) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println("Daemon local encerrado com sucesso.")
+	fmt.Println("Local daemon stopped.")
 }
 
 // cmdDaemon atende: daemon.
@@ -78,23 +78,23 @@ func cmdDaemon(subArgs []string) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		fmt.Println("Daemon local encerrado com sucesso.")
+		fmt.Println("Local daemon stopped.")
 	case "status", "ping":
 		pid, err := daemon.PingDaemon()
 		if err != nil {
-			fmt.Println("Daemon local: inativo")
+			fmt.Println("Local daemon: not running")
 		} else {
-			fmt.Printf("Daemon local: ativo (PID %d em %s)\n", pid, daemon.Addr)
+			fmt.Printf("Local daemon: running (PID %d on %s)\n", pid, daemon.Addr)
 		}
 	default:
-		fmt.Println("Uso: fastexec daemon <status|start|stop>")
+		fmt.Println("Usage: fastexec daemon <status|start|stop>")
 	}
 }
 
 // cmdExec atende: exec.
 func cmdExec(subArgs []string) {
 	if len(subArgs) < 1 {
-		fmt.Println("Uso: fastexec exec [host] <comando>")
+		fmt.Println("Usage: fastexec exec [host] <command>")
 		os.Exit(1)
 	}
 	host := "noteserver"
@@ -134,7 +134,7 @@ func cmdExec(subArgs []string) {
 	}
 	if isErr {
 		if out == "" {
-			fmt.Fprintln(os.Stderr, "comando falhou")
+			fmt.Fprintln(os.Stderr, "command failed")
 		}
 		os.Exit(1)
 	}
@@ -143,7 +143,7 @@ func cmdExec(subArgs []string) {
 // cmdGet atende: get.
 func cmdGet(subArgs []string) {
 	if len(subArgs) < 1 {
-		fmt.Println("Uso: fastexec get <remote_path> [local_path] [host]")
+		fmt.Println("Usage: fastexec get <remote_path> [local_path] [host]")
 		os.Exit(1)
 	}
 	remotePath := subArgs[0]
@@ -170,7 +170,7 @@ func cmdGet(subArgs []string) {
 // cmdPut atende: put.
 func cmdPut(subArgs []string) {
 	if len(subArgs) < 2 {
-		fmt.Println("Uso: fastexec put <local_path> <remote_path> [host]")
+		fmt.Println("Usage: fastexec put <local_path> <remote_path> [host]")
 		os.Exit(1)
 	}
 	localPath := subArgs[0]
@@ -198,7 +198,7 @@ func cmdPut(subArgs []string) {
 // cmdSql atende: sql.
 func cmdSql(subArgs []string) {
 	if len(subArgs) < 1 {
-		fmt.Println("Uso: fastexec sql \"<query>\" [session_ou_db] [host]")
+		fmt.Println("Usage: fastexec sql \"<query>\" [session_or_db] [host]")
 		os.Exit(1)
 	}
 	var query, db, session, host string
@@ -240,7 +240,7 @@ func cmdJob(subArgs []string) {
 	switch action {
 	case "start":
 		if len(subArgs) < 2 {
-			fmt.Println("Uso: fastexec job start \"<comando>\" [job_id] [host]")
+			fmt.Println("Usage: fastexec job start \"<command>\" [job_id] [host]")
 			os.Exit(1)
 		}
 		jobCmd = subArgs[1]
@@ -344,7 +344,7 @@ func cmdStats(subArgs []string) {
 
 	out, err := telemetry.RenderStats(filter)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Erro ao obter telemetria:", err)
+		fmt.Fprintln(os.Stderr, "Telemetry error:", err)
 		os.Exit(1)
 	}
 	fmt.Print(out)

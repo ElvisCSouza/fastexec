@@ -33,11 +33,11 @@ func LocalJobsDir() (string, error) {
 }
 
 func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJobMeta, error) {
-	return nil, fmt.Errorf("localjob nativo no linux não configurado; utilize daemon ou systemd-run")
+	return nil, fmt.Errorf("native local jobs are not available on this OS; use the daemon or systemd-run")
 }
 
 func LocalJobStatus(id string) (*LocalJobInfo, error) {
-	return nil, fmt.Errorf("job local não encontrado")
+	return nil, fmt.Errorf("local job not found")
 }
 
 func LocalJobList() ([]LocalJobInfo, error) {
@@ -45,13 +45,13 @@ func LocalJobList() ([]LocalJobInfo, error) {
 }
 
 func LocalJobStop(id string) (*LocalJobInfo, error) {
-	return nil, fmt.Errorf("job local não encontrado")
+	return nil, fmt.Errorf("local job not found")
 }
 
 func LocalJobWait(id string, maxWait time.Duration) (*LocalJobInfo, bool, error) {
-	return nil, false, fmt.Errorf("job local não encontrado")
+	return nil, false, fmt.Errorf("local job not found")
 }
 
 func TailLocalJob(id string, n int) (string, error) {
-	return "", fmt.Errorf("job local não encontrado")
+	return "", fmt.Errorf("local job not found")
 }

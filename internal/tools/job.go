@@ -68,7 +68,7 @@ func HandleJob(args JobArgs) (string, error) {
 	switch action {
 	case "start":
 		if args.Command == "" {
-			return "", fmt.Errorf("ação 'start' requer o parâmetro 'command'")
+			return "", fmt.Errorf("action 'start' needs 'command'")
 		}
 		jobID := args.JobID
 		if jobID == "" {
@@ -85,16 +85,16 @@ func HandleJob(args JobArgs) (string, error) {
 			return "", err
 		}
 		if res.ExitCode != 0 {
-			return fmt.Sprintf("[Job Start Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("falha ao iniciar job: %s", res.Stderr)
+			return fmt.Sprintf("[Job Start Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("could not start job: %s", res.Stderr)
 		}
 
-		return fmt.Sprintf("[job] Iniciado com sucesso\nUnit:    %s.service\nComando: %s\nStatus:  Use job(action='status', job_id='%s')\nWait:    Use job(action='wait', job_id='%s')\nTail:    Use job(action='tail', job_id='%s')",
+		return fmt.Sprintf("[job] started\nUnit:    %s.service\nCommand: %s\nStatus:  job(action='status', job_id='%s')\nWait:    job(action='wait', job_id='%s')\nTail:    job(action='tail', job_id='%s')",
 			unit, args.Command, unit, unit, unit), nil
 
 	case "wait":
 		unit := sanitizeUnit(args.JobID)
 		if args.JobID == "" {
-			return "", fmt.Errorf("ação 'wait' requer o parâmetro 'job_id'")
+			return "", fmt.Errorf("action 'wait' needs 'job_id'")
 		}
 		// Aguarda o processo terminar no SO e devolve o log final no instante do término. O laço é limitado no próprio host
 		// remoto (jobWaitMax): se o job ainda roda no prazo, imprime o marcador e segue para o log, em vez de o transporte
@@ -111,14 +111,14 @@ func HandleJob(args JobArgs) (string, error) {
 		}
 		if strings.Contains(out, waitTimeoutMarker) {
 			out = strings.TrimSpace(strings.ReplaceAll(out, waitTimeoutMarker, ""))
-			return fmt.Sprintf("[job %s ainda em execução após %s]\nAVISO ANTI-POLLING: NÃO faça polling chamando 'wait' consecutivamente. Use o recurso nativo de agendamento do seu cliente (ex: schedule/timer do Claude Desktop) para verificar o status daqui a alguns minutos, ou finalize seu turno informando o usuário.\n%s", unit, human(jobWaitMax), out), nil
+			return fmt.Sprintf("[job %s still running after %s]\nANTI-POLLING: do not call 'wait' back to back. Use your client's scheduling (e.g. a timer) to check again in a few minutes, or end your turn telling the user.\n%s", unit, human(jobWaitMax), out), nil
 		}
 		return fmt.Sprintf("[job %s finalizado]\n%s", unit, out), nil
 
 	case "status":
 		unit := sanitizeUnit(args.JobID)
 		if args.JobID == "" {
-			return "", fmt.Errorf("ação 'status' requer o parâmetro 'job_id'")
+			return "", fmt.Errorf("action 'status' needs 'job_id'")
 		}
 		cmd := fmt.Sprintf("%s systemctl --user status '%s.service' --no-pager", envPrefix, unit)
 		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
@@ -139,14 +139,14 @@ func HandleJob(args JobArgs) (string, error) {
 		}
 		out := strings.TrimSpace(res.Stdout)
 		if out == "" || strings.Contains(out, "0 loaded units listed") {
-			return "Nenhum job encontrado em execução ou finalizado recentemente.", nil
+			return "No running or recently finished job.", nil
 		}
 		return out, nil
 
 	case "tail":
 		unit := sanitizeUnit(args.JobID)
 		if args.JobID == "" {
-			return "", fmt.Errorf("ação 'tail' requer o parâmetro 'job_id'")
+			return "", fmt.Errorf("action 'tail' needs 'job_id'")
 		}
 		lines := args.Lines
 		if lines <= 0 {
@@ -166,7 +166,7 @@ func HandleJob(args JobArgs) (string, error) {
 	case "stop", "kill":
 		unit := sanitizeUnit(args.JobID)
 		if args.JobID == "" {
-			return "", fmt.Errorf("ação 'stop' requer o parâmetro 'job_id'")
+			return "", fmt.Errorf("action 'stop' needs 'job_id'")
 		}
 		cmd := fmt.Sprintf("%s systemctl --user stop '%s.service'", envPrefix, unit)
 		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
@@ -174,11 +174,11 @@ func HandleJob(args JobArgs) (string, error) {
 			return "", err
 		}
 		if res.ExitCode != 0 {
-			return fmt.Sprintf("Erro ao parar job: %s", res.Stderr), fmt.Errorf("falha ao parar job: %s", res.Stderr)
+			return fmt.Sprintf("could not stop job: %s", res.Stderr), fmt.Errorf("could not stop job: %s", res.Stderr)
 		}
-		return fmt.Sprintf("[job] %s.service parado com sucesso.", unit), nil
+		return fmt.Sprintf("[job] %s.service stopped.", unit), nil
 
 	default:
-		return "", fmt.Errorf("ação de job desconhecida: '%s' (ações válidas: start, wait, status, list, tail, stop)", action)
+		return "", fmt.Errorf("unknown job action '%s' (valid: start, wait, status, list, tail, stop)", action)
 	}
 }

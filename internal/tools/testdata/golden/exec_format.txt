@@ -24,15 +24,15 @@ exit: 0
 ### exit1_no_output
 comando: findstr x y.txt
 exit: 1
---- saída (22 bytes)
-sem resultado (exit 1)
+--- saída (18 bytes)
+no result (exit 1)
 --- erro: <nil>
 
 ### exit1_search_empty
 comando: grep -r foo .
 exit: 1
---- saída (22 bytes)
-sem resultado (exit 1)
+--- saída (18 bytes)
+no result (exit 1)
 --- erro: <nil>
 
 ### exit2_stderr
@@ -41,14 +41,14 @@ exit: 2
 --- saída (62 bytes)
 [exit 2] ls: cannot access '/nope': No such file or directory
 
---- erro: comando falhou com código 2
+--- erro: command failed with exit code 2
 
 ### exit3_no_output
 comando: false-cmd
 exit: 3
 --- saída (52 bytes)
-[exit 3] comando falhou com exit code 3 (sem saída)
---- erro: comando falhou com código 3
+[exit 3] command failed with exit code 3 (no output)
+--- erro: command failed with exit code 3
 
 ### cmdlet_mismatch_hint
 comando: Get-ChildItem C:\
@@ -56,14 +56,14 @@ exit: 1
 --- saída (281 bytes)
 [exit 1] Get-ChildItem : o termo 'Get-ChildItem' não é reconhecido como nome de cmdlet
 [FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use 'file_ops'.
---- erro: comando falhou com código 1
+--- erro: command failed with exit code 1
 
 ### cmdlet_mismatch_remote_no_hint
 comando: Get-ChildItem C:\
 exit: 1
 --- saída (88 bytes)
 [exit 1] Get-ChildItem : o termo 'Get-ChildItem' não é reconhecido como nome de cmdlet
---- erro: comando falhou com código 1
+--- erro: command failed with exit code 1
 
 ### benign_grep_exit1_with_output
 comando: grep foo bar.txt | head
@@ -76,24 +76,24 @@ exit: 1
 ### timeout_partial
 comando: sleep-like-loop
 exit: -1
---- saída (200 bytes)
-[timeout após 45.0s; árvore de processos encerrada]
-Saída parcial capturada até o corte:
+--- saída (177 bytes)
+[timeout after 45.0s; process tree killed]
+Partial output before the cut:
 parcial
 
 [stderr]
 erro
 
-[FastExec Guidance] Para tarefas longas (> 30s), use a tool 'job' (action='start').
---- erro: timeout após 45.0s
+[FastExec Guidance] For long work (> 30 s) use the 'job' tool (action 'start').
+--- erro: timeout after 45.0s
 
 ### timeout_empty
 comando: long-build
 exit: -1
---- saída (137 bytes)
-[timeout após 50.0s; árvore de processos encerrada]
-[FastExec Guidance] Para tarefas longas (> 30s), use a tool 'job' (action='start').
---- erro: timeout após 50.0s
+--- saída (122 bytes)
+[timeout after 50.0s; process tree killed]
+[FastExec Guidance] For long work (> 30 s) use the 'job' tool (action 'start').
+--- erro: timeout after 50.0s
 
 ### truncated_stdout
 comando: dump-big

@@ -56,7 +56,7 @@ type ErrorRecord struct {
 func GetDB() (*sql.DB, error) {
 	Init()
 	if dbInstance == nil {
-		return nil, fmt.Errorf("não foi possível inicializar banco de telemetria")
+		return nil, fmt.Errorf("could not open the telemetry database")
 	}
 	return dbInstance, nil
 }
@@ -74,9 +74,9 @@ func ResetTelemetry() error {
 func RenderStats(filter StatsFilter) (string, error) {
 	if filter.ResetDB {
 		if err := ResetTelemetry(); err != nil {
-			return "", fmt.Errorf("erro limpando telemetria: %w", err)
+			return "", fmt.Errorf("telemetry reset failed: %w", err)
 		}
-		return "Telemetria reinicializada com sucesso.", nil
+		return "Telemetry reset.", nil
 	}
 
 	// leitura nunca cria banco: um arquivo vazio criado aqui esconderia o banco real (caso do Claude Desktop MSIX,
@@ -145,13 +145,13 @@ func periodDescription(filter StatsFilter) (label string, short string) {
 		return fmt.Sprintf("Hoje (%s)", time.Now().Format("02/01/2006")), "hoje"
 	case filter.PeriodH > 0 && filter.PeriodH%24 == 0:
 		d := filter.PeriodH / 24
-		return fmt.Sprintf("Últimos %d dias", d), fmt.Sprintf("nos últimos %d dias", d)
+		return fmt.Sprintf("Last %d days", d), fmt.Sprintf("in the last %d days", d)
 	case filter.PeriodH == 1:
-		return "Última 1 hora", "na última hora"
+		return "Last hour", "in the last hour"
 	case filter.PeriodH > 0:
-		return fmt.Sprintf("Últimas %d horas", filter.PeriodH), fmt.Sprintf("nas últimas %d horas", filter.PeriodH)
+		return fmt.Sprintf("Last %d hours", filter.PeriodH), fmt.Sprintf("in the last %d hours", filter.PeriodH)
 	}
-	return "Histórico Total", "no histórico geral"
+	return "All time", "in the whole history"
 }
 
 func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
@@ -160,12 +160,12 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 	// 1. Resumo Global
 	summary, durations, err := querySummary(db, whereClause)
 	if err != nil {
-		return "", fmt.Errorf("erro consultando resumo: %w", err)
+		return "", fmt.Errorf("summary query failed: %w", err)
 	}
 
 	if summary.TotalCalls == 0 {
 		_, period := periodDescription(filter)
-		return fmt.Sprintf("Nenhum registro de telemetria encontrado (%s).", period), nil
+		return fmt.Sprintf("No telemetry records (%s).", period), nil
 	}
 
 	summary.P95DurationMs = calculateP95(durations)
@@ -173,17 +173,17 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 	// 2. Breakdown por Ferramenta
 	tools, err := queryTools(db, whereClause)
 	if err != nil {
-		return "", fmt.Errorf("erro consultando ferramentas: %w", err)
+		return "", fmt.Errorf("per-tool query failed: %w", err)
 	}
 
 	toolBytes, err := queryToolBytes(db, whereClause)
 	if err != nil {
-		return "", fmt.Errorf("erro consultando bytes por ferramenta: %w", err)
+		return "", fmt.Errorf("per-tool bytes query failed: %w", err)
 	}
 
 	topReturns, err := queryTopReturns(db, whereClause, 5)
 	if err != nil {
-		return "", fmt.Errorf("erro consultando maiores retornos: %w", err)
+		return "", fmt.Errorf("largest returns query failed: %w", err)
 	}
 
 	// 3. Registros de Erro
@@ -191,7 +191,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 	if filter.OnlyErrors || summary.ErrorCalls > 0 {
 		errors, err = queryErrors(db, whereClause, 15)
 		if err != nil {
-			return "", fmt.Errorf("erro consultando erros: %w", err)
+			return "", fmt.Errorf("errors query failed: %w", err)
 		}
 	}
 
@@ -200,26 +200,26 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 	periodLabel, _ := periodDescription(filter)
 
 	sb.WriteString(fmt.Sprintf("================================================================================\n"))
-	sb.WriteString(fmt.Sprintf("                    TELEMETRIA & AUDITORIA FASTEXEC (%s)\n", periodLabel))
+	sb.WriteString(fmt.Sprintf("                    FASTEXEC TELEMETRY & AUDIT (%s)\n", periodLabel))
 	sb.WriteString(fmt.Sprintf("================================================================================\n\n"))
 
 	if !filter.OnlyErrors && !filter.OnlyTools {
-		sb.WriteString(fmt.Sprintf("Chamadas Totais:   %-8d | Taxa de Sucesso: %5.1f%% (%d ok, %d erro)\n",
+		sb.WriteString(fmt.Sprintf("Total calls:       %-8d | Success rate:    %5.1f%% (%d ok, %d errors)\n",
 			summary.TotalCalls, summary.SuccessRate, summary.SuccessCalls, summary.ErrorCalls))
-		sb.WriteString(fmt.Sprintf("Latência Média:    %-8.1fms | Latência P95:    %dms\n",
+		sb.WriteString(fmt.Sprintf("Avg latency:       %-8.1fms | P95 latency:     %dms\n",
 			summary.AvgDurationMs, summary.P95DurationMs))
-		sb.WriteString(fmt.Sprintf("Tráfego de Dados:  Entrada %s, Saída %s\n",
+		sb.WriteString(fmt.Sprintf("Data traffic:      in %s, out %s\n",
 			formatBytes(summary.TotalBytesIn), formatBytes(summary.TotalBytesOut)))
-		sb.WriteString(fmt.Sprintf("Tokens Estimados:  Entrada ~%d tok, Saída ~%d tok (Total: ~%d tok)\n\n",
+		sb.WriteString(fmt.Sprintf("Estimated tokens:  in ~%d, out ~%d (total ~%d)\n\n",
 			summary.TotalTokensIn, summary.TotalTokensOut, summary.TotalTokensIn+summary.TotalTokensOut))
 	}
 
 	if !filter.OnlyErrors {
 		sb.WriteString("--------------------------------------------------------------------------------\n")
-		sb.WriteString("CONSUMO & PERFORMANCE POR FERRAMENTA\n")
+		sb.WriteString("USAGE & PERFORMANCE BY TOOL\n")
 		sb.WriteString("--------------------------------------------------------------------------------\n")
 		tw := tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
-		fmt.Fprintf(tw, "FERRAMENTA\tCHAMADAS\tERROS\tLATÊNCIA MÉD\tTOKENS IN\tTOKENS OUT\n")
+		fmt.Fprintf(tw, "TOOL\tCALLS\tERRORS\tAVG LATENCY\tTOKENS IN\tTOKENS OUT\n")
 		for _, t := range tools {
 			fmt.Fprintf(tw, "%s\t%d\t%d\t%.1fms\t~%d\t~%d\n",
 				t.Tool, t.Calls, t.Errors, t.AvgDuration, t.TokensIn, t.TokensOut)
@@ -228,10 +228,10 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 		sb.WriteString("\n")
 
 		sb.WriteString("--------------------------------------------------------------------------------\n")
-		sb.WriteString("RETORNO POR FERRAMENTA (bytes devolvidos ao modelo)\n")
+		sb.WriteString("RETURN SIZE BY TOOL (bytes returned to the model)\n")
 		sb.WriteString("--------------------------------------------------------------------------------\n")
 		tw = tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
-		fmt.Fprintf(tw, "FERRAMENTA\tP50\tP90\tP99\tMÁXIMO\tTRUNCADOS\tSEM RESULTADO\n")
+		fmt.Fprintf(tw, "TOOL\tP50\tP90\tP99\tMAX\tTRUNCATED\tNO RESULT\n")
 		for _, t := range toolBytes {
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%d\n",
 				t.Tool, formatBytes(t.P50), formatBytes(t.P90), formatBytes(t.P99), formatBytes(t.Max), t.Truncated, t.NoResult)
@@ -240,7 +240,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 		sb.WriteString("\n")
 
 		sb.WriteString("--------------------------------------------------------------------------------\n")
-		sb.WriteString("MAIORES RETORNOS DO PERÍODO\n")
+		sb.WriteString("LARGEST RETURNS IN THE PERIOD\n")
 		sb.WriteString("--------------------------------------------------------------------------------\n")
 		tw = tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
 		fmt.Fprintf(tw, "DATA/HORA\tTOOL\tBYTES\tCOMANDO / ALVO\n")
@@ -253,7 +253,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 
 	if len(errors) > 0 {
 		sb.WriteString("--------------------------------------------------------------------------------\n")
-		sb.WriteString(fmt.Sprintf("ÚLTIMOS ERROS REGISTRADOS (%d)\n", len(errors)))
+		sb.WriteString(fmt.Sprintf("LATEST ERRORS (%d)\n", len(errors)))
 		sb.WriteString("--------------------------------------------------------------------------------\n")
 		tw := tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
 		fmt.Fprintf(tw, "DATA/HORA\tTOOL\tHOST\tCOMANDO / ALVO\tERRO\n")
@@ -264,7 +264,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 		tw.Flush()
 		sb.WriteString("\n")
 	} else if filter.OnlyErrors {
-		sb.WriteString("Nenhum erro registrado no período selecionado.\n\n")
+		sb.WriteString("No errors in the selected period.\n\n")
 	}
 
 	return sb.String(), nil
