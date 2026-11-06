@@ -169,6 +169,21 @@ var serverTools = []ToolSchema{
 			Required: []string{"action"},
 		},
 	},
+	{
+		Name:        "handoff",
+		Description: "Gerencia a memória de longo prazo e handoff entre sessões e agentes (Zero-LLM overhead, baseado em telemetria real). Ações: 'latest' (retorna o último briefing do projeto em ~300 tokens para cold-start imediato), 'save' (consolida a sessão atual com arquivos modificados, falhas a evitar e próximos passos em Markdown), 'search' (pesquisa histórico de decisões em Markdown), 'list' (lista handoffs anteriores).",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertyDef{
+				"action":  {Type: "string", Description: "Ação: 'latest' (default), 'save', 'search', 'list'"},
+				"topic":   {Type: "string", Description: "Tema ou módulo da sessão para ação 'save' (ex: 'popcorn-cache', 'matter-hub')"},
+				"notes":   {Type: "string", Description: "Resumo ou notas da sessão para 'save' (opcional)"},
+				"pending": {Type: "string", Description: "Itens pendentes ou próximos passos para 'save' (opcional)"},
+				"query":   {Type: "string", Description: "Termo de busca para a ação 'search'"},
+				"limit":   {Type: "integer", Description: "Limite de resultados para 'search' ou 'list' (padrão: 5)"},
+			},
+		},
+	},
 }
 
 type Server struct {
@@ -299,6 +314,10 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		outText, err = tools.HandlePing(args)
 	case "tool_manage":
 		outText, err = tools.HandleToolManage(rawArgs)
+	case "handoff":
+		var args tools.HandoffArgs
+		_ = json.Unmarshal(rawArgs, &args)
+		outText, err = tools.HandleHandoff(args)
 	default:
 		if dynamicHandler := tools.GetDynamicHandler(name); dynamicHandler != nil {
 			outText, err = dynamicHandler(rawArgs)

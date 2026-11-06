@@ -328,9 +328,52 @@ func main() {
 		}
 		fmt.Print(out)
 
+	case "handoff", "memory":
+		action := "latest"
+		var topic, notes, query string
+		if len(subArgs) >= 1 {
+			action = strings.ToLower(subArgs[0])
+		}
+		switch action {
+		case "save", "generate", "create":
+			if len(subArgs) >= 2 {
+				topic = subArgs[1]
+			}
+			if len(subArgs) >= 3 {
+				notes = strings.Join(subArgs[2:], " ")
+			}
+		case "search", "find":
+			if len(subArgs) >= 2 {
+				query = strings.Join(subArgs[1:], " ")
+			}
+		case "list", "ls":
+			// list
+		case "latest", "read", "get":
+			// latest
+		default:
+			if len(subArgs) == 1 {
+				query = subArgs[0]
+				action = "search"
+			}
+		}
+
+		out, err := tools.HandleHandoff(tools.HandoffArgs{
+			Action: action,
+			Topic:  topic,
+			Notes:  notes,
+			Query:  query,
+		})
+		fmt.Print(out)
+		if !strings.HasSuffix(out, "\n") {
+			fmt.Println()
+		}
+		if err != nil {
+			os.Exit(1)
+		}
+
 	default:
 		fmt.Printf("Comando desconhecido: '%s'\n", cmd)
-		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, firestick, daemon")
+		fmt.Println("Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, firestick, daemon")
 		os.Exit(1)
 	}
 }
