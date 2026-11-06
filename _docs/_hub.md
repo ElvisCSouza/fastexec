@@ -14,6 +14,8 @@ fastexec.exe (W:\ReposHomeLab\fastexec\bin\fastexec.exe)
        └── host: "ax3000"     ──> TCP :9142 (Daemon Zig server-exec armv7l)
 ```
 
+**Onde mexer:** tool nativa nova = handler em `internal/tools` + uma linha em `internal/mcp/tool_handlers.go` (tabela nome → handler, adaptador `typed` decodifica os argumentos) + o schema em `internal/mcp/tool_schemas.go` (só dados, travado pelo golden do `tools/list`); o `DispatchTool` (`server.go`) não muda. Subcomando novo do CLI = função em `cmd/fastexec` + uma linha na tabela `commands` (`commands.go`); o `main()` só consulta a tabela.
+
 ## Ferramentas Expostas ao LLM (9 Core Tools + Módulos Dinâmicos Sob Demanda)
 
 Para economizar ~45% de overhead estático de tokens no system prompt (~490 tokens vs ~900 tokens de catálogos inflados), o FastExec expõe por padrão apenas as **9 ferramentas Core essenciais**:
