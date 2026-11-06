@@ -148,6 +148,14 @@ func HandleExec(args ExecArgs) (string, error) {
 }
 
 func formatExecResult(command string, res transport.ExecResult) (string, error) {
+	out, err := formatExecOutput(command, res)
+	if res.Leftover > 0 {
+		out += fmt.Sprintf("\n[warning] %d child process(es) outlived the command and were killed with it; for background or long-running work use tool 'job' (action 'start').", res.Leftover)
+	}
+	return out, err
+}
+
+func formatExecOutput(command string, res transport.ExecResult) (string, error) {
 	stdout := cleanOutput(res.Stdout)
 	stderr := cleanOutput(res.Stderr)
 
@@ -170,8 +178,8 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 			errMsg = fmt.Sprintf("comando falhou com exit code %d (sem saída)", res.ExitCode)
 		}
 		errMsg = capOutput(errMsg)
-		if isWindowsCmdletMismatch(command, errMsg) {
-			errMsg += "\n[FastExec Hint] O host 'local' (Windows) executa via cmd.exe nativo por performance. Para cmdlets PowerShell invoque 'pwsh -NoProfile -Command ...'; para listar/manipular arquivos use a tool nativa 'file_ops'."
+		if res.Local && isWindowsCmdletMismatch(command, errMsg) {
+			errMsg += "\n[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use 'file_ops'."
 		}
 		if isBenignExitCode1(command, stdout, stderr) {
 			return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), nil

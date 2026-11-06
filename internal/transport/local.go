@@ -66,6 +66,9 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	// pwsh -Command - (script no stdin) descarta o bloco multilinha final sem linha em branco depois dele.
+	argv, stdin := spec.argv, pwshStdinInput(spec.argv, spec.input)
+
 	// Job Object: toda a árvore de processos do comando morre junto no timeout e ao fim da chamada (nada fica órfão).
 	job, jerr := newJobObject()
 	if jerr != nil {
@@ -73,8 +76,8 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	}
 
 	var cmd *exec.Cmd
-	if spec.argv != nil {
-		effectiveArgv := ResolveShellArgv(spec.argv)
+	if argv != nil {
+		effectiveArgv := ResolveShellArgv(argv)
 		cmd = exec.CommandContext(ctx, effectiveArgv[0], effectiveArgv[1:]...)
 		cmd.SysProcAttr = hideWindowSysProcAttr()
 	} else {
@@ -93,7 +96,7 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	cmd.WaitDelay = waitDelay
 
 	// stdin nunca fica pendurado: sem input, o filho recebe EOF imediato em vez de esperar um terminal que não existe.
-	cmd.Stdin = strings.NewReader(spec.input)
+	cmd.Stdin = strings.NewReader(stdin)
 
 	cmd.Env = localEnv()
 
@@ -107,7 +110,7 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 		if job != nil {
 			job.close()
 		}
-		return &ExecResult{ExitCode: -1, Stderr: startErr.Error(), Duration: time.Since(start).Milliseconds()}, nil
+		return &ExecResult{ExitCode: -1, Stderr: startErr.Error(), Duration: time.Since(start).Milliseconds(), Local: true}, nil
 	}
 	if job != nil {
 		if aerr := job.assign(cmd.Process.Pid); aerr != nil {
@@ -117,7 +120,11 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 
 	werr := cmd.Wait()
 	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	var leftover uint32
 	if job != nil {
+		if !timedOut {
+			leftover = job.alive() // contar antes do close: o que sobrar aqui é morto pelo kernel
+		}
 		job.close() // KILL_ON_JOB_CLOSE: o que ainda estiver vivo na árvore morre aqui
 	}
 
@@ -146,6 +153,8 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 		Stderr:   decodeMixed(stderrBuf.Bytes()),
 		Duration: durationMs,
 		TimedOut: timedOut,
+		Leftover: leftover,
+		Local:    true,
 	}, nil
 }
 

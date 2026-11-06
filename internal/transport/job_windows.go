@@ -3,6 +3,8 @@
 package transport
 
 import (
+	"path/filepath"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -62,6 +64,48 @@ func (j *jobObject) kill() {
 	if j.assigned {
 		windows.TerminateJobObject(j.h, 1)
 	}
+}
+
+// jobPIDList espelha JOBOBJECT_BASIC_PROCESS_ID_LIST com capacidade fixa (árvore de um exec raramente passa de 64).
+type jobPIDList struct {
+	Assigned uint32
+	InList   uint32
+	PIDs     [64]uintptr
+}
+
+// alive conta, numa consulta só e sem espera, os processos ainda vivos no job, ignorando o conhost.exe que o console
+// do cmd deixa saindo nos mesmos milissegundos (não é filho solto). 0 se o job não recebeu processo ou a consulta falhar.
+func (j *jobObject) alive() uint32 {
+	if !j.assigned {
+		return 0
+	}
+	var list jobPIDList
+	if err := windows.QueryInformationJobObject(j.h, windows.JobObjectBasicProcessIdList,
+		uintptr(unsafe.Pointer(&list)), uint32(unsafe.Sizeof(list)), nil); err != nil && err != windows.ERROR_MORE_DATA {
+		return 0
+	}
+	var n uint32
+	for i := uint32(0); i < list.InList && i < uint32(len(list.PIDs)); i++ {
+		if !isConhost(uint32(list.PIDs[i])) {
+			n++
+		}
+	}
+	return n + (list.Assigned - min(list.Assigned, list.InList)) // além da capacidade: conta sem filtrar
+}
+
+// isConhost diz se o PID é o conhost.exe (host de console). Falha na consulta = não é (conta como vivo).
+func isConhost(pid uint32) bool {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseHandle(h)
+	buf := make([]uint16, windows.MAX_PATH)
+	size := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(h, 0, &buf[0], &size); err != nil {
+		return false
+	}
+	return strings.EqualFold(filepath.Base(windows.UTF16ToString(buf[:size])), "conhost.exe")
 }
 
 // close libera o handle; com KILL_ON_JOB_CLOSE, o que ainda estiver vivo no job morre junto.

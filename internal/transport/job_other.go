@@ -15,5 +15,9 @@ func (j *jobObject) assign(pid int) error {
 func (j *jobObject) kill() {
 }
 
+func (j *jobObject) alive() uint32 {
+	return 0
+}
+
 func (j *jobObject) close() {
 }

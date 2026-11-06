@@ -28,6 +28,11 @@ type ExecResult struct {
 	Duration int64  `json:"duration_ms"`
 	// TimedOut: o comando estourou o timeout e a árvore de processos foi encerrada (só o host local preenche).
 	TimedOut bool `json:"timed_out,omitempty"`
+	// Leftover: processos da árvore que ainda estavam vivos quando o comando terminou e foram encerrados pelo job
+	// (só o host local Windows preenche). Sinal de processo solto: deveria ser um job.
+	Leftover uint32 `json:"leftover,omitempty"`
+	// Local: rodou no próprio host do FastExec (dicas que falam do shell local só valem nesse caso).
+	Local bool `json:"local,omitempty"`
 }
 
 // PutFileDaemon streams a local file directly over TCP socket to the remote daemon

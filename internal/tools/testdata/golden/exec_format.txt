@@ -53,9 +53,16 @@ exit: 3
 ### cmdlet_mismatch_hint
 comando: Get-ChildItem C:\
 exit: 1
---- saída (298 bytes)
+--- saída (281 bytes)
 [exit 1] Get-ChildItem : o termo 'Get-ChildItem' não é reconhecido como nome de cmdlet
-[FastExec Hint] O host 'local' (Windows) executa via cmd.exe nativo por performance. Para cmdlets PowerShell invoque 'pwsh -NoProfile -Command ...'; para listar/manipular arquivos use a tool nativa 'file_ops'.
+[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use 'file_ops'.
+--- erro: comando falhou com código 1
+
+### cmdlet_mismatch_remote_no_hint
+comando: Get-ChildItem C:\
+exit: 1
+--- saída (88 bytes)
+[exit 1] Get-ChildItem : o termo 'Get-ChildItem' não é reconhecido como nome de cmdlet
 --- erro: comando falhou com código 1
 
 ### benign_grep_exit1_with_output
