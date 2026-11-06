@@ -49,7 +49,7 @@ func TestFimDeBlocoPorChavesEIndentacao(t *testing.T) {
 }
 
 func TestCraseCruaDoGoNaoEscapa(t *testing.T) {
-	src := "package x\n\nfunc A() string {\n\treturn `W:\\`\n}\n\nfunc B() {}\n\nvar s = `multi\nline\\`\n\nfunc C() {}\n"
+	src := "package x\n\nfunc A() string {\n\treturn `D:\\`\n}\n\nfunc B() {}\n\nvar s = `multi\nline\\`\n\nfunc C() {}\n"
 	decls, _ := Scan([]byte(src), LangFor("a.go"))
 	var names []string
 	for _, d := range decls {

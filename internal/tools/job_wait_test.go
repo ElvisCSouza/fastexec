@@ -44,7 +44,7 @@ func TestJobWaitLinuxJobTerminadoDevolveLog(t *testing.T) {
 	t.Cleanup(func() { _, _ = HandleJob(JobArgs{Host: host, Action: "stop", JobID: id}) })
 
 	out, err := HandleJob(JobArgs{Host: host, Action: "wait", JobID: id})
-	if err != nil || !strings.Contains(out, "finalizado") || !strings.Contains(out, "saida-do-job-fx") {
+	if err != nil || !strings.Contains(out, "finished") || !strings.Contains(out, "saida-do-job-fx") {
 		t.Errorf("wait de job terminado: %v %q", err, out)
 	}
 }

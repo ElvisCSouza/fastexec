@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"math/rand"
+	"runtime"
 	"strings"
 	"time"
 
@@ -45,11 +46,11 @@ func HandleJob(args JobArgs) (string, error) {
 	targetHost := args.Host // vazio = host padrão da config
 
 	target, err := transport.ResolveHost(targetHost)
-	if err == nil && target.IsLocal {
-		return handleLocalJob(action, args)
+	if err == nil && target.IsLocal && runtime.GOOS == "windows" {
+		return handleLocalJob(action, args) // Job Object nomeado
 	}
 
-	// hosts remotos (systemd-run): argv vira linha de comando com aspas simples POSIX
+	// Linux, remoto ou local (systemd-run --user): argv vira linha de comando com aspas simples POSIX
 	if len(args.Argv) > 0 && args.Command == "" {
 		args.Command = transport.QuoteArgvPOSIX(args.Argv)
 	}
@@ -60,7 +61,8 @@ func HandleJob(args JobArgs) (string, error) {
 		args.Command = "cd \"" + args.Cwd + "\" && " + args.Command
 	}
 
-	envPrefix := "export XDG_RUNTIME_DIR=/run/user/1000; "
+	// systemctl --user precisa do XDG_RUNTIME_DIR, que um daemon iniciado pelo systemd do sistema não tem
+	envPrefix := "export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}; "
 
 	switch action {
 	case "start":
@@ -110,7 +112,7 @@ func HandleJob(args JobArgs) (string, error) {
 			out = strings.TrimSpace(strings.ReplaceAll(out, waitTimeoutMarker, ""))
 			return fmt.Sprintf("[job %s still running after %s]\nANTI-POLLING: do not call 'wait' back to back. Use your client's scheduling (e.g. a timer) to check again in a few minutes, or end your turn telling the user.\n%s", unit, human(jobWaitMax), out), nil
 		}
-		return fmt.Sprintf("[job %s finalizado]\n%s", unit, out), nil
+		return fmt.Sprintf("[job %s finished]\n%s", unit, out), nil
 
 	case "status":
 		unit := sanitizeUnit(args.JobID)

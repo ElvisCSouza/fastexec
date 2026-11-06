@@ -156,7 +156,7 @@ func TestSamePathAndCompeting(t *testing.T) {
 			t.Errorf("%s should compete", n)
 		}
 	}
-	if isCompeting("alexa", serverEntry{Command: "cmd", Args: []string{"/c", "node", "alexa.js"}}) || isCompeting("fastexec", serverEntry{}) {
+	if isCompeting("weather", serverEntry{Command: "cmd", Args: []string{"/c", "node", "weather.js"}}) || isCompeting("fastexec", serverEntry{}) {
 		t.Error("false positive")
 	}
 }

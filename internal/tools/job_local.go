@@ -51,7 +51,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		if m.State != "RUNNING" {
 			note = "\n(the process already exited; see the output with tail)"
 		}
-		return fmt.Sprintf("[job] iniciado (local)\nid:      %s\ncomando: %s\nlog:     %s%s\nUse job(host='local', action='status'|'tail'|'wait'|'stop', job_id='%s')",
+		return fmt.Sprintf("[job] started (local)\nid:      %s\ncommand: %s\nlog:     %s%s\nUse job(host='local', action='status'|'tail'|'wait'|'stop', job_id='%s')",
 			m.ID, jobLabel(*m), m.LogPath, note, m.ID), nil
 
 	case "status", "tail", "stop", "kill", "wait":
@@ -101,7 +101,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		if !finished {
 			return fmt.Sprintf("[job %s still running after %s]\nANTI-POLLING: do not call 'wait' back to back. Use your client's scheduling (e.g. a timer) to check again in a few minutes, or end your turn telling the user.\n%s", j.Meta.ID, human(jobWaitMax), tail), nil
 		}
-		return fmt.Sprintf("[job %s finalizado: %s]\n%s", j.Meta.ID, j.State, tail), nil
+		return fmt.Sprintf("[job %s finished: %s]\n%s", j.Meta.ID, j.State, tail), nil
 
 	case "list", "ls":
 		jobs, err := transport.LocalJobList()

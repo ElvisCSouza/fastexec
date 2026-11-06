@@ -27,7 +27,7 @@ const THREAD_STACK: usize = 512 * 1024;
 
 // SX, pedido: magic(2) flags(2) cwd_len(2) argc(2) body_len(4) stdin_len(4) = 16 bytes, depois cwd, body, stdin.
 //   flags bit0 (FLAG_DIRECT): body = argc strings terminadas em NUL, executadas sem shell.
-//   sem FLAG_DIRECT: body = linha de shell (bash -c), argc ignorado.
+//   sem FLAG_DIRECT: body = linha de shell (bash -c; no Windows, PowerShell -EncodedCommand), argc ignorado.
 // SX, resposta: magic(2) flags(2) exit(4, com sinal) stdout_len(4) stderr_len(4) = 16 bytes, depois stdout e stderr.
 const FLAG_DIRECT: u16 = 1;
 
@@ -324,8 +324,6 @@ fn handleExec(allocator: std.mem.Allocator, reader: anytype, writer: anytype, sh
 }
 
 fn handleX(allocator: std.mem.Allocator, reader: anytype, writer: anytype, shell: []const u8, sock: posix.socket_t) !void {
-    if (is_windows) return error.UnsupportedMagic; // o SX é só para os daemons Linux
-
     var hdr: [14]u8 = undefined;
     try reader.readNoEof(&hdr);
     const flags = std.mem.readInt(u16, hdr[0..2], .little);
@@ -344,6 +342,8 @@ fn handleX(allocator: std.mem.Allocator, reader: anytype, writer: anytype, shell
 
     var argv_list = std.ArrayList([]const u8).init(allocator);
     defer argv_list.deinit();
+    var encoded: []u8 = &[_]u8{};
+    defer if (encoded.len > 0) allocator.free(encoded);
     if (flags & FLAG_DIRECT != 0) {
         if (argc == 0) return error.BadArgv;
         var it = std.mem.splitScalar(u8, body, 0);
@@ -352,6 +352,10 @@ fn handleX(allocator: std.mem.Allocator, reader: anytype, writer: anytype, shell
             try argv_list.append(a);
         }
         if (argv_list.items.len != argc) return error.BadArgv;
+    } else if (is_windows) {
+        // linha de shell no Windows: PowerShell com -EncodedCommand, igual ao SE
+        encoded = try encodePowerShell(allocator, body);
+        try argv_list.appendSlice(&[_][]const u8{ shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-OutputFormat", "Text", "-EncodedCommand", encoded });
     } else {
         try argv_list.append(shell);
         try argv_list.append("-c");
