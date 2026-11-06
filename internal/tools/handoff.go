@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"homelab/fastexec/internal/telemetry"
@@ -165,6 +166,80 @@ type failedCmd struct {
 	Error   string
 }
 
+type handoffFacts struct {
+	ModifiedFiles     []string
+	Failures          []failedCmd
+	RecentValidations []string
+}
+
+func extractHandoffFacts() (*handoffFacts, error) {
+	facts := &handoffFacts{}
+
+	db, err := telemetry.GetDB()
+	if err != nil || db == nil {
+		return facts, err
+	}
+
+	rows, qErr := db.Query(`
+		SELECT tool, command_summary, success, error_message 
+		FROM audit 
+		WHERE timestamp >= datetime('now', '-4 hours') OR timestamp >= date('now')
+		ORDER BY id DESC LIMIT 150;
+	`)
+	if qErr != nil {
+		return facts, qErr
+	}
+	defer rows.Close()
+
+	fileSet := make(map[string]bool)
+	failSet := make(map[string]bool)
+	valSet := make(map[string]bool)
+
+	for rows.Next() {
+		var tool, summary, errMsg string
+		var success int
+		if err := rows.Scan(&tool, &summary, &success, &errMsg); err != nil {
+			continue
+		}
+
+		summary = strings.TrimSpace(summary)
+		if summary == "" {
+			continue
+		}
+
+		// 1. Arquivos modificados
+		if tool == "write_file" || tool == "edit_file" || tool == "put_file" {
+			if !fileSet[summary] && !strings.Contains(summary, "inspect_telemetry") && !strings.Contains(summary, "handoff") {
+				fileSet[summary] = true
+				facts.ModifiedFiles = append(facts.ModifiedFiles, summary)
+			}
+		}
+
+		// 2. Falhas / Negative Knowledge
+		if success == 0 && errMsg != "" {
+			key := summary + "|" + errMsg
+			if !failSet[key] && len(facts.Failures) < 6 {
+				failSet[key] = true
+				facts.Failures = append(facts.Failures, failedCmd{
+					Command: summary,
+					Error:   errMsg,
+				})
+			}
+		}
+
+		// 3. Comandos de validação bem-sucedidos
+		if success == 1 && (tool == "exec" || tool == "job") {
+			lower := strings.ToLower(summary)
+			if (strings.Contains(lower, "test") || strings.Contains(lower, "build") || strings.Contains(lower, "status") || strings.Contains(lower, "git")) && !valSet[summary] && len(facts.RecentValidations) < 6 {
+				valSet[summary] = true
+				facts.RecentValidations = append(facts.RecentValidations, summary)
+			}
+		}
+	}
+
+	return facts, nil
+}
+
 func handleHandoffSave(dir string, args HandoffArgs) (string, error) {
 	now := time.Now()
 	topic := sanitizeTopic(args.Topic)
@@ -172,69 +247,10 @@ func handleHandoffSave(dir string, args HandoffArgs) (string, error) {
 	filePath := filepath.Join(dir, filename)
 	latestPath := filepath.Join(dir, "latest.md")
 
-	// Consulta telemetria recente para extrair fatos
-	var modifiedFiles []string
-	var failures []failedCmd
-	var recentValidations []string
-
-	db, err := telemetry.GetDB()
-	if err == nil && db != nil {
-		rows, qErr := db.Query(`
-			SELECT tool, command_summary, success, error_message 
-			FROM audit 
-			WHERE timestamp >= datetime('now', '-4 hours') OR timestamp >= date('now')
-			ORDER BY id DESC LIMIT 150;
-		`)
-		if qErr == nil {
-			defer rows.Close()
-
-			fileSet := make(map[string]bool)
-			failSet := make(map[string]bool)
-			valSet := make(map[string]bool)
-
-			for rows.Next() {
-				var tool, summary, errMsg string
-				var success int
-				if err := rows.Scan(&tool, &summary, &success, &errMsg); err != nil {
-					continue
-				}
-
-				summary = strings.TrimSpace(summary)
-				if summary == "" {
-					continue
-				}
-
-				// 1. Arquivos modificados
-				if tool == "write_file" || tool == "edit_file" || tool == "put_file" {
-					if !fileSet[summary] && !strings.Contains(summary, "inspect_telemetry") && !strings.Contains(summary, "handoff") {
-						fileSet[summary] = true
-						modifiedFiles = append(modifiedFiles, summary)
-					}
-				}
-
-				// 2. Falhas / Negative Knowledge
-				if success == 0 && errMsg != "" {
-					key := summary + "|" + errMsg
-					if !failSet[key] && len(failures) < 6 {
-						failSet[key] = true
-						failures = append(failures, failedCmd{
-							Command: summary,
-							Error:   errMsg,
-						})
-					}
-				}
-
-				// 3. Comandos de validação bem-sucedidos
-				if success == 1 && (tool == "exec" || tool == "job") {
-					lower := strings.ToLower(summary)
-					if (strings.Contains(lower, "test") || strings.Contains(lower, "build") || strings.Contains(lower, "status") || strings.Contains(lower, "git")) && !valSet[summary] && len(recentValidations) < 6 {
-						valSet[summary] = true
-						recentValidations = append(recentValidations, summary)
-					}
-				}
-			}
-		}
-	}
+	facts, _ := extractHandoffFacts()
+	modifiedFiles := facts.ModifiedFiles
+	failures := facts.Failures
+	recentValidations := facts.RecentValidations
 
 	// Monta o Markdown estruturado
 	var sb strings.Builder
@@ -442,3 +458,55 @@ func handleHandoffList(dir string, limit int) (string, error) {
 	}
 	return sb.String(), nil
 }
+
+var (
+	autoCheckpointMu    sync.Mutex
+	autoCheckpointTimer *time.Timer
+	lastAutoSavedCount  int
+)
+
+// ScheduleAutoCheckpoint agenda a sincronização silenciosa do handoff (debounce de 15 segundos).
+func ScheduleAutoCheckpoint() {
+	autoCheckpointMu.Lock()
+	defer autoCheckpointMu.Unlock()
+
+	if autoCheckpointTimer != nil {
+		autoCheckpointTimer.Stop()
+	}
+
+	autoCheckpointTimer = time.AfterFunc(15*time.Second, func() {
+		FlushAutoCheckpoint()
+	})
+}
+
+// FlushAutoCheckpoint executa o auto-checkpoint imediato se houver novos dados.
+func FlushAutoCheckpoint() {
+	autoCheckpointMu.Lock()
+	if autoCheckpointTimer != nil {
+		autoCheckpointTimer.Stop()
+		autoCheckpointTimer = nil
+	}
+	autoCheckpointMu.Unlock()
+
+	handoffDir := GetHandoffDir()
+	facts, err := extractHandoffFacts()
+	if err != nil || facts == nil {
+		return
+	}
+
+	totalEvents := len(facts.ModifiedFiles) + len(facts.Failures) + len(facts.RecentValidations)
+	if totalEvents == 0 || totalEvents == lastAutoSavedCount {
+		return
+	}
+
+	autoCheckpointMu.Lock()
+	lastAutoSavedCount = totalEvents
+	autoCheckpointMu.Unlock()
+
+	_, _ = handleHandoffSave(handoffDir, HandoffArgs{
+		Action: "save",
+		Topic:  "auto-session",
+		Notes:  "Checkpoint contínuo gerado automaticamente pelo FastExec em background.",
+	})
+}
+
