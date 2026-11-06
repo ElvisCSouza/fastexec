@@ -171,3 +171,11 @@ cd W:\ReposHomeLab
 & .\worker.ps1 run | head -n 20
 # deve sair com 0 (passou em env-assert.ps1)
 ```
+
+## Protocolo SX e pool de conexões (06/nov/2026)
+
+- **Daemon (`ops/tools/server-exec/main.zig`, noteserver):** além do `SE` (linha de shell, formato legado inalterado), entende `SX` (magic 0x5358): pedido de 16 bytes (magic, flags, cwd_len, argc, body_len, stdin_len) + cwd + body + stdin; resposta de 16 bytes (magic, flags, exit, stdout_len, stderr_len) + stdout + stderr. Flag 1 = `argv` direto (strings terminadas em NUL, sem shell); sem a flag, `bash -c`. O servidor aplica o ambiente não interativo (CI, TERM=dumb, PAGER=cat, ...). E/S com buffer, conexão ociosa fecha em 10 min, e o filho é morto se o cliente fecha o socket. `SERVER_EXEC_PORT` muda a porta (testes).
+- **Cliente (`internal/transport`):** `daemon_pool.go` reaproveita conexões (goroutine vigia por conexão ociosa; comando enviado nunca é reenviado) e fala SX nos daemons que suportam (sonda `true` por host, em cache; daemon antigo cai no SE). `DispatchArgv` usa SX direto; `DispatchWithInput` usa `SimpleArgv` (função pura: só "programa args", sem metacaractere nem comando interno do bash) para ir sem shell e, no resto, SX com `bash -c`, `cwd` e `stdin` como campos.
+- **Chaves de desligar:** `FASTEXEC_NO_DIRECT=1` (tudo pelo bash) e `FASTEXEC_NO_SX=1` (volta ao SE puro).
+- **Medido PC -> noteserver:** `ls -d /` 7,2 ms -> 3,2 ms; comando dominado pelo programa (git) não muda. Medição: `FASTEXEC_BENCH=1 go test -run MedicaoViaRede ./internal/transport/`; no servidor: `ops/tools/server-exec/bench/`.
+- **Reversão:** cliente: `bin\fastexec-old.exe` (renomear de volta para `fastexec.exe`); servidor: `ops/backups/server-exec-pre-v2/server-exec`. Roteadores e Firesticks seguem com o daemon antigo (sem SX), por isso o cliente os trata pelo SE.
