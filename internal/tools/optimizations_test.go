@@ -27,7 +27,7 @@ func TestEditFileSynonyms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile com old_string falhou: %v", err)
 	}
-	if !strings.Contains(out1, "Substituído com sucesso") {
+	if !strings.Contains(out1, "change(s) applied") {
 		t.Errorf("saída inesperada: %s", out1)
 	}
 
@@ -41,7 +41,7 @@ func TestEditFileSynonyms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile com search/replace falhou: %v", err)
 	}
-	if !strings.Contains(out2, "Substituído com sucesso") {
+	if !strings.Contains(out2, "change(s) applied") {
 		t.Errorf("saída inesperada: %s", out2)
 	}
 
@@ -55,7 +55,7 @@ func TestEditFileSynonyms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile com find/content falhou: %v", err)
 	}
-	if !strings.Contains(out3, "Substituído com sucesso") {
+	if !strings.Contains(out3, "change(s) applied") {
 		t.Errorf("saída inesperada: %s", out3)
 	}
 
@@ -129,20 +129,94 @@ func TestWriteFileNudgeExisting(t *testing.T) {
 		t.Errorf("primeira gravação não deveria ter Hint de arquivo existente: %s", out1)
 	}
 
-	// 2. Segunda gravação: arquivo já existe e tem > 1.5 KB -> deve anexar Hint orientando edit_file
-	out2, err := HandleWriteFile(WriteFileArgs{
+	// 2. Segunda gravação sem overwrite: arquivo já existe com conteúdo -> recusada, aponta edit_file, nada muda
+	_, err = HandleWriteFile(WriteFileArgs{
 		Host:    "local",
 		Path:    filePath,
 		Content: largeData + "Nova linha no final.\n",
 	})
-	if err != nil {
-		t.Fatalf("segunda gravação falhou: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "already exists") || !strings.Contains(err.Error(), "edit_file") || !strings.Contains(err.Error(), "overwrite") {
+		t.Fatalf("segunda gravação deveria ser recusada apontando edit_file e overwrite: %v", err)
 	}
-	if !strings.Contains(out2, "[FastExec Hint] O arquivo sobrescrito já existia") {
-		t.Errorf("segunda gravação esperava Hint de arquivo existente, recebeu: %s", out2)
+	if b, _ := os.ReadFile(filePath); string(b) != largeData {
+		t.Errorf("gravação recusada alterou o arquivo")
 	}
-	if !strings.Contains(out2, "edit_file") {
-		t.Errorf("segunda gravação esperava sugestão da tool edit_file: %s", out2)
+
+	// 3. Com overwrite: regrava inteiro
+	if _, err := HandleWriteFile(WriteFileArgs{Host: "local", Path: filePath, Content: "novo\n", Overwrite: true}); err != nil {
+		t.Fatalf("overwrite falhou: %v", err)
+	}
+	if b, _ := os.ReadFile(filePath); string(b) != "novo\n" {
+		t.Errorf("overwrite não regravou: %q", b)
+	}
+
+	// 4. Arquivo existente mas vazio: gravação livre
+	empty := filepath.Join(tmpDir, "vazio.txt")
+	_ = os.WriteFile(empty, nil, 0o644)
+	if _, err := HandleWriteFile(WriteFileArgs{Host: "local", Path: empty, Content: "x"}); err != nil {
+		t.Errorf("arquivo vazio deveria aceitar gravação: %v", err)
+	}
+}
+
+func TestEditFileVariasTrocasAtomicas(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "a.go")
+	orig := "package a\n\nfunc A() int { return 1 }\n\nfunc B() int { return 2 }\n"
+	_ = os.WriteFile(p, []byte(orig), 0o644)
+
+	out, err := HandleEditFile(EditFileArgs{Path: p, Edits: []EditOp{
+		{Target: "return 1", Replacement: "return 10"},
+		{Target: "return 2", Replacement: "return 20"},
+	}})
+	if err != nil || !strings.Contains(out, "2 change(s) applied") {
+		t.Fatalf("duas trocas: %v %s", err, out)
+	}
+	if b, _ := os.ReadFile(p); !strings.Contains(string(b), "return 10") || !strings.Contains(string(b), "return 20") {
+		t.Errorf("trocas não aplicadas: %s", b)
+	}
+
+	// uma troca ausente: nada é gravado
+	before, _ := os.ReadFile(p)
+	_, err = HandleEditFile(EditFileArgs{Path: p, Edits: []EditOp{
+		{Target: "return 10", Replacement: "return 100"},
+		{Target: "nao existe", Replacement: "x"},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "edits[1].target not found") || !strings.Contains(err.Error(), "nothing was written") {
+		t.Fatalf("troca ausente deveria abortar tudo: %v", err)
+	}
+	if after, _ := os.ReadFile(p); string(after) != string(before) {
+		t.Errorf("edição parcial gravada")
+	}
+
+	// edits via JSON com sinônimos (old_string/new_string)
+	var args EditFileArgs
+	payload := fmt.Sprintf(`{"path": %q, "edits": [{"old_string": "return 10", "new_string": "return 11"}]}`, p)
+	if err := json.Unmarshal([]byte(payload), &args); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := HandleEditFile(args); err != nil {
+		t.Fatalf("edits com sinônimos: %v", err)
+	}
+}
+
+func TestEditFileCasaFimDeLinha(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "crlf.go")
+	_ = os.WriteFile(p, []byte("package a\r\n\r\nfunc A() {\r\n\treturn\r\n}\r\n"), 0o644)
+	// target com LF num arquivo CRLF
+	if _, err := HandleEditFile(EditFileArgs{Path: p, Target: "func A() {\n\treturn\n}", Replacement: "func A() {\n\tprintln()\n}"}); err != nil {
+		t.Fatalf("LF em arquivo CRLF: %v", err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "package a\r\n\r\nfunc A() {\r\n\tprintln()\r\n}\r\n" {
+		t.Errorf("CRLF não preservado: %q", b)
+	}
+
+	q := filepath.Join(t.TempDir(), "lf.go")
+	_ = os.WriteFile(q, []byte("a\nb\nc\n"), 0o644)
+	// target com CRLF num arquivo LF
+	if _, err := HandleEditFile(EditFileArgs{Path: q, Target: "a\r\nb", Replacement: "x\r\ny"}); err != nil {
+		t.Fatalf("CRLF em arquivo LF: %v", err)
+	}
+	if b, _ := os.ReadFile(q); string(b) != "x\ny\nc\n" {
+		t.Errorf("LF não preservado: %q", b)
 	}
 }
 

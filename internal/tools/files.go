@@ -25,10 +25,27 @@ type ReadFileArgs struct {
 }
 
 type EditFileArgs struct {
-	Host        string `json:"host,omitempty"`
-	Path        string `json:"path"`
+	Host        string   `json:"host,omitempty"`
+	Path        string   `json:"path"`
+	Target      string   `json:"target"`
+	Replacement string   `json:"replacement"`
+	Edits       []EditOp `json:"edits,omitempty"`
+}
+
+// EditOp é uma troca de 'edits': aplicada em ordem sobre o resultado da anterior; todas ou nenhuma.
+type EditOp struct {
 	Target      string `json:"target"`
 	Replacement string `json:"replacement"`
+}
+
+// UnmarshalJSON aceita os mesmos sinônimos de EditFileArgs (old_string/new_string etc.).
+func (o *EditOp) UnmarshalJSON(data []byte) error {
+	var a EditFileArgs
+	if err := a.UnmarshalJSON(data); err != nil {
+		return err
+	}
+	o.Target, o.Replacement = a.Target, a.Replacement
+	return nil
 }
 
 // UnmarshalJSON aceita sinônimos frequentes de 'target' (old_string, search, find)
@@ -80,6 +97,9 @@ type WriteFileArgs struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
 	Atomic  bool   `json:"atomic,omitempty"`
+	// Overwrite libera regravar um arquivo que já existe e não está vazio; sem ele, o write_file recusa e aponta o
+	// edit_file (reescrever o arquivo inteiro gera o conteúdo todo como saída do modelo, o token mais caro).
+	Overwrite bool `json:"overwrite,omitempty"`
 }
 
 type GetFileArgs struct {
@@ -300,12 +320,14 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 	}
 
 	contentBytes := []byte(args.Content)
-	var prevSize int64 = -1
+
+	if !args.Overwrite {
+		if size, exists := existingNonEmpty(target, args.Path); exists {
+			return "", overwriteRefused(args.Path, size)
+		}
+	}
 
 	if target.IsLocal {
-		if fi, err := os.Stat(args.Path); err == nil && !fi.IsDir() {
-			prevSize = fi.Size()
-		}
 		dir := filepath.Dir(args.Path)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", err
@@ -325,11 +347,7 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 			}
 		}
 		graph.Touch(args.Path) // índice de código: reindexa em segundo plano se o repositório já é indexado
-		reply := okReply(int64(len(contentBytes)))
-		if prevSize > 1500 {
-			reply += fmt.Sprintf("\n[FastExec Hint] O arquivo sobrescrito já existia (%.1f KB). Para alterar trechos pontuais em vez de regravar o arquivo inteiro, prefira a tool 'edit_file' para economizar tempo e tokens de contexto.", float64(prevSize)/1024.0)
-		}
-		return reply, nil
+		return okReply(int64(len(contentBytes))), nil
 	}
 
 	// Remoto via daemon chunked
@@ -487,8 +505,12 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 	if args.Path == "" {
 		return "", fmt.Errorf("parâmetro 'path' é obrigatório")
 	}
-	if args.Target == "" {
-		return "", fmt.Errorf("parâmetro 'target' é obrigatório")
+	ops := args.Edits
+	if args.Target != "" {
+		ops = append([]EditOp{{Target: args.Target, Replacement: args.Replacement}}, ops...)
+	}
+	if len(ops) == 0 {
+		return "", fmt.Errorf("parameter 'target' (or 'edits') is required")
 	}
 
 	host := args.Host
@@ -501,29 +523,48 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 		Path: args.Path,
 	})
 	if err != nil {
-		return "", fmt.Errorf("falha ao ler '%s' para edição: %w", args.Path, err)
+		return "", fmt.Errorf("could not read '%s' to edit it: %w", args.Path, err)
 	}
 
-	if !strings.Contains(content, args.Target) {
-		return "", fmt.Errorf("o trecho especificado em 'target' não foi encontrado em '%s'", args.Path)
+	// todas as trocas em memória, em ordem; qualquer target ausente aborta sem gravar nada
+	newContent := content
+	oldBytes, newBytes := 0, 0
+	var notes []string
+	for i, op := range ops {
+		label := "target"
+		if len(ops) > 1 {
+			label = fmt.Sprintf("edits[%d].target", i)
+		}
+		if op.Target == "" {
+			return "", fmt.Errorf("%s is empty; nothing was written", label)
+		}
+		t, r := matchEOL(newContent, op.Target, op.Replacement)
+		n := strings.Count(newContent, t)
+		if n == 0 {
+			return "", fmt.Errorf("%s not found in '%s'; nothing was written", label, args.Path)
+		}
+		if n > 1 {
+			notes = append(notes, fmt.Sprintf("%s matched %d times; only the first was changed", label, n))
+		}
+		newContent = strings.Replace(newContent, t, r, 1)
+		oldBytes += len(t)
+		newBytes += len(r)
 	}
-
-	count := strings.Count(content, args.Target)
-	newContent := strings.Replace(content, args.Target, args.Replacement, 1)
 
 	_, err = HandleWriteFile(WriteFileArgs{
-		Host:    host,
-		Path:    args.Path,
-		Content: newContent,
-		Atomic:  true,
+		Host:      host,
+		Path:      args.Path,
+		Content:   newContent,
+		Atomic:    true,
+		Overwrite: true,
 	})
 	if err != nil {
-		return "", fmt.Errorf("falha ao regravar '%s': %w", args.Path, err)
+		return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
 	}
 
-	msg := fmt.Sprintf("[edit_file] Substituído com sucesso 1 bloco (%d bytes -> %d bytes) em %s.", len(args.Target), len(args.Replacement), args.Path)
-	if count > 1 {
-		msg += fmt.Sprintf(" (Atenção: havia %d ocorrências idênticas; apenas a primeira foi alterada).", count)
+	msg := fmt.Sprintf("[edit_file] %d change(s) applied (%d -> %d bytes) in %s.", len(ops), oldBytes, newBytes, args.Path)
+	if len(notes) > 0 {
+		msg += " Note: " + strings.Join(notes, "; ") + "."
 	}
 	return msg, nil
 }

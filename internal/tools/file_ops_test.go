@@ -119,7 +119,7 @@ func TestHandleEditFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile falhou: %v", err)
 	}
-	if !strings.Contains(res, "[edit_file] Substituído com sucesso") {
+	if !strings.Contains(res, "[edit_file] 1 change(s) applied") {
 		t.Errorf("resposta inesperada: %s", res)
 	}
 

@@ -1,5 +1,5 @@
 {
-  "wire_bytes": 11492,
+  "wire_bytes": 11613,
   "result": {
     "tools": [
       {
@@ -138,54 +138,65 @@
       },
       {
         "name": "edit_file",
-        "description": "Substitui cirurgicamente um trecho específico de texto em um arquivo local ou remoto (target -\u003e replacement). Use para pequenas alterações ou refatorações pontuais sem precisar regravar o arquivo inteiro com write_file, economizando tokens e evitando truncamento.",
+        "description": "Change an existing file (local or remote) by exact text replacement: 'target' -\u003e 'replacement', or several changes in one call with 'edits' (applied in order, all or nothing). Line endings (LF/CRLF) are matched automatically. Prefer this over write_file for any change to an existing file.",
         "inputSchema": {
           "type": "object",
           "properties": {
+            "edits": {
+              "type": "array",
+              "description": "Several changes: [{target, replacement}, ...]",
+              "items": {
+                "type": "object",
+                "description": "{target, replacement}"
+              }
+            },
             "host": {
               "type": "string",
-              "description": "Alvo: 'local' (default), 'noteserver', etc."
+              "description": "'local' (default) or a configured host"
             },
             "path": {
               "type": "string",
-              "description": "Caminho do arquivo a ser modificado"
+              "description": "File to change"
             },
             "replacement": {
               "type": "string",
-              "description": "Novo texto que substituirá o target (deixe vazio para deletar o target)"
+              "description": "New text (empty deletes the target)"
             },
             "target": {
               "type": "string",
-              "description": "Trecho exato de texto a ser substituído (deve bater exatamente com o conteúdo existente)"
+              "description": "Exact text to replace (first occurrence)"
             }
           },
           "required": [
-            "path",
-            "target"
+            "path"
           ]
         }
       },
       {
         "name": "write_file",
-        "description": "Grava conteúdo em arquivo local ou remoto (chunked e opcionalmente atômico).",
+        "description": "Create a file (local or remote). An existing non-empty file is refused unless overwrite is true; to change parts of a file use edit_file.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "atomic": {
               "type": "boolean",
-              "description": "Se true, grava em temporário e renomeia atomicamente (padrão: true)"
+              "description": "Write to a temp file and rename it into place"
             },
             "content": {
               "type": "string",
-              "description": "Conteúdo a ser gravado"
+              "description": "File content"
             },
             "host": {
               "type": "string",
-              "description": "Alvo: 'local' (default, host atual), 'noteserver', 'ax6000', 'ax3000'"
+              "description": "'local' (default) or a configured host"
+            },
+            "overwrite": {
+              "type": "boolean",
+              "description": "Replace an existing non-empty file entirely"
             },
             "path": {
               "type": "string",
-              "description": "Caminho do arquivo de destino"
+              "description": "Destination file"
             }
           },
           "required": [
