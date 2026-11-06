@@ -1,0 +1,410 @@
+{
+  "wire_bytes": 9719,
+  "result": {
+    "tools": [
+      {
+        "name": "exec",
+        "description": "Run a command on a host and return its output as soon as the process exits (default limit 45 s). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, file_ops to manage them, code_outline/code_graph to locate code, and the 'job' tool for anything over ~30 s. On timeout the process tree is killed and the partial output is returned; stdin without 'input' is an immediate EOF.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "argv": {
+              "type": "array",
+              "description": "No-shell alternative: [program, arg1, ...]; no metacharacter is interpreted. Give argv OR command",
+              "items": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "command": {
+              "type": "string",
+              "description": "Shell line (artificial sleep/timeout is blocked). Give command OR argv"
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working directory (relative paths resolve from the host default, e.g. 'app/config')"
+            },
+            "host": {
+              "type": "string",
+              "description": "Target: 'server' (default; cwd ~/workspace, never prefix 'cd ~/workspace \u0026\u0026'), 'local', 'router' or 'ssh:\u003chost\u003e'"
+            },
+            "input": {
+              "type": "string",
+              "description": "Content sent to the process stdin"
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "description": "Limit in ms (default 45000, max 50000 to stay under the client's 60 s cut); longer work goes to 'job'"
+            }
+          }
+        }
+      },
+      {
+        "name": "read_file",
+        "description": "Read a local or remote file, whole or a slice (byte offset/limit or start_line/end_line). Use it instead of cat, type or head through exec.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "end_line": {
+              "type": "integer",
+              "description": "Last line (inclusive)"
+            },
+            "host": {
+              "type": "string",
+              "description": "'local' (default) or a configured host"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Max bytes to read"
+            },
+            "offset": {
+              "type": "integer",
+              "description": "Byte offset"
+            },
+            "path": {
+              "type": "string",
+              "description": "File path"
+            },
+            "start_line": {
+              "type": "integer",
+              "description": "First line (1-based)"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "code_outline",
+        "description": "List a source file's declarations (funcs, types, classes, methods, routes) as 'L\u003cline\u003e: \u003csignature\u003e', or find where a symbol is declared across a directory (skips .git, node_modules, dist, vendor...). Use before read_file or grep to locate code. Go, TS/JS, Python, shell, PowerShell.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "'local' (default) or a remote host; directories only on 'local'"
+            },
+            "max": {
+              "type": "integer",
+              "description": "Max results (default 200)"
+            },
+            "path": {
+              "type": "string",
+              "description": "File or directory"
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Name or part of it (case-insensitive); omit for the full outline"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "code_graph",
+        "description": "Code graph of a local repository (incremental index, built on first use, refreshed on every call): 'callers' = where a symbol is called or referenced; 'def' = where it is declared (line range, signature); 'impact' = files that use what a file or symbol defines (check before refactoring). Go via go/ast; TS/JS, Python, shell by line scanners; matched by name, no type resolution.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "'callers', 'def', 'impact' or 'index' (full rebuild)"
+            },
+            "max": {
+              "type": "integer",
+              "description": "Max lines (default 200)"
+            },
+            "repo_path": {
+              "type": "string",
+              "description": "Repository root or any path inside it (host 'local')"
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Symbol name (pkg.Name accepted) for callers/def/impact"
+            },
+            "target": {
+              "type": "string",
+              "description": "File (relative to repo or absolute) for impact"
+            }
+          },
+          "required": [
+            "action",
+            "repo_path"
+          ]
+        }
+      },
+      {
+        "name": "edit_file",
+        "description": "Change an existing file (local or remote) by exact text replacement: 'target' -\u003e 'replacement', or several changes in one call with 'edits' (applied in order, all or nothing). Line endings (LF/CRLF) are matched automatically. Prefer this over write_file for any change to an existing file.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "edits": {
+              "type": "array",
+              "description": "Several changes: [{target, replacement}, ...]",
+              "items": {
+                "type": "object",
+                "description": "{target, replacement}"
+              }
+            },
+            "host": {
+              "type": "string",
+              "description": "'local' (default) or a configured host"
+            },
+            "path": {
+              "type": "string",
+              "description": "File to change"
+            },
+            "replacement": {
+              "type": "string",
+              "description": "New text (empty deletes the target)"
+            },
+            "target": {
+              "type": "string",
+              "description": "Exact text to replace (first occurrence)"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "write_file",
+        "description": "Create a file (local or remote). An existing non-empty file is refused unless overwrite is true; to change parts of a file use edit_file.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "atomic": {
+              "type": "boolean",
+              "description": "Write to a temp file and rename it into place"
+            },
+            "content": {
+              "type": "string",
+              "description": "File content"
+            },
+            "host": {
+              "type": "string",
+              "description": "'local' (default) or a configured host"
+            },
+            "overwrite": {
+              "type": "boolean",
+              "description": "Replace an existing non-empty file entirely"
+            },
+            "path": {
+              "type": "string",
+              "description": "Destination file"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ]
+        }
+      },
+      {
+        "name": "file_ops",
+        "description": "File system operations without a shell: copy, move, delete, mkdir, list. Use it instead of ls, dir, rm or mkdir through exec.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "'copy', 'move', 'delete', 'mkdir' or 'list'"
+            },
+            "host": {
+              "type": "string",
+              "description": "'local' (default) or a configured host"
+            },
+            "path": {
+              "type": "string",
+              "description": "Source file or directory"
+            },
+            "target": {
+              "type": "string",
+              "description": "Destination (required for copy and move)"
+            }
+          },
+          "required": [
+            "action",
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "job",
+        "description": "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 5 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 35 s per call and returns progress and the partial log while the job runs.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "'start', 'wait', 'status', 'list', 'tail' or 'stop'"
+            },
+            "argv": {
+              "type": "array",
+              "description": "No-shell alternative for 'start': [program, arg1, ...]",
+              "items": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "command": {
+              "type": "string",
+              "description": "Shell line for 'start' (command OR argv)"
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working directory for 'start'"
+            },
+            "host": {
+              "type": "string",
+              "description": "'server' (default; cwd ~/workspace), 'local', 'router'"
+            },
+            "job_id": {
+              "type": "string",
+              "description": "Job id for wait/status/tail/stop"
+            },
+            "lines": {
+              "type": "integer",
+              "description": "Lines for 'tail' (default 30)"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      },
+      {
+        "name": "tool_manage",
+        "description": "On-demand tool modules ('sql', 'hosts', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "'search', 'list', 'enable', 'disable' or 'call'"
+            },
+            "module": {
+              "type": "string",
+              "description": "Module name, e.g. 'sql'"
+            },
+            "params": {
+              "type": "string",
+              "description": "JSON arguments for 'call'"
+            },
+            "query": {
+              "type": "string",
+              "description": "Keyword for 'search'"
+            },
+            "tool": {
+              "type": "string",
+              "description": "Tool name for 'call'"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      },
+      {
+        "name": "handoff",
+        "description": "Session handoff and long-term memory built from real telemetry (no LLM): 'latest' returns the last project briefing (~300 tokens) for a cold start; 'save' records the session (files touched, failures to avoid, next steps) in Markdown; 'search' finds past decisions; 'list' lists handoffs.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "'latest' (default), 'save', 'search' or 'list'"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Max results for search/list (default 5)"
+            },
+            "notes": {
+              "type": "string",
+              "description": "Session summary for 'save'"
+            },
+            "pending": {
+              "type": "string",
+              "description": "Pending items or next steps for 'save'"
+            },
+            "query": {
+              "type": "string",
+              "description": "Search term for 'search'"
+            },
+            "topic": {
+              "type": "string",
+              "description": "Session topic for 'save', e.g. 'auth-refactor'"
+            }
+          }
+        }
+      },
+      {
+        "description": "Download a file from a remote host over the binary socket.",
+        "inputSchema": {
+          "properties": {
+            "host": {
+              "description": "Remote host: 'server' (default; cwd ~/workspace), 'local', 'router'",
+              "type": "string"
+            },
+            "local_path": {
+              "description": "Local path (default: the file name in the current directory)",
+              "type": "string"
+            },
+            "remote_path": {
+              "description": "File path on the remote host",
+              "type": "string"
+            }
+          },
+          "required": [
+            "remote_path"
+          ],
+          "type": "object"
+        },
+        "name": "get_file"
+      },
+      {
+        "description": "Latency and connectivity check against the configured hosts.",
+        "inputSchema": {
+          "properties": {
+            "host": {
+              "description": "A host, or 'all' (default)",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "name": "ping"
+      },
+      {
+        "description": "Upload a local file to a remote host (chunked, atomic).",
+        "inputSchema": {
+          "properties": {
+            "host": {
+              "description": "Remote host: 'server' (default; cwd ~/workspace), 'local', 'router'",
+              "type": "string"
+            },
+            "local_path": {
+              "description": "Local file path",
+              "type": "string"
+            },
+            "remote_path": {
+              "description": "Destination path on the remote host",
+              "type": "string"
+            }
+          },
+          "required": [
+            "local_path",
+            "remote_path"
+          ],
+          "type": "object"
+        },
+        "name": "put_file"
+      }
+    ]
+  }
+}

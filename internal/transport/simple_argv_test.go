@@ -76,15 +76,10 @@ func TestEncodeX(t *testing.T) {
 	}
 }
 
-// Integração com o noteserver real (pula se não estiver acessível): a via nova (SX direto e SX shell, com pool)
+// Integração com um daemon Linux real (FASTEXEC_TEST_ADDR=ip:porta; pula sem ela ou se inacessível): a via nova (SX direto e SX shell, com pool)
 // tem de dar o mesmo exit code e a mesma saída que a via antiga (SE com bash e o prefixo de ambiente).
 func TestEquivalenciaSEeSX(t *testing.T) {
-	addr := "192.168.31.142:9142"
-	c, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
-	if err != nil {
-		t.Skip("noteserver inacessível")
-	}
-	_ = c.Close()
+	addr := testDaemonAddr(t)
 	if ok, _ := DaemonSupportsX(addr); !ok {
 		t.Skip("daemon sem SX")
 	}
@@ -98,13 +93,13 @@ func TestEquivalenciaSEeSX(t *testing.T) {
 		"systemctl is-active server-exec", "systemctl --user is-active nao-existe-xyz", "cat /etc/passwd | wc -l",
 	}
 	for _, cmd := range casos {
-		antigo, err := ExecDaemon(addr, prefixo+"cd \"/home/elvis/workspace\" && "+cmd, 20*time.Second)
+		antigo, err := ExecDaemon(addr, prefixo+"cd \"/tmp\" && "+cmd, 20*time.Second)
 		if err != nil {
 			t.Fatalf("%q via SE: %v", cmd, err)
 		}
-		q := XRequest{Shell: cmd, Cwd: "/home/elvis/workspace"}
+		q := XRequest{Shell: cmd, Cwd: "/tmp"}
 		if argv, ok := SimpleArgv(cmd); ok {
-			q = XRequest{Argv: argv, Cwd: "/home/elvis/workspace"}
+			q = XRequest{Argv: argv, Cwd: "/tmp"}
 		}
 		novo, ok, err := ExecDaemonX(addr, q, 20*time.Second)
 		if err != nil || !ok {
@@ -132,12 +127,7 @@ func TestEquivalenciaSEeSX(t *testing.T) {
 
 // Conexão reaproveitada: 20 chamadas seguidas funcionam e o servidor reiniciado é detectado antes do envio.
 func TestPoolReaproveita(t *testing.T) {
-	addr := "192.168.31.142:9142"
-	c, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
-	if err != nil {
-		t.Skip("noteserver inacessível")
-	}
-	_ = c.Close()
+	addr := testDaemonAddr(t)
 	for i := 0; i < 20; i++ {
 		r, err := ExecDaemon(addr, "echo pool", 10*time.Second)
 		if err != nil || r.Stdout != "pool\n" {
@@ -152,13 +142,13 @@ func TestPoolReaproveita(t *testing.T) {
 	}
 }
 
-// Medição PC -> noteserver (só com FASTEXEC_BENCH=1): via antiga x via nova, mediana e p95 em ms.
+// Medição PC -> daemon (só com FASTEXEC_BENCH=1 e FASTEXEC_TEST_ADDR): via antiga x via nova, mediana e p95 em ms.
 func TestMedicaoViaRede(t *testing.T) {
 	if os.Getenv("FASTEXEC_BENCH") == "" {
 		t.Skip("defina FASTEXEC_BENCH=1")
 	}
-	addr := "192.168.31.142:9142"
-	prefixo := "export CI=1 DEBIAN_FRONTEND=noninteractive PAGER=cat GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 TERM=dumb NO_COLOR=1; cd \"/home/elvis/workspace\" && "
+	addr := testDaemonAddr(t)
+	prefixo := "export CI=1 DEBIAN_FRONTEND=noninteractive PAGER=cat GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 TERM=dumb NO_COLOR=1; cd \"/tmp\" && "
 	med := func(nome string, n int, f func()) {
 		ts := make([]float64, n)
 		for i := range ts {
@@ -188,9 +178,9 @@ func TestMedicaoViaRede(t *testing.T) {
 		med("antiga: conexao nova, SE, bash, cd &&, export", 100, func() { nova(cmd) })
 		med("SE com pool (so a conexao reaproveitada)", 100, func() { _, _ = ExecDaemon(addr, prefixo+cmd, 10*time.Second) })
 		med("nova: SX (direto se simples, senao bash) com pool", 100, func() {
-			q := XRequest{Shell: cmd, Cwd: "/home/elvis/workspace"}
+			q := XRequest{Shell: cmd, Cwd: "/tmp"}
 			if a, ok := SimpleArgv(cmd); ok {
-				q = XRequest{Argv: a, Cwd: "/home/elvis/workspace"}
+				q = XRequest{Argv: a, Cwd: "/tmp"}
 			}
 			_, _, _ = ExecDaemonX(addr, q, 10*time.Second)
 		})

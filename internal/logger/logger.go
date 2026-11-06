@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"homelab/fastexec/internal/config"
 )
 
 const maxLogSize = 5 * 1024 * 1024 // 5 MB
@@ -24,15 +26,8 @@ var once sync.Once
 
 func Init() *Logger {
 	once.Do(func() {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			home = "."
-		}
-		dir := filepath.Join(home, ".local", "state", "commander")
-		_ = os.MkdirAll(dir, 0755)
-		logPath := filepath.Join(dir, "commander.log")
-
-		debug := os.Getenv("COMMANDER_DEBUG") == "1"
+		logPath := filepath.Join(config.Get().Dir("logs"), "fastexec.log")
+		debug := os.Getenv("FASTEXEC_DEBUG") == "1"
 
 		l := &Logger{
 			logPath: logPath,

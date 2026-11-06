@@ -7,7 +7,7 @@ import (
 
 func TestIsBroadRoot(t *testing.T) {
 	sim := []string{`C:\`, `C:`, `c:/`, `D:\`, `C:\Users`, `C:\Users\`, `"C:\Users"`, `C:\*.go`, `/`, `/home`, `/home/`, `/Users`, `/root`}
-	nao := []string{`C:\Users\elvis`, `W:\ReposHomeLab`, `C:\Workspace`, `/home/elvis/workspace`, `.`, ``, `src`, `*.go`, `/etc`}
+	nao := []string{`C:\Users\user`, `D:\repos`, `C:\Workspace`, `/home/user/workspace`, `.`, ``, `src`, `*.go`, `/etc`}
 	for _, p := range sim {
 		if !isBroadRoot(p) {
 			t.Errorf("deveria ser raiz ampla: %q", p)
@@ -45,10 +45,10 @@ func TestBroadScanBloqueia(t *testing.T) {
 
 func TestBroadScanDeixaPassar(t *testing.T) {
 	passa := []ExecArgs{
-		{Command: `grep -rn foo .`, Cwd: `W:\ReposHomeLab\fastexec`},
+		{Command: `grep -rn foo .`, Cwd: `D:\repos\fastexec`},
 		{Command: `grep -n foo C:\Windows\win.ini`},
 		{Command: `rg foo src`},
-		{Command: `find . -name "*.go"`, Cwd: `/home/elvis/workspace`},
+		{Command: `find . -name "*.go"`, Cwd: `/home/user/workspace`},
 		{Command: `findstr /i token C:\x.json`},
 		{Command: `dir C:\`},
 		{Command: `ls -la /`},

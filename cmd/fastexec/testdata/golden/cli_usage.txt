@@ -2,7 +2,7 @@ $ fastexec help
 exit: 1
 --- stdout
 Unknown command: 'help'
-Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, firestick, daemon
+Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, firestick, daemon
 --- stderr
 
 
@@ -10,7 +10,7 @@ $ fastexec frobnicate
 exit: 1
 --- stdout
 Unknown command: 'frobnicate'
-Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, firestick, daemon
+Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, firestick, daemon
 --- stderr
 
 
@@ -53,6 +53,31 @@ $ fastexec daemon foo
 exit: 0
 --- stdout
 Usage: fastexec daemon <status|start|stop>
+--- stderr
+
+
+$ fastexec config example
+exit: 0
+--- stdout
+{
+  "default_host": "server",
+  "hosts": {
+    "server": { "addr": "192.0.2.10:9142", "cwd": "/home/user/workspace", "aliases": ["srv"] },
+    "router": { "addr": "192.0.2.1" },
+    "devbox": { "ssh": "devbox", "hidden": true }
+  },
+  "telemetry": true
+}
+--- stderr
+
+
+$ fastexec config bogus
+exit: 1
+--- stdout
+Usage: fastexec config [show|example|init]
+  show     effective configuration: file, hosts, default host, data folders, telemetry (default)
+  example  print a sample config.json
+  init     write the sample to the config file if it does not exist yet
 --- stderr
 
 

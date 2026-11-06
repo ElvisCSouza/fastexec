@@ -2,47 +2,46 @@ package transport
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 
+	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/golden"
 )
 
-// TestGoldenHostResolution trava a resolução nome → alvo de todos os hosts conhecidos, do host padrão e dos erros.
-// Env pinado (FASTEXEC_DEFAULT_HOST, COMPUTERNAME) para não depender da máquina nem do SO.
-// Regenerar: go test ./internal/transport -run TestGoldenHostResolution -update
+// TestGoldenHostResolution trava a resolução nome → alvo com a config de exemplo e sem config.
+// COMPUTERNAME pinado para não depender da máquina. Regenerar: go test ./internal/transport -run TestGoldenHostResolution -update
 func TestGoldenHostResolution(t *testing.T) {
-	t.Setenv("FASTEXEC_DEFAULT_HOST", "noteserver")
 	t.Setenv("COMPUTERNAME", "PC-TESTE")
 
-	inputs := make([]string, 0, len(knownHosts)+8)
-	for name := range knownHosts {
-		inputs = append(inputs, name)
-	}
-	sort.Strings(inputs)
-	inputs = append(inputs,
-		"NOTESERVER", // caixa mista
-		"  ax6000  ", // espaços
-		"",           // padrão via FASTEXEC_DEFAULT_HOST
-		"pc-teste",   // COMPUTERNAME
-		"ssh:outro-host",
-		"10.0.0.5",
-		"10.0.0.6:9200",
-		"host-inexistente",
-	)
-
 	var b strings.Builder
-	for _, in := range inputs {
-		fmt.Fprintf(&b, "%q -> ", in)
-		target, err := ResolveHost(in)
-		if err != nil {
-			fmt.Fprintf(&b, "erro: %v\n", err)
-			continue
+	resolve := func(inputs ...string) {
+		for _, in := range inputs {
+			fmt.Fprintf(&b, "%q -> ", in)
+			target, err := ResolveHost(in)
+			if err != nil {
+				fmt.Fprintf(&b, "error: %v\n", err)
+				continue
+			}
+			fmt.Fprintf(&b, "name=%s local=%t ssh=%t sshHost=%s tcp=%s cwd=%s\n",
+				target.Name, target.IsLocal, target.IsSSH, target.SSHHost, target.TCPAddr, target.DefaultCwd)
 		}
-		fmt.Fprintf(&b, "name=%s local=%t ssh=%t sshHost=%s tcp=%s cwd=%s\n",
-			target.Name, target.IsLocal, target.IsSSH, target.SSHHost, target.TCPAddr, target.DefaultCwd)
 	}
+
+	b.WriteString("# config: sample\n")
+	restore := config.Set(config.Sample())
+	resolve("local", "localhost", "127.0.0.1", "server", "srv", "router", "devbox",
+		"SERVER",     // caixa mista
+		"  router  ", // espaços
+		"",           // host padrão da config
+		"pc-teste",   // COMPUTERNAME
+		"ssh:other-host", "10.0.0.5", "10.0.0.6:9200", "no-such-host")
+	restore()
+
+	b.WriteString("# config: none\n")
+	restore = config.Set(&config.Config{})
+	resolve("", "local", "server", "ssh:other-host", "10.0.0.5")
+	restore()
 
 	golden.Check(t, "host_resolution.txt", []byte(b.String()))
 }

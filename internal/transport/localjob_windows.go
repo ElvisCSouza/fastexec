@@ -21,6 +21,8 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"homelab/fastexec/internal/config"
 )
 
 // Backend Windows da tool `job` (host local): processos de longa duração (dev server, watcher, túnel) que sobrevivem ao
@@ -111,18 +113,11 @@ type LocalJobInfo struct {
 	LogSize      int64
 }
 
-// LocalJobsDir devolve a pasta de estado: FASTEXEC_JOBS_DIR (testes), senão W:\Data\jobs se a unidade W: existir,
-// senão %LOCALAPPDATA%\fastexec\jobs.
+// LocalJobsDir devolve a pasta de estado: FASTEXEC_JOBS_DIR (testes), senão <pasta de dados>/jobs.
 func LocalJobsDir() (string, error) {
 	dir := os.Getenv("FASTEXEC_JOBS_DIR")
 	if dir == "" {
-		if st, err := os.Stat(`W:\`); err == nil && st.IsDir() {
-			dir = `W:\Data\jobs`
-		} else if base := os.Getenv("LOCALAPPDATA"); base != "" {
-			dir = filepath.Join(base, "fastexec", "jobs")
-		} else {
-			return "", fmt.Errorf("no folder for jobs: W: missing and LOCALAPPDATA unset")
-		}
+		dir = filepath.Join(config.Get().Data(), "jobs")
 	}
 	return dir, os.MkdirAll(dir, 0o755)
 }

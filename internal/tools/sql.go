@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"homelab/fastexec/internal/analytics"
+	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/transport"
 )
 
@@ -21,7 +22,7 @@ func HandleSql(args SqlArgs) (string, error) {
 		return "", fmt.Errorf("parameter 'query' is required")
 	}
 
-	// 1. Modo DuckDB Analítico (Sessão Sandboxed no PC-Elvis)
+	// 1. Modo DuckDB Analítico (sessão isolada, local)
 	if args.Session != "" || (args.Database == "" && args.Host == "") {
 		sessionName := args.Session
 		if sessionName == "" {
@@ -30,14 +31,14 @@ func HandleSql(args SqlArgs) (string, error) {
 		return analytics.ExecuteDuckDBQuery(sessionName, args.Query, 60000)
 	}
 
-	// 2. Modo SQLite (NoteServer ou Local)
+	// 2. Modo SQLite (host remoto ou local)
 	if args.Database == "" {
 		return "", fmt.Errorf("give 'database' (SQLite) or 'session' (analytic DuckDB)")
 	}
 
 	host := args.Host
 	if host == "" {
-		host = "noteserver"
+		host = config.Get().Default()
 	}
 
 	b64Query := base64.StdEncoding.EncodeToString([]byte(args.Query))

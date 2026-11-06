@@ -42,10 +42,7 @@ func HandleJob(args JobArgs) (string, error) {
 		action = "list"
 	}
 
-	targetHost := args.Host
-	if targetHost == "" {
-		targetHost = "noteserver"
-	}
+	targetHost := args.Host // vazio = host padrão da config
 
 	target, err := transport.ResolveHost(targetHost)
 	if err == nil && target.IsLocal {

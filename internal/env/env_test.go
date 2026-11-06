@@ -27,7 +27,7 @@ func TestEnsureRemovesDuplicatesCaseInsensitive(t *testing.T) {
 
 func TestBuildEnvMergeOrder(t *testing.T) {
 	inherited := []string{
-		"GOPATH=C:\\Users\\elvis\\go",
+		"GOPATH=C:\\Users\\user\\go",
 		"GRADLE_USER_HOME=C:\\gradle_old",
 		"Path=C:\\Windows\\System32",
 	}
@@ -38,7 +38,7 @@ func TestBuildEnvMergeOrder(t *testing.T) {
 			"JAVA_HOME":        "C:\\Program Files\\Java",
 		},
 		User: map[string]string{
-			"GOMODCACHE": "C:\\Users\\elvis\\go\\pkg\\mod",
+			"GOMODCACHE": "C:\\Users\\user\\go\\pkg\\mod",
 		},
 	}
 
@@ -50,8 +50,8 @@ func TestBuildEnvMergeOrder(t *testing.T) {
 	}
 
 	// GOPATH deve permanecer do herdado (não em registry)
-	if env["GOPATH"] != "C:\\Users\\elvis\\go" {
-		t.Errorf("GOPATH: esperava C:\\Users\\elvis\\go, got %s", env["GOPATH"])
+	if env["GOPATH"] != "C:\\Users\\user\\go" {
+		t.Errorf("GOPATH: esperava C:\\Users\\user\\go, got %s", env["GOPATH"])
 	}
 
 	// JAVA_HOME deve vir de Machine
@@ -60,8 +60,8 @@ func TestBuildEnvMergeOrder(t *testing.T) {
 	}
 
 	// GOMODCACHE deve vir de User
-	if env["GOMODCACHE"] != "C:\\Users\\elvis\\go\\pkg\\mod" {
-		t.Errorf("GOMODCACHE: esperava C:\\Users\\elvis\\go\\pkg\\mod, got %s", env["GOMODCACHE"])
+	if env["GOMODCACHE"] != "C:\\Users\\user\\go\\pkg\\mod" {
+		t.Errorf("GOMODCACHE: esperava C:\\Users\\user\\go\\pkg\\mod, got %s", env["GOMODCACHE"])
 	}
 }
 

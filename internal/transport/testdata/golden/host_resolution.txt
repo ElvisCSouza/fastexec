@@ -1,22 +1,22 @@
-"127.0.0.1" -> name=local local=true ssh=false sshHost= tcp= cwd=
-"ax3000" -> name=ax3000 local=false ssh=false sshHost= tcp=192.168.31.34:9142 cwd=
-"ax6000" -> name=ax6000 local=false ssh=false sshHost= tcp=192.168.31.1:9142 cwd=
-"firestick-sala" -> name=firestick-sala local=false ssh=false sshHost= tcp=192.168.31.21:9142 cwd=
-"firestick-suite" -> name=firestick-suite local=false ssh=false sshHost= tcp=192.168.31.37:9142 cwd=
+# config: sample
 "local" -> name=local local=true ssh=false sshHost= tcp= cwd=
 "localhost" -> name=local local=true ssh=false sshHost= tcp= cwd=
-"noteserver" -> name=noteserver local=false ssh=false sshHost= tcp=192.168.31.142:9142 cwd=/home/elvis/workspace
-"pc-elvis" -> name=pc-elvis local=true ssh=false sshHost= tcp= cwd=
-"servidor" -> name=servidor local=false ssh=false sshHost= tcp=192.168.31.142:9142 cwd=/home/elvis/workspace
-"vm-ia-core" -> name=vm-ia-core local=false ssh=true sshHost=vm-ia-core tcp= cwd=
-"vm-ia-mssp" -> name=vm-ia-mssp local=false ssh=true sshHost=vm-ia-mssp tcp= cwd=
-"vm-obs-dev" -> name=vm-obs-dev local=false ssh=true sshHost=vm-obs-dev tcp= cwd=
-"windows" -> name=windows local=true ssh=false sshHost= tcp= cwd=
-"NOTESERVER" -> name=noteserver local=false ssh=false sshHost= tcp=192.168.31.142:9142 cwd=/home/elvis/workspace
-"  ax6000  " -> name=ax6000 local=false ssh=false sshHost= tcp=192.168.31.1:9142 cwd=
-"" -> name=noteserver local=false ssh=false sshHost= tcp=192.168.31.142:9142 cwd=/home/elvis/workspace
+"127.0.0.1" -> name=local local=true ssh=false sshHost= tcp= cwd=
+"server" -> name=server local=false ssh=false sshHost= tcp=192.0.2.10:9142 cwd=/home/user/workspace
+"srv" -> name=server local=false ssh=false sshHost= tcp=192.0.2.10:9142 cwd=/home/user/workspace
+"router" -> name=router local=false ssh=false sshHost= tcp=192.0.2.1:9142 cwd=
+"devbox" -> name=devbox local=false ssh=true sshHost=devbox tcp= cwd=
+"SERVER" -> name=server local=false ssh=false sshHost= tcp=192.0.2.10:9142 cwd=/home/user/workspace
+"  router  " -> name=router local=false ssh=false sshHost= tcp=192.0.2.1:9142 cwd=
+"" -> name=server local=false ssh=false sshHost= tcp=192.0.2.10:9142 cwd=/home/user/workspace
 "pc-teste" -> name=local local=true ssh=false sshHost= tcp= cwd=
-"ssh:outro-host" -> name=ssh:outro-host local=false ssh=true sshHost=outro-host tcp= cwd=
+"ssh:other-host" -> name=ssh:other-host local=false ssh=true sshHost=other-host tcp= cwd=
 "10.0.0.5" -> name=10.0.0.5 local=false ssh=false sshHost= tcp=10.0.0.5:9142 cwd=
 "10.0.0.6:9200" -> name=10.0.0.6:9200 local=false ssh=false sshHost= tcp=10.0.0.6:9200 cwd=
-"host-inexistente" -> erro: unknown host 'host-inexistente' (valid: local, noteserver, ax6000, ax3000, ssh:<host> or an IP)
+"no-such-host" -> error: unknown host 'no-such-host' (valid: local, devbox, router, server, ssh:<host> or an IP)
+# config: none
+"" -> name=local local=true ssh=false sshHost= tcp= cwd=
+"local" -> name=local local=true ssh=false sshHost= tcp= cwd=
+"server" -> error: unknown host 'server' (valid: local, ssh:<host> or an IP)
+"ssh:other-host" -> name=ssh:other-host local=false ssh=true sshHost=other-host tcp= cwd=
+"10.0.0.5" -> name=10.0.0.5 local=false ssh=false sshHost= tcp=10.0.0.5:9142 cwd=

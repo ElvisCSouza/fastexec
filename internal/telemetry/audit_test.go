@@ -11,13 +11,13 @@ func TestTelemetryRecordAndStats(t *testing.T) {
 
 	entry := AuditEntry{
 		Tool:           "exec",
-		Host:           "noteserver",
+		Host:           "server",
 		DurationMs:     42,
 		BytesIn:        100,
 		BytesOut:       250,
 		Success:        true,
 		ExitCode:       0,
-		CommandSummary: "cat /home/elvis/workspace/LLM.md",
+		CommandSummary: "cat /home/user/workspace/README.md",
 	}
 
 	Record(entry)
@@ -39,13 +39,13 @@ func TestTelemetryRecordAndStats(t *testing.T) {
 }
 
 func TestSummarizeCall(t *testing.T) {
-	rawArgs := []byte(`{"host":"noteserver","command":"ls -la /home/elvis"}`)
+	rawArgs := []byte(`{"host":"server","command":"ls -la /home/user"}`)
 	host, summary := SummarizeCall("exec", rawArgs)
 
-	if host != "noteserver" {
-		t.Errorf("Esperado host 'noteserver', obtido '%s'", host)
+	if host != "server" {
+		t.Errorf("Esperado host 'server', obtido '%s'", host)
 	}
-	if summary != "ls -la /home/elvis" {
-		t.Errorf("Esperado summary 'ls -la /home/elvis', obtido '%s'", summary)
+	if summary != "ls -la /home/user" {
+		t.Errorf("Esperado summary 'ls -la /home/user', obtido '%s'", summary)
 	}
 }

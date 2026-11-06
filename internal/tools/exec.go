@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
+	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/transport"
 )
 
@@ -67,7 +69,7 @@ func HandleExec(args ExecArgs) (string, error) {
 		return "", fmt.Errorf(sleepGuardMsg)
 	}
 
-	// Auto-remediação de prefixo redundante 'cd ~/workspace &&' ou 'cd ~/workspace;' no noteserver
+	// Auto-remediação de prefixo redundante 'cd <cwd padrão do host> &&' ou ';'
 	var cdHint string
 	if hasCmd {
 		if out, handled, hint := tryRemediateCd(&args); handled {
@@ -631,32 +633,56 @@ func tryRemediateList(args ExecArgs) (string, bool, error) {
 	return out, true, nil
 }
 
-var (
-	redundantCdWorkspaceRegex = regexp.MustCompile(`(?i)^\s*cd\s+["']?(?:~|\/home\/[^\/\s"']+)\/workspace["']?\s*(?:&&|;)\s*`)
-	redundantCdSubdirRegex    = regexp.MustCompile(`(?i)^\s*cd\s+["']?(?:~|\/home\/[^\/\s"']+)\/workspace\/([^"';&]+)["']?\s*(?:&&|;)\s*`)
-	pureCdWorkspaceRegex      = regexp.MustCompile(`(?i)^\s*cd\s+["']?(?:~|\/home\/[^\/\s"']+)\/workspace\/?["']?\s*$`)
-)
+// cdRegexes: os três padrões de 'cd <cwd padrão do host>' redundante (puro, com subpasta, com resto), um conjunto
+// por cwd, montado uma vez. /home/<usuário>/x também casa como ~/x.
+type cdRegexes struct{ pure, subdir, prefix *regexp.Regexp }
 
-// tryRemediateCd detecta e remove o prefixo redundante 'cd ~/workspace &&' quando o comando roda no noteserver,
-// onde o diretório de trabalho padrão já é /home/elvis/workspace.
+var cdRegexCache sync.Map // cwd -> *cdRegexes
+
+func cdRegexesFor(cwd string) *cdRegexes {
+	if v, ok := cdRegexCache.Load(cwd); ok {
+		return v.(*cdRegexes)
+	}
+	var dir string
+	switch {
+	case strings.HasPrefix(cwd, "/home/") && strings.Count(cwd, "/") >= 3:
+		rest := cwd[len("/home/"):]
+		dir = `(?:~|/home/[^/\s"']+)` + regexp.QuoteMeta(rest[strings.Index(rest, "/"):])
+	case strings.HasPrefix(cwd, "/root/"):
+		dir = `(?:~|/root)` + regexp.QuoteMeta(cwd[len("/root"):])
+	default:
+		dir = regexp.QuoteMeta(strings.TrimSuffix(cwd, "/"))
+	}
+	r := &cdRegexes{
+		pure:   regexp.MustCompile(`(?i)^\s*cd\s+["']?` + dir + `/?["']?\s*$`),
+		subdir: regexp.MustCompile(`(?i)^\s*cd\s+["']?` + dir + `/([^"';&]+)["']?\s*(?:&&|;)\s*`),
+		prefix: regexp.MustCompile(`(?i)^\s*cd\s+["']?` + dir + `["']?\s*(?:&&|;)\s*`),
+	}
+	cdRegexCache.Store(cwd, r)
+	return r
+}
+
+// tryRemediateCd remove o prefixo redundante 'cd <cwd padrão> &&' quando o host tem cwd padrão na config.
 func tryRemediateCd(args *ExecArgs) (out string, handled bool, hint string) {
 	cmd := strings.TrimSpace(args.Command)
 	if cmd == "" {
 		return "", false, ""
 	}
 
-	host := strings.ToLower(strings.TrimSpace(args.Host))
-	if host != "" && host != "noteserver" && host != "servidor" && host != "192.168.31.142" && host != "192.168.31.142:9142" {
+	target, err := transport.ResolveHost(args.Host)
+	if err != nil || target.IsLocal || target.DefaultCwd == "" {
 		return "", false, ""
 	}
+	re := cdRegexesFor(target.DefaultCwd)
+	shown := config.DisplayCwd(target.DefaultCwd)
 
-	// 1. Comando puro 'cd ~/workspace'
-	if pureCdWorkspaceRegex.MatchString(cmd) {
-		return "[FastExec] The working directory is already ~/workspace (noteserver default cwd); nothing to run.", true, ""
+	// 1. Comando puro 'cd <cwd>'
+	if re.pure.MatchString(cmd) {
+		return fmt.Sprintf("[FastExec] The working directory is already %s (%s default cwd); nothing to run.", shown, target.Name), true, ""
 	}
 
-	// 2. cd ~/workspace/<subpasta> && <resto>
-	if matches := redundantCdSubdirRegex.FindStringSubmatch(cmd); len(matches) >= 2 {
+	// 2. cd <cwd>/<subpasta> && <resto>
+	if matches := re.subdir.FindStringSubmatch(cmd); len(matches) >= 2 {
 		subDir := strings.TrimSpace(matches[1])
 		rest := strings.TrimSpace(cmd[len(matches[0]):])
 		if rest != "" {
@@ -666,17 +692,17 @@ func tryRemediateCd(args *ExecArgs) (out string, handled bool, hint string) {
 			} else {
 				args.Command = fmt.Sprintf("cd %s && %s", subDir, rest)
 			}
-			hint = fmt.Sprintf("[FastExec Auto-Remediation] The 'cd ~/workspace/%s' prefix was simplified: on noteserver the default cwd is already ~/workspace; prefer the cwd parameter: '%s'.", subDir, subDir)
+			hint = fmt.Sprintf("[FastExec Auto-Remediation] The 'cd %s/%s' prefix was simplified: on %s the default cwd is already %s; prefer the cwd parameter: '%s'.", shown, subDir, target.Name, shown, subDir)
 			return "", false, hint
 		}
 	}
 
-	// 3. cd ~/workspace && <resto> ou cd ~/workspace; <resto>
-	if loc := redundantCdWorkspaceRegex.FindStringIndex(cmd); loc != nil {
+	// 3. cd <cwd> && <resto> ou cd <cwd>; <resto>
+	if loc := re.prefix.FindStringIndex(cmd); loc != nil {
 		rest := strings.TrimSpace(cmd[loc[1]:])
 		if rest != "" {
 			args.Command = rest
-			hint = "[FastExec Auto-Remediation] The 'cd ~/workspace' prefix was removed: on noteserver the default working directory is already ~/workspace. Pass commands directly or use the 'cwd' parameter."
+			hint = fmt.Sprintf("[FastExec Auto-Remediation] The 'cd %s' prefix was removed: on %s the default working directory is already %s. Pass commands directly or use the 'cwd' parameter.", shown, target.Name, shown)
 			return "", false, hint
 		}
 	}

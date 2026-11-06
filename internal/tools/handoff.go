@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/telemetry"
 )
 
@@ -98,34 +99,9 @@ func (a *HandoffArgs) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// GetHandoffDir determina o diretório canônico de handoffs.
+// GetHandoffDir: handoff_dir da config, senão <pasta de dados>/handoff.
 func GetHandoffDir() string {
-	// 1. Homelab primário
-	homelabDir := `W:\ReposHomeLab\.agent\handoff`
-	if _, err := os.Stat(`W:\ReposHomeLab`); err == nil {
-		_ = os.MkdirAll(homelabDir, 0755)
-		return homelabDir
-	}
-
-	// 2. Diretório local .agent/handoff relativo ao CWD
-	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, ".agent", "handoff")
-		if _, err := os.Stat(filepath.Join(cwd, ".git")); err == nil {
-			_ = os.MkdirAll(candidate, 0755)
-			return candidate
-		}
-	}
-
-	// 3. HOME do usuário
-	if home, err := os.UserHomeDir(); err == nil {
-		candidate := filepath.Join(home, ".agent", "handoff")
-		_ = os.MkdirAll(candidate, 0755)
-		return candidate
-	}
-
-	tmp := filepath.Join(os.TempDir(), "fastexec-handoff")
-	_ = os.MkdirAll(tmp, 0755)
-	return tmp
+	return config.Get().Handoff()
 }
 
 var sanitizeTopicRegex = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -457,4 +433,3 @@ func handleHandoffList(dir string, limit int) (string, error) {
 	}
 	return sb.String(), nil
 }
-

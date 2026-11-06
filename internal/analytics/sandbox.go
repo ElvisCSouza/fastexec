@@ -10,18 +10,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"homelab/fastexec/internal/config"
 )
 
-// SessionsRoot: W:\Data\sessions se a unidade W: existir (PC-Elvis), senão %LOCALAPPDATA%\fastexec\sessions
-// (mesma regra das pastas de jobs e telemetria).
-var SessionsRoot = sessionsRoot()
-
-func sessionsRoot() string {
-	if st, err := os.Stat(`W:\`); err == nil && st.IsDir() {
-		return `W:\Data\sessions`
-	}
-	return filepath.Join(os.Getenv("LOCALAPPDATA"), "fastexec", "sessions")
-}
+// SessionsRoot: <pasta de dados>/sessions (mesma regra das pastas de jobs e telemetria). Variável para os testes.
+var SessionsRoot = filepath.Join(config.Get().Data(), "sessions")
 
 var (
 	sessionIDRegex    = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)

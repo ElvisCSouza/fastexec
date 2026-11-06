@@ -22,11 +22,11 @@
             },
             "cwd": {
               "type": "string",
-              "description": "Working directory (relative paths resolve from the host default, e.g. 'homeassistant/config')"
+              "description": "Working directory (relative paths resolve from the host default, e.g. 'app/config')"
             },
             "host": {
               "type": "string",
-              "description": "Target: 'noteserver' (default; cwd ~/workspace, never prefix 'cd ~/workspace \u0026\u0026'), 'local', 'ax6000', 'ax3000' or 'ssh:\u003chost\u003e'"
+              "description": "Target: 'server' (default; cwd ~/workspace, never prefix 'cd ~/workspace \u0026\u0026'), 'local', 'router' or 'ssh:\u003chost\u003e'"
             },
             "input": {
               "type": "string",
@@ -217,7 +217,7 @@
             },
             "host": {
               "type": "string",
-              "description": "'local' (default) or 'noteserver'"
+              "description": "'local' (default) or a configured host"
             },
             "path": {
               "type": "string",
@@ -262,7 +262,7 @@
             },
             "host": {
               "type": "string",
-              "description": "'noteserver' (default) or 'local'"
+              "description": "'server' (default; cwd ~/workspace), 'local', 'router'"
             },
             "job_id": {
               "type": "string",
@@ -280,7 +280,7 @@
       },
       {
         "name": "tool_manage",
-        "description": "On-demand tool modules ('sql', 'homelab', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
+        "description": "On-demand tool modules ('sql', 'hosts', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
         "inputSchema": {
           "type": "object",
           "properties": {

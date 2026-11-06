@@ -24,13 +24,15 @@ func TestMain(m *testing.M) {
 }
 
 // runCLI executa o CLI com os argumentos dados e devolve exit code, stdout e stderr num bloco legível.
-// HOME/USERPROFILE apontam para um diretório temporário: o logger não grava no perfil real.
+// HOME/USERPROFILE/FASTEXEC_HOME apontam para um diretório temporário sem config: nada grava no perfil real e a
+// saída não depende da config de quem roda.
 func runCLI(t *testing.T, args ...string) string {
 	t.Helper()
 	home := t.TempDir()
 
 	cmd := exec.Command(os.Args[0], append([]string{cliChildArg}, args...)...)
-	cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "FASTEXEC_DEFAULT_HOST=noteserver")
+	cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "FASTEXEC_HOME="+home,
+		"FASTEXEC_CONFIG=", "FASTEXEC_DEFAULT_HOST=", "FASTEXEC_DATA_DIR=", "FASTEXEC_TELEMETRY=")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 
@@ -59,6 +61,8 @@ func TestGoldenCLIUsage(t *testing.T) {
 		{"sql"},
 		{"job", "start"},
 		{"daemon", "foo"},
+		{"config", "example"},
+		{"config", "bogus"},
 	}
 
 	var b strings.Builder

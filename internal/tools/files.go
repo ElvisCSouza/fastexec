@@ -186,8 +186,8 @@ func (a *PutFileArgs) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// SplitHostPath analisa strings que podem conter a sintaxe "host:path" (ex: "noteserver:/tmp/foo" ou "ax6000:/etc/config").
-// No Windows, letras de unidade como "C:\", "W:\", "D:/" NÃO são tratadas como host.
+// SplitHostPath analisa strings que podem conter a sintaxe "host:path" (ex: "server:/tmp/foo" ou "router:/etc/config").
+// No Windows, letras de unidade como "C:\", "D:\", "D:/" NÃO são tratadas como host.
 func SplitHostPath(raw string) (host string, path string) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -211,11 +211,11 @@ func SplitHostPath(raw string) (host string, path string) {
 }
 
 // ResolveTargetHost deduz o host para operações de arquivos:
-// se host não informado e path tem volume Windows (ex: C:\, W:\) ou prefixo UNC (\\), usa "local";
-// caso contrário delega a transport.ResolveHost (cujo default para caminhos Linux/posix é "noteserver").
+// se host não informado e path tem volume Windows (ex: C:\, D:\) ou prefixo UNC (\\), usa "local";
+// caso contrário delega a transport.ResolveHost (o host padrão da config).
 func ResolveTargetHost(host, path string) (transport.HostTarget, error) {
 	if h, p := SplitHostPath(path); h != "" {
-		if host == "" || host == "noteserver" || host == "local" {
+		if transport.IsDefaultName(host) {
 			host = h
 		}
 		path = p
@@ -405,7 +405,7 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 	}
 
 	if h, p := SplitHostPath(args.RemotePath); h != "" && h != "local" {
-		if args.Host == "" || args.Host == "noteserver" || args.Host == "local" {
+		if transport.IsDefaultName(args.Host) {
 			args.Host = h
 		}
 		args.RemotePath = p
@@ -456,7 +456,7 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 
 	// Normalização tolerante de prefixo host:path no remote_path
 	if h, p := SplitHostPath(args.RemotePath); h != "" && h != "local" {
-		if args.Host == "" || args.Host == "noteserver" || args.Host == "local" {
+		if transport.IsDefaultName(args.Host) {
 			args.Host = h
 		}
 		args.RemotePath = p

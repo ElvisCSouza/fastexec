@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/logger"
 	"homelab/fastexec/internal/telemetry"
 	"homelab/fastexec/internal/tools"
@@ -70,7 +71,9 @@ type Server struct {
 }
 
 func NewServer() *Server {
-	telemetry.Init()
+	if config.Get().TelemetryOn() {
+		telemetry.Init()
+	}
 	return &Server{
 		writer: bufio.NewWriter(os.Stdout),
 	}
@@ -268,19 +271,10 @@ func (s *Server) serve(r io.Reader) error {
 			})
 
 		case "tools/list":
-			allTools := make([]any, 0, len(serverTools))
-			for _, st := range serverTools {
-				allTools = append(allTools, st)
-			}
-			for _, ds := range tools.GetActiveDynamicSchemas() {
-				allTools = append(allTools, ds)
-			}
 			s.writeResponse(JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result: map[string]any{
-					"tools": allTools,
-				},
+				Result:  map[string]any{"tools": toolsList()},
 			})
 
 		case "tools/call":

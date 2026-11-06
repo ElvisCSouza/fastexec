@@ -15,15 +15,15 @@ func TestSplitHostPath(t *testing.T) {
 		wantHost string
 		wantPath string
 	}{
-		{"noteserver:/tmp/foo", "noteserver", "/tmp/foo"},
+		{"server:/tmp/foo", "server", "/tmp/foo"},
 		{"local:C:\\test", "local", "C:\\test"},
-		{"C:\\Users\\Elvis", "local", "C:\\Users\\Elvis"},
-		{"c:/users/elvis", "local", "c:/users/elvis"},
-		{"W:\\ReposHomeLab", "local", "W:\\ReposHomeLab"},
+		{"C:\\Users\\user", "local", "C:\\Users\\user"},
+		{"c:/users/user", "local", "c:/users/user"},
+		{"D:\\repos", "local", "D:\\repos"},
 		{"\\\\server\\share\\file.txt", "local", "\\\\server\\share\\file.txt"},
 		{"/var/log/syslog", "", "/var/log/syslog"},
 		{"relative/path.txt", "", "relative/path.txt"},
-		{"servidor:/home/elvis/workspace", "servidor", "/home/elvis/workspace"},
+		{"srv:/home/user/workspace", "srv", "/home/user/workspace"},
 	}
 
 	for _, tc := range tests {

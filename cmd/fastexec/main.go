@@ -40,6 +40,6 @@ func main() {
 		return
 	}
 	fmt.Printf("Unknown command: '%s'\n", cmd)
-	fmt.Println("Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, firestick, daemon")
+	fmt.Println("Commands: mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, firestick, daemon")
 	os.Exit(1)
 }

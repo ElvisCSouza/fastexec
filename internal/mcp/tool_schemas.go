@@ -10,10 +10,10 @@ var serverTools = []ToolSchema{
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":       {Type: "string", Description: "Target: 'noteserver' (default; cwd ~/workspace, never prefix 'cd ~/workspace &&'), 'local', 'ax6000', 'ax3000' or 'ssh:<host>'"},
+				"host":       {Type: "string", Description: "Target: {hosts_cd} or 'ssh:<host>'"},
 				"command":    {Type: "string", Description: "Shell line (artificial sleep/timeout is blocked). Give command OR argv"},
 				"argv":       {Type: "array", Description: "No-shell alternative: [program, arg1, ...]; no metacharacter is interpreted. Give argv OR command", Items: &PropertyDef{Type: "string"}},
-				"cwd":        {Type: "string", Description: "Working directory (relative paths resolve from the host default, e.g. 'homeassistant/config')"},
+				"cwd":        {Type: "string", Description: "Working directory (relative paths resolve from the host default, e.g. 'app/config')"},
 				"input":      {Type: "string", Description: "Content sent to the process stdin"},
 				"timeout_ms": {Type: "integer", Description: "Limit in ms (default 45000, max 50000 to stay under the client's 60 s cut); longer work goes to 'job'"},
 			},
@@ -100,7 +100,7 @@ var serverTools = []ToolSchema{
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":   {Type: "string", Description: "'local' (default) or 'noteserver'"},
+				"host":   {Type: "string", Description: "'local' (default) or a configured host"},
 				"action": {Type: "string", Description: "'copy', 'move', 'delete', 'mkdir' or 'list'"},
 				"path":   {Type: "string", Description: "Source file or directory"},
 				"target": {Type: "string", Description: "Destination (required for copy and move)"},
@@ -114,7 +114,7 @@ var serverTools = []ToolSchema{
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":    {Type: "string", Description: "'noteserver' (default) or 'local'"},
+				"host":    {Type: "string", Description: "{hosts}"},
 				"action":  {Type: "string", Description: "'start', 'wait', 'status', 'list', 'tail' or 'stop'"},
 				"command": {Type: "string", Description: "Shell line for 'start' (command OR argv)"},
 				"argv":    {Type: "array", Description: "No-shell alternative for 'start': [program, arg1, ...]", Items: &PropertyDef{Type: "string"}},
@@ -127,7 +127,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "tool_manage",
-		Description: "On-demand tool modules ('sql', 'homelab', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
+		Description: "On-demand tool modules ('sql', 'hosts', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{

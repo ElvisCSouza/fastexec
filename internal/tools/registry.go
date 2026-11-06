@@ -17,9 +17,9 @@ type ToolManageArgs struct {
 }
 
 type DynamicToolDef struct {
-	Name        string                                         `json:"name"`
-	Description string                                         `json:"description"`
-	Schema      any                                            `json:"schema"`
+	Name        string                                        `json:"name"`
+	Description string                                        `json:"description"`
+	Schema      any                                           `json:"schema"`
 	Handler     func(rawArgs json.RawMessage) (string, error) `json:"-"`
 }
 
@@ -56,7 +56,7 @@ func init() {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"host": map[string]any{"type": "string", "description": "Target: 'noteserver' (default)"},
+							"host": map[string]any{"type": "string", "description": "Target: {hosts}"},
 							"all":  map[string]any{"type": "boolean", "description": "List all containers (-a)"},
 						},
 					},
@@ -68,9 +68,6 @@ func init() {
 					}
 					_ = json.Unmarshal(rawArgs, &p)
 					h := p.Host
-					if h == "" {
-						h = "noteserver"
-					}
 					cmd := "docker ps"
 					if p.All {
 						cmd += " -a"
@@ -87,7 +84,7 @@ func init() {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"host":      map[string]any{"type": "string", "description": "Target: 'noteserver' (default)"},
+							"host":      map[string]any{"type": "string", "description": "Target: {hosts}"},
 							"container": map[string]any{"type": "string", "description": "Container name or ID"},
 							"lines":     map[string]any{"type": "integer", "description": "Log lines (default 50)"},
 						},
@@ -105,9 +102,6 @@ func init() {
 						return "", fmt.Errorf("parameter 'container' is required")
 					}
 					h := p.Host
-					if h == "" {
-						h = "noteserver"
-					}
 					lines := p.Lines
 					if lines <= 0 {
 						lines = 50
@@ -134,7 +128,7 @@ func init() {
 						"properties": map[string]any{
 							"session":  map[string]any{"type": "string", "description": "DuckDB analytic session name (one sandbox folder per session)"},
 							"database": map[string]any{"type": "string", "description": "SQLite .db file path (with 'host')"},
-							"host":     map[string]any{"type": "string", "description": "Target for SQLite: 'noteserver' (default) or 'local'"},
+							"host":     map[string]any{"type": "string", "description": "Target for SQLite: {hosts}"},
 							"query":    map[string]any{"type": "string", "description": "SQL to run (DuckDB accepts 'SELECT ... FROM \"path/file.jsonl\"' directly)"},
 						},
 						"required": []string{"query"},
@@ -152,15 +146,15 @@ func init() {
 	})
 
 	RegisterModule(&ModuleDef{
-		Name:        "homelab",
+		Name:        "hosts",
 		Description: "Host tools: connectivity check and binary file transfer",
 		Tools: map[string]DynamicToolDef{
 			"ping": {
 				Name:        "ping",
-				Description: "Latency and connectivity check against the configured hosts (local, noteserver, ax6000, ax3000).",
+				Description: "Latency and connectivity check against the configured hosts.",
 				Schema: map[string]any{
 					"name":        "ping",
-					"description": "Latency and connectivity check against the configured hosts (local, noteserver, ax6000, ax3000).",
+					"description": "Latency and connectivity check against the configured hosts.",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
@@ -185,7 +179,7 @@ func init() {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"host":        map[string]any{"type": "string", "description": "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
+							"host":        map[string]any{"type": "string", "description": "Remote host: {hosts}"},
 							"remote_path": map[string]any{"type": "string", "description": "File path on the remote host"},
 							"local_path":  map[string]any{"type": "string", "description": "Local path (default: the file name in the current directory)"},
 						},
@@ -209,7 +203,7 @@ func init() {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"host":        map[string]any{"type": "string", "description": "Host remoto: 'noteserver' (default), 'ax6000', 'ax3000'"},
+							"host":        map[string]any{"type": "string", "description": "Remote host: {hosts}"},
 							"local_path":  map[string]any{"type": "string", "description": "Local file path"},
 							"remote_path": map[string]any{"type": "string", "description": "Destination path on the remote host"},
 						},
@@ -315,9 +309,9 @@ func HandleToolManage(rawArgs json.RawMessage) (string, error) {
 
 		for _, name := range names {
 			mod := globalRegistry.modules[name]
-			status := "[desativado]"
+			status := "[disabled]"
 			if globalRegistry.activeModules[name] {
-				status = "[ATIVO]"
+				status = "[ACTIVE]"
 			}
 			fmt.Fprintf(&b, "- %s: %s (%d tools) %s\n", mod.Name, mod.Description, len(mod.Tools), status)
 		}
@@ -331,7 +325,7 @@ func HandleToolManage(rawArgs json.RawMessage) (string, error) {
 	case "search":
 		query := strings.ToLower(strings.TrimSpace(args.Query))
 		var b strings.Builder
-		fmt.Fprintf(&b, "RESULTADOS DA BUSCA POR '%s':\n", query)
+		fmt.Fprintf(&b, "SEARCH RESULTS FOR '%s':\n", query)
 		found := 0
 
 		for modName, mod := range globalRegistry.modules {

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"homelab/fastexec/internal/config"
 )
 
 type AuditEntry struct {
@@ -65,23 +67,7 @@ func dataDirPath() string {
 	if dataDirOverride != "" {
 		return dataDirOverride
 	}
-	var baseDir string
-	switch {
-	case dirExists(`W:\`):
-		baseDir = `W:\Data\telemetry`
-	case os.Getenv("LOCALAPPDATA") != "":
-		baseDir = filepath.Join(os.Getenv("LOCALAPPDATA"), "fastexec", "telemetry")
-	case os.Getenv("HOME") != "":
-		baseDir = filepath.Join(os.Getenv("HOME"), ".local", "share", "fastexec")
-	default:
-		baseDir = filepath.Join(os.TempDir(), "fastexec", "telemetry")
-	}
-	return baseDir
-}
-
-func dirExists(p string) bool {
-	_, err := os.Stat(p)
-	return err == nil
+	return filepath.Join(config.Get().Data(), "telemetry")
 }
 
 // Init inicializa a conexão SQLite, cria a tabela e inicia o worker em background.
@@ -207,6 +193,9 @@ func boolInt(b bool) int {
 
 // Record registra uma execução de forma assíncrona (zero overhead no caminho crítico).
 func Record(e AuditEntry) {
+	if !config.Get().TelemetryOn() {
+		return
+	}
 	if auditQueue == nil {
 		Init()
 	}

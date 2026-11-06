@@ -51,11 +51,23 @@ Ferramentas de uso pontual ou avançado foram modularizadas e são acessadas via
    - Falhas de cmdlets do PowerShell invocados no `cmd.exe` recebem orientações automáticas de uso do `pwsh` ou `file_ops`.
    - Erros comuns de SQL (ex: funções de agregação no GROUP BY) recebem dicas de reescrita sem interromper bruscamente o raciocínio da LLM.
 
+## Configuração (`internal/config`, 06/nov/2026)
+
+Tudo que era do homelab e estava fixo no código (hosts, host padrão, cwd por host, pastas de telemetria/jobs/sessões/handoff) vem de um arquivo JSON. Sem arquivo, o FastExec conhece só `local` e guarda tudo em `~/.fastexec`.
+
+- **Arquivo:** `FASTEXEC_CONFIG`, senão `<home>/config.json`; home = `FASTEXEC_HOME`, senão `~/.fastexec`. Fica fora de AppData de propósito: o Claude Desktop (MSIX) virtualiza AppData dos filhos e cada cliente via uma telemetria diferente.
+- **Chaves:** `default_host`; `hosts.<nome>` com `addr` (ip[:porta], 9142 se omitida) **ou** `ssh` (alias do ~/.ssh/config), `cwd`, `aliases`, `hidden` (fora das descrições das tools); `hosts.local` só aceita `aliases`; `data_dir` (base de `telemetry/`, `jobs/`, `sessions/`, `logs/`, `handoff/`); `handoff_dir`; `telemetry` (padrão true). Caminho relativo resolve a partir da pasta do arquivo; `~` = perfil.
+- **Ambiente ganha do arquivo:** `FASTEXEC_DEFAULT_HOST`, `FASTEXEC_DATA_DIR`, `FASTEXEC_TELEMETRY=0` (desliga a gravação). `FASTEXEC_DEBUG=1` liga o log de depuração (`<data>/logs/fastexec.log`).
+- **Arquivo inválido** (JSON, campo desconhecido, host com `addr` e `ssh`, nome/alias repetido, default inexistente): segue só com `local` e `fastexec config` mostra o erro. Nunca para o servidor.
+- **CLI:** `fastexec config` (efetivo: arquivo, default, pastas, telemetria, hosts), `config example`, `config init` (grava o exemplo se não existir).
+- **Schema sem custo extra:** as descrições de `host` usam `{hosts}`/`{hosts_cd}` (`internal/mcp/tools_list.go`), trocados pela lista da config no `tools/list` (padrão primeiro com o cwd, depois os visíveis). Sem config: `'local' (default)`.
+- **Remediação de `cd`:** `tryRemediateCd` vale para qualquer host com `cwd`; `/home/<usuário>/x` também casa como `~/x`.
+- **Módulo `homelab` virou `hosts`** (ping, get_file, put_file); o `ping` sem host testa `local` + hosts visíveis.
+- **Testes:** `config.Isolate()` no `TestMain` de cada pacote (pasta de dados temporária + config de exemplo `config.Sample()`, hosts `server`/`router`/`devbox` em 192.0.2.x). Integração real só com `FASTEXEC_TEST_HOST` (nome da sua config, tools) ou `FASTEXEC_TEST_ADDR` (ip:porta, transport).
+- **PC-Elvis:** `C:\Users\ElvisSouza\.fastexec\config.json` (fora do repo) reproduz a tabela antiga: default `noteserver` (cwd `/home/elvis/workspace`, alias `servidor`), `ax6000`, `ax3000`, firesticks e VMs de trabalho `hidden`, `local` com aliases `pc-elvis`/`windows`, `data_dir` `W:\Data`, `handoff_dir` `W:\ReposHomeLab\.agent\handoff`. Única diferença visível: alias resolve para o nome canônico (`servidor` → `noteserver`) e o log saiu de `~/.local/state/commander` para `W:\Data\logs`.
+
 ## Convenções de Rede e CWD Padrão
-- `noteserver`: `192.168.31.142:9142` (Daemon Zig). Diretório de trabalho padrão automático: `/home/elvis/workspace` (elimina a necessidade de injetar `cd ~/workspace &&` nos comandos).
-- `ax6000`: `192.168.31.1:9142` (Daemon Zig aarch64)
-- `ax3000`: `192.168.31.34:9142` (Daemon Zig armv7l)
-- `local`: `PC-Elvis` (Daemon local residente em `127.0.0.1:9146` com auto-bootstrap transparente ou fallback direto)
+- Hosts, endereços e cwd: na config (seção acima). `local` = daemon residente em `127.0.0.1:9146` com auto-bootstrap transparente ou fallback direto.
 
 ## Retorno da tool `exec` (`internal/tools/outclean.go`, `formatExecResult`)
 

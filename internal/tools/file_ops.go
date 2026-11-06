@@ -113,7 +113,7 @@ func HandleFileOps(args FileOpsArgs) (string, error) {
 	}
 
 	if h, p := SplitHostPath(args.Path); h != "" && h != "local" {
-		if args.Host == "" || args.Host == "noteserver" || args.Host == "local" {
+		if transport.IsDefaultName(args.Host) {
 			args.Host = h
 		}
 		args.Path = p

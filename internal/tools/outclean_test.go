@@ -28,8 +28,8 @@ func TestCleanOutputRemovesANSI(t *testing.T) {
 }
 
 func TestCleanOutputRemovesTerminalNoise(t *testing.T) {
-	in := "commit 1234abc\nhint: Using 'master' as the name for the initial branch\nhint: This default branch name is subject to change.\nAuthor: Elvis\nnpm notice New major version of npm available! 10.1.0 -> 10.8.2\ncode running\n"
-	want := "commit 1234abc\nAuthor: Elvis\ncode running\n"
+	in := "commit 1234abc\nhint: Using 'master' as the name for the initial branch\nhint: This default branch name is subject to change.\nAuthor: Dev\nnpm notice New major version of npm available! 10.1.0 -> 10.8.2\ncode running\n"
+	want := "commit 1234abc\nAuthor: Dev\ncode running\n"
 	if got := cleanOutput(in); got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -65,8 +65,8 @@ func TestCleanOutputResolvesCarriageReturns(t *testing.T) {
 }
 
 func TestCleanOutputCompressesTables(t *testing.T) {
-	in := "PID     USER        COMMAND\n1234    root        nginx -g daemon\n5678    elvis       node server.js\n"
-	want := "PID  USER  COMMAND\n1234  root  nginx -g daemon\n5678  elvis  node server.js\n"
+	in := "PID     USER        COMMAND\n1234    root        nginx -g daemon\n5678    dev         node server.js\n"
+	want := "PID  USER  COMMAND\n1234  root  nginx -g daemon\n5678  dev  node server.js\n"
 	if got := cleanOutput(in); got != want {
 		t.Fatalf("Tabela não foi compactada: got %q, want %q", got, want)
 	}

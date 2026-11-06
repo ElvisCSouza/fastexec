@@ -32,6 +32,7 @@ var commands = map[string]func(subArgs []string){
 	"handoff":       cmdHandoff,
 	"memory":        cmdHandoff,
 	"graph":         cmdGraph,
+	"config":        cmdConfig,
 }
 
 // cmdDaemonRun atende: daemon-run.
@@ -97,7 +98,7 @@ func cmdExec(subArgs []string) {
 		fmt.Println("Usage: fastexec exec [host] <command>")
 		os.Exit(1)
 	}
-	host := "noteserver"
+	host := "" // vazio = host padrão da config
 	var command string
 	if len(subArgs) >= 2 && !strings.Contains(subArgs[0], " ") {
 		if _, err := transport.ResolveHost(subArgs[0]); err == nil {
@@ -148,7 +149,7 @@ func cmdGet(subArgs []string) {
 	}
 	remotePath := subArgs[0]
 	localPath := ""
-	host := "noteserver"
+	host := "" // vazio = host padrão da config
 	if len(subArgs) >= 2 {
 		localPath = subArgs[1]
 	}
@@ -175,7 +176,7 @@ func cmdPut(subArgs []string) {
 	}
 	localPath := subArgs[0]
 	remotePath := subArgs[1]
-	host := "noteserver"
+	host := "" // vazio = host padrão da config
 	if len(subArgs) >= 3 {
 		host = subArgs[2]
 	}
@@ -208,7 +209,7 @@ func cmdSql(subArgs []string) {
 	} else if strings.HasSuffix(subArgs[0], ".db") || strings.HasSuffix(subArgs[0], ".sqlite") {
 		db = subArgs[0]
 		query = subArgs[1]
-		host = "noteserver"
+		host = ""
 		if len(subArgs) >= 3 {
 			host = subArgs[2]
 		}
@@ -235,7 +236,7 @@ func cmdJob(subArgs []string) {
 	action := subArgs[0]
 	var jobCmd, jobID string
 	var lines int
-	host := "noteserver"
+	host := "" // vazio = host padrão da config
 
 	switch action {
 	case "start":

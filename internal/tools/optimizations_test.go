@@ -281,17 +281,17 @@ func TestCoreutilsTimeoutAllowed(t *testing.T) {
 }
 
 func TestResolveTargetHostInference(t *testing.T) {
-	// Caminho Linux sem host deve inferir noteserver
-	targetLinux, err := ResolveTargetHost("", "/home/elvis/workspace/project")
+	// Caminho Linux sem host deve inferir o host padrão da config (server)
+	targetLinux, err := ResolveTargetHost("", "/home/user/workspace/project")
 	if err != nil {
 		t.Fatalf("erro ao resolver host linux: %v", err)
 	}
-	if targetLinux.Name != "noteserver" || targetLinux.IsLocal {
-		t.Errorf("esperava noteserver para path linux, obteve %s (isLocal=%v)", targetLinux.Name, targetLinux.IsLocal)
+	if targetLinux.Name != "server" || targetLinux.IsLocal {
+		t.Errorf("esperava server para path linux, obteve %s (isLocal=%v)", targetLinux.Name, targetLinux.IsLocal)
 	}
 
 	// Caminho Windows com letra de unidade deve inferir local
-	targetWin, err := ResolveTargetHost("", `W:\ReposHomeLab\fastexec`)
+	targetWin, err := ResolveTargetHost("", `D:\repos\fastexec`)
 	if err != nil {
 		t.Fatalf("erro ao resolver host windows: %v", err)
 	}

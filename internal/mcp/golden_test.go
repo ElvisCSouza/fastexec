@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/golden"
 	"homelab/fastexec/internal/tools"
 )
@@ -49,7 +50,14 @@ func setModule(t *testing.T, action, module string) {
 	}
 }
 
-// TestGoldenToolsList trava o tools/list visto pelo LLM: núcleo, cada módulo sob demanda isolado e todos juntos.
+// TestGoldenToolsListNoConfig: sem arquivo de config os hosts das descrições viram só "'local' (default)".
+func TestGoldenToolsListNoConfig(t *testing.T) {
+	t.Cleanup(config.Set(&config.Config{}))
+	golden.Check(t, "tools_list_core_noconfig.json", toolsListGolden(t, listToolsLine(t, &Server{})))
+}
+
+// TestGoldenToolsList trava o tools/list visto pelo LLM (config de exemplo): núcleo, cada módulo sob demanda
+// isolado e todos juntos.
 // Regenerar: go test ./internal/mcp -run TestGoldenToolsList -update
 func TestGoldenToolsList(t *testing.T) {
 	cases := []struct {
@@ -59,8 +67,8 @@ func TestGoldenToolsList(t *testing.T) {
 		{"tools_list_core.json", nil},
 		{"tools_list_docker.json", []string{"docker"}},
 		{"tools_list_sql.json", []string{"sql"}},
-		{"tools_list_homelab.json", []string{"homelab"}},
-		{"tools_list_all.json", []string{"docker", "sql", "homelab"}},
+		{"tools_list_hosts.json", []string{"hosts"}},
+		{"tools_list_all.json", []string{"docker", "sql", "hosts"}},
 	}
 
 	for _, tc := range cases {

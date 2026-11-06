@@ -11,7 +11,7 @@ func TestToolManageList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if !strings.Contains(out, "docker") || !strings.Contains(out, "sql") || !strings.Contains(out, "homelab") {
+	if !strings.Contains(out, "docker") || !strings.Contains(out, "sql") || !strings.Contains(out, "hosts") {
 		t.Fatalf("list output missing modules: %s", out)
 	}
 }

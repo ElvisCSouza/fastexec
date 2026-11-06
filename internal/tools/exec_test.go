@@ -33,14 +33,15 @@ func TestExecWithInputLocal(t *testing.T) {
 	}
 }
 
-func TestExecWithInputNoteServer(t *testing.T) {
+func TestExecWithInputRemote(t *testing.T) {
+	host := remoteHost(t)
 	out, err := HandleExec(ExecArgs{
-		Host:    "noteserver",
+		Host:    host,
 		Command: "grep banana",
 		Input:   "maca\nbanana nanica\nabacaxi\n",
 	})
 	if err != nil {
-		t.Fatalf("HandleExec noteserver com input falhou: %v", err)
+		t.Fatalf("HandleExec remoto com input falhou: %v", err)
 	}
 	if !strings.Contains(out, "banana nanica") {
 		t.Errorf("saída inesperada: %s", out)
@@ -218,14 +219,14 @@ func TestDetectNudge(t *testing.T) {
 
 func TestCdAutoRemediation(t *testing.T) {
 	// Caso 1: puro cd ~/workspace
-	args1 := ExecArgs{Host: "noteserver", Command: "cd ~/workspace"}
+	args1 := ExecArgs{Host: "server", Command: "cd ~/workspace"}
 	out, handled, _ := tryRemediateCd(&args1)
 	if !handled || !strings.Contains(out, "already ~/workspace") {
 		t.Errorf("esperava tratamento de cd ~/workspace puro, recebeu handled=%v out=%s", handled, out)
 	}
 
 	// Caso 2: cd ~/workspace && <resto>
-	args2 := ExecArgs{Host: "noteserver", Command: "cd ~/workspace && git status"}
+	args2 := ExecArgs{Host: "", Command: "cd ~/workspace && git status"} // vazio = host padrão (server)
 	_, handled, hint := tryRemediateCd(&args2)
 	if handled {
 		t.Errorf("esperava handled=false para executar resto do comando")
@@ -237,18 +238,19 @@ func TestCdAutoRemediation(t *testing.T) {
 		t.Errorf("esperava hint pedagógico, recebeu: %s", hint)
 	}
 
-	// Caso 3: cd /home/elvis/workspace; <resto>
-	args3 := ExecArgs{Host: "noteserver", Command: "cd /home/elvis/workspace; set -a"}
+	// Caso 3: cd /home/user/workspace; <resto>
+	args3 := ExecArgs{Host: "server", Command: "cd /home/user/workspace; set -a"}
 	_, handled, hint = tryRemediateCd(&args3)
 	if args3.Command != "set -a" {
 		t.Errorf("esperava command 'set -a', recebeu: %s", args3.Command)
 	}
 
-	// Caso 4: cd ~/workspace/homeassistant/config; echo "ok"
-	args4 := ExecArgs{Host: "noteserver", Command: `cd ~/workspace/homeassistant/config; echo "ok"`}
+	// Caso 4: cd ~/workspace/app/config; echo "ok"
+
+	args4 := ExecArgs{Host: "srv", Command: `cd ~/workspace/app/config; echo "ok"`} // alias
 	_, handled, hint = tryRemediateCd(&args4)
-	if args4.Cwd != "homeassistant/config" {
-		t.Errorf("esperava Cwd 'homeassistant/config', recebeu: %s", args4.Cwd)
+	if args4.Cwd != "app/config" {
+		t.Errorf("esperava Cwd 'app/config', recebeu: %s", args4.Cwd)
 	}
 	if args4.Command != `echo "ok"` {
 		t.Errorf("esperava command 'echo \"ok\"', recebeu: %s", args4.Command)
