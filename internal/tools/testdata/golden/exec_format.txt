@@ -1,0 +1,98 @@
+### success_stdout
+comando: echo hola
+exit: 0
+--- saída (5 bytes)
+hola
+
+--- erro: <nil>
+
+### success_stderr_only
+comando: tool --check
+exit: 0
+--- saída (18 bytes)
+aviso: cache frio
+
+--- erro: <nil>
+
+### success_empty
+comando: true
+exit: 0
+--- saída (0 bytes)
+
+--- erro: <nil>
+
+### exit1_no_output
+comando: findstr x y.txt
+exit: 1
+--- saída (22 bytes)
+sem resultado (exit 1)
+--- erro: <nil>
+
+### exit1_search_empty
+comando: grep -r foo .
+exit: 1
+--- saída (22 bytes)
+sem resultado (exit 1)
+--- erro: <nil>
+
+### exit2_stderr
+comando: ls /nope
+exit: 2
+--- saída (62 bytes)
+[exit 2] ls: cannot access '/nope': No such file or directory
+
+--- erro: comando falhou com código 2
+
+### exit3_no_output
+comando: false-cmd
+exit: 3
+--- saída (52 bytes)
+[exit 3] comando falhou com exit code 3 (sem saída)
+--- erro: comando falhou com código 3
+
+### cmdlet_mismatch_hint
+comando: Get-ChildItem C:\
+exit: 1
+--- saída (298 bytes)
+[exit 1] Get-ChildItem : o termo 'Get-ChildItem' não é reconhecido como nome de cmdlet
+[FastExec Hint] O host 'local' (Windows) executa via cmd.exe nativo por performance. Para cmdlets PowerShell invoque 'pwsh -NoProfile -Command ...'; para listar/manipular arquivos use a tool nativa 'file_ops'.
+--- erro: comando falhou com código 1
+
+### benign_grep_exit1_with_output
+comando: grep foo bar.txt | head
+exit: 1
+--- saída (19 bytes)
+[exit 1] linha foo
+
+--- erro: <nil>
+
+### timeout_partial
+comando: sleep-like-loop
+exit: -1
+--- saída (200 bytes)
+[timeout após 45.0s; árvore de processos encerrada]
+Saída parcial capturada até o corte:
+parcial
+
+[stderr]
+erro
+
+[FastExec Guidance] Para tarefas longas (> 30s), use a tool 'job' (action='start').
+--- erro: timeout após 45.0s
+
+### timeout_empty
+comando: long-build
+exit: -1
+--- saída (137 bytes)
+[timeout após 50.0s; árvore de processos encerrada]
+[FastExec Guidance] Para tarefas longas (> 30s), use a tool 'job' (action='start').
+--- erro: timeout após 50.0s
+
+### truncated_stdout
+comando: dump-big
+exit: 0
+--- saída (33 bytes)
+linha de teste 0123456789 ×3000
+
+--- erro: <nil>
+

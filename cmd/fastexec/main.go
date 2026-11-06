@@ -318,6 +318,10 @@ func main() {
 				filter.OnlyTools = true
 			case "--reset", "--clear":
 				filter.ResetDB = true
+			default:
+				if h, ok := telemetry.ParsePeriod(arg); ok {
+					filter.PeriodH = h
+				}
 			}
 		}
 

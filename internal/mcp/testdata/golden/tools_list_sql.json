@@ -1,0 +1,304 @@
+{
+  "wire_bytes": 9301,
+  "result": {
+    "tools": [
+      {
+        "name": "exec",
+        "description": "Executa comando síncrono rápido no nó alvo (orientado a eventos, máx 45s). CWD PADRÃO NO NOTESERVER É ~/workspace (NUNCA prefixe comandos com 'cd ~/workspace \u0026\u0026' ou 'cd ~/workspace;'). Para outro diretório prefira o parâmetro 'cwd'. Para ler arquivos prefira 'read_file'; para gerenciar arquivos/diretórios prefira 'file_ops'; para tarefas longas (\u003e 30s) use a tool 'job' (action='start'). Dois modos: 'command' (linha de shell; no Windows 'local' roda em cmd.exe) ou 'argv' (sem shell: cada item chega ao programa exatamente como enviado; use para código e texto com metacaracteres). Código longo vai por 'input' (stdin): argv ['node','-'] ou ['python','-'] com script em 'input'. Para PowerShell use argv ['pwsh','-NoProfile','-Command','-'] com script em 'input'. No estouro de timeout_ms a árvore de processos é encerrada e a resposta traz a saída parcial. stdin sem 'input' é EOF imediato.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "argv": {
+              "type": "array",
+              "description": "Alternativa sem shell: [executável, arg1, arg2...]. Nenhum metacaractere é interpretado. Informe argv OU command",
+              "items": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "command": {
+              "type": "string",
+              "description": "Linha de shell a executar (PROIBIDO usar sleep/timeout artificial; NUNCA prefixe com 'cd ~/workspace \u0026\u0026' pois o cwd padrão do noteserver JÁ É ~/workspace). Informe command OU argv"
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Diretório de trabalho para execução (opcional, padrão no noteserver: ~/workspace; para rodar em subpastas passe ex: 'homeassistant/config')"
+            },
+            "host": {
+              "type": "string",
+              "description": "Alvo: 'noteserver' (default, cwd ~/workspace), 'ax6000', 'ax3000', 'local', 'vm-ia-core' ou prefixo 'ssh:\u003chost\u003e'"
+            },
+            "input": {
+              "type": "string",
+              "description": "Conteúdo enviado diretamente para o stdin do processo (opcional, evita criar arquivos temporários)"
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "description": "Teto de segurança em ms (padrão: 45000; máximo: 50000, valores maiores são limitados para respeitar o corte de 60s do Claude Desktop). Ao estourar, a árvore de processos é encerrada. Comando que precisa de mais tempo: tool 'job'"
+            }
+          }
+        }
+      },
+      {
+        "name": "read_file",
+        "description": "Lê conteúdo de arquivo local ou remoto. Use SEMPRE para inspecionar arquivos ou trechos (offset/limit) em vez de 'cat', 'type' ou 'head' via exec.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "end_line": {
+              "type": "integer",
+              "description": "Linha final a ler (inclusive, opcional)"
+            },
+            "host": {
+              "type": "string",
+              "description": "Alvo: 'local' (default, host atual), 'noteserver', 'ax6000', 'ax3000'"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Limite de bytes a ler (opcional)"
+            },
+            "offset": {
+              "type": "integer",
+              "description": "Offset em bytes (opcional)"
+            },
+            "path": {
+              "type": "string",
+              "description": "Caminho do arquivo"
+            },
+            "start_line": {
+              "type": "integer",
+              "description": "Linha inicial a ler (1-based, opcional)"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "edit_file",
+        "description": "Substitui cirurgicamente um trecho específico de texto em um arquivo local ou remoto (target -\u003e replacement). Use para pequenas alterações ou refatorações pontuais sem precisar regravar o arquivo inteiro com write_file, economizando tokens e evitando truncamento.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "Alvo: 'local' (default), 'noteserver', etc."
+            },
+            "path": {
+              "type": "string",
+              "description": "Caminho do arquivo a ser modificado"
+            },
+            "replacement": {
+              "type": "string",
+              "description": "Novo texto que substituirá o target (deixe vazio para deletar o target)"
+            },
+            "target": {
+              "type": "string",
+              "description": "Trecho exato de texto a ser substituído (deve bater exatamente com o conteúdo existente)"
+            }
+          },
+          "required": [
+            "path",
+            "target"
+          ]
+        }
+      },
+      {
+        "name": "write_file",
+        "description": "Grava conteúdo em arquivo local ou remoto (chunked e opcionalmente atômico).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "atomic": {
+              "type": "boolean",
+              "description": "Se true, grava em temporário e renomeia atomicamente (padrão: true)"
+            },
+            "content": {
+              "type": "string",
+              "description": "Conteúdo a ser gravado"
+            },
+            "host": {
+              "type": "string",
+              "description": "Alvo: 'local' (default, host atual), 'noteserver', 'ax6000', 'ax3000'"
+            },
+            "path": {
+              "type": "string",
+              "description": "Caminho do arquivo de destino"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ]
+        }
+      },
+      {
+        "name": "file_ops",
+        "description": "Operações atômicas no sistema de arquivos sem shell: copy, move, delete, mkdir, list. Use para listar diretórios ou gerenciar arquivos em vez de 'ls', 'dir', 'rm' ou 'mkdir' via exec.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "Ação a executar: 'copy', 'move', 'delete', 'mkdir', 'list'"
+            },
+            "host": {
+              "type": "string",
+              "description": "Alvo: 'local' (default) ou 'noteserver'"
+            },
+            "path": {
+              "type": "string",
+              "description": "Caminho do arquivo ou diretório de origem"
+            },
+            "target": {
+              "type": "string",
+              "description": "Caminho de destino (obrigatório para 'copy' e 'move')"
+            }
+          },
+          "required": [
+            "action",
+            "path"
+          ]
+        }
+      },
+      {
+        "name": "job",
+        "description": "Gerencia background jobs assíncronos: no NoteServer via systemd-run; no host 'local' (Windows) em Job Object nomeado, com log em arquivo, sobrevivendo ao fim da chamada (dev server, watcher, túnel). Use para qualquer comando que precise de mais de ~30s ou ficar no ar; o 'exec' é síncrono e encerra tudo ao terminar. No local: máx. 5 jobs ativos e vida máxima de 12 h; 'stop' encerra a árvore inteira. Use action='wait' para aguardar conclusão por evento (espera até 35s por chamada com retorno fluido de progresso e log parcial caso ainda esteja em execução, permitindo polling contínuo sem timeout).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "Ação: 'start', 'wait' (aguarda conclusão por evento), 'status', 'list', 'tail', 'stop'"
+            },
+            "argv": {
+              "type": "array",
+              "description": "Alternativa sem shell para 'start': [executável, arg1, ...]",
+              "items": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "command": {
+              "type": "string",
+              "description": "Linha de shell para ação 'start' (informe command OU argv)"
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Diretório de trabalho para 'start' (opcional)"
+            },
+            "host": {
+              "type": "string",
+              "description": "Alvo: 'noteserver' (default) ou 'local' (Windows)"
+            },
+            "job_id": {
+              "type": "string",
+              "description": "Identificador da tarefa para wait/status/tail/stop"
+            },
+            "lines": {
+              "type": "integer",
+              "description": "Número de linhas para ação 'tail' (padrão: 30)"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      },
+      {
+        "name": "tool_manage",
+        "description": "Pesquisa, ativa e executa módulos de ferramentas especializadas sob demanda no FastExec (Tool RAG / Dynamic Loading, economizando tokens no system prompt). Módulos disponíveis: 'sql', 'homelab', 'docker'. Ações: 'search' (pesquisa ferramentas por palavra-chave), 'list' (mostra módulos disponíveis), 'enable' (carrega módulo no MCP com list_changed), 'disable' (descarrega módulo), 'call' (executa ferramenta diretamente sem carregá-la no schema).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "Ação: 'search', 'list', 'enable', 'disable', 'call'"
+            },
+            "module": {
+              "type": "string",
+              "description": "Nome do módulo (ex: 'sql', 'homelab', 'docker')"
+            },
+            "params": {
+              "type": "string",
+              "description": "JSON serializado com argumentos para a ação 'call'"
+            },
+            "query": {
+              "type": "string",
+              "description": "Termo de busca para a ação 'search'"
+            },
+            "tool": {
+              "type": "string",
+              "description": "Nome da ferramenta para a ação 'call'"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      },
+      {
+        "name": "handoff",
+        "description": "Gerencia a memória de longo prazo e handoff entre sessões e agentes (Zero-LLM overhead, baseado em telemetria real). Ações: 'latest' (retorna o último briefing do projeto em ~300 tokens para cold-start imediato), 'save' (consolida a sessão atual com arquivos modificados, falhas a evitar e próximos passos em Markdown), 'search' (pesquisa histórico de decisões em Markdown), 'list' (lista handoffs anteriores).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "description": "Ação: 'latest' (default), 'save', 'search', 'list'"
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Limite de resultados para 'search' ou 'list' (padrão: 5)"
+            },
+            "notes": {
+              "type": "string",
+              "description": "Resumo ou notas da sessão para 'save' (opcional)"
+            },
+            "pending": {
+              "type": "string",
+              "description": "Itens pendentes ou próximos passos para 'save' (opcional)"
+            },
+            "query": {
+              "type": "string",
+              "description": "Termo de busca para a ação 'search'"
+            },
+            "topic": {
+              "type": "string",
+              "description": "Tema ou módulo da sessão para ação 'save' (ex: 'popcorn-cache', 'matter-hub')"
+            }
+          }
+        }
+      },
+      {
+        "description": "Executa SQL analítico DuckDB (direto em arquivos ou 'session') ou SQLite ('database'). Saída sempre em JSON puro.",
+        "inputSchema": {
+          "properties": {
+            "database": {
+              "description": "Caminho do arquivo .db SQLite (usado com 'host')",
+              "type": "string"
+            },
+            "host": {
+              "description": "Alvo para SQLite: 'noteserver' (default) ou 'local'",
+              "type": "string"
+            },
+            "query": {
+              "description": "Instrução SQL a executar (no DuckDB aceita 'SELECT ... FROM \"caminho/arquivo.jsonl\"' diretamente)",
+              "type": "string"
+            },
+            "session": {
+              "description": "Nome da sessão analítica DuckDB no PC-Elvis (sandbox em W:\\Data\\sessions\\sess-\u003csession\u003e\\)",
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        },
+        "name": "sql"
+      }
+    ]
+  }
+}

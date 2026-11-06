@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,6 +16,7 @@ import (
 
 type StatsFilter struct {
 	Today      bool
+	PeriodH    int // janela em horas (0 = histórico total); ignorado quando Today
 	OnlyErrors bool
 	OnlyTools  bool
 	ResetDB    bool
@@ -83,11 +85,54 @@ func RenderStats(filter StatsFilter) (string, error) {
 	return renderStats(db, filter)
 }
 
-func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
-	whereClause := ""
-	if filter.Today {
-		whereClause = "WHERE date(timestamp, 'localtime') = date('now', 'localtime')"
+// ParsePeriod converte "24h", "7d" etc. em horas. Retorna false para formatos não reconhecidos.
+func ParsePeriod(arg string) (int, bool) {
+	arg = strings.ToLower(strings.TrimSpace(arg))
+	if len(arg) < 2 {
+		return 0, false
 	}
+	n, err := strconv.Atoi(arg[:len(arg)-1])
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	switch arg[len(arg)-1] {
+	case 'h':
+		return n, true
+	case 'd':
+		return n * 24, true
+	}
+	return 0, false
+}
+
+// periodWhere monta o filtro temporal da consulta; "" quando não há janela.
+func periodWhere(filter StatsFilter) string {
+	switch {
+	case filter.Today:
+		return "WHERE date(timestamp, 'localtime') = date('now', 'localtime')"
+	case filter.PeriodH > 0:
+		return fmt.Sprintf("WHERE timestamp >= datetime('now', '-%d hours')", filter.PeriodH)
+	}
+	return ""
+}
+
+// periodDescription descreve a janela para cabeçalhos e mensagens.
+func periodDescription(filter StatsFilter) (label string, short string) {
+	switch {
+	case filter.Today:
+		return fmt.Sprintf("Hoje (%s)", time.Now().Format("02/01/2006")), "hoje"
+	case filter.PeriodH > 0 && filter.PeriodH%24 == 0:
+		d := filter.PeriodH / 24
+		return fmt.Sprintf("Últimos %d dias", d), fmt.Sprintf("nos últimos %d dias", d)
+	case filter.PeriodH == 1:
+		return "Última 1 hora", "na última hora"
+	case filter.PeriodH > 0:
+		return fmt.Sprintf("Últimas %d horas", filter.PeriodH), fmt.Sprintf("nas últimas %d horas", filter.PeriodH)
+	}
+	return "Histórico Total", "no histórico geral"
+}
+
+func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
+	whereClause := periodWhere(filter)
 
 	// 1. Resumo Global
 	summary, durations, err := querySummary(db, whereClause)
@@ -96,10 +141,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 	}
 
 	if summary.TotalCalls == 0 {
-		period := "no histórico geral"
-		if filter.Today {
-			period = "hoje"
-		}
+		_, period := periodDescription(filter)
 		return fmt.Sprintf("Nenhum registro de telemetria encontrado (%s).", period), nil
 	}
 
@@ -132,10 +174,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 
 	// Montagem do Relatório
 	var sb strings.Builder
-	periodLabel := "Histórico Total"
-	if filter.Today {
-		periodLabel = fmt.Sprintf("Hoje (%s)", time.Now().Format("02/01/2006"))
-	}
+	periodLabel, _ := periodDescription(filter)
 
 	sb.WriteString(fmt.Sprintf("================================================================================\n"))
 	sb.WriteString(fmt.Sprintf("                    TELEMETRIA & AUDITORIA FASTEXEC (%s)\n", periodLabel))

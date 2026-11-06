@@ -1,0 +1,58 @@
+$ fastexec help
+exit: 1
+--- stdout
+Comando desconhecido: 'help'
+Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, firestick, daemon
+--- stderr
+
+
+$ fastexec frobnicate
+exit: 1
+--- stdout
+Comando desconhecido: 'frobnicate'
+Comandos disponíveis: mcp, exec, get, put, sql, job, ping, stats, handoff, firestick, daemon
+--- stderr
+
+
+$ fastexec exec
+exit: 1
+--- stdout
+Uso: fastexec exec [host] <comando>
+--- stderr
+
+
+$ fastexec get
+exit: 1
+--- stdout
+Uso: fastexec get <remote_path> [local_path] [host]
+--- stderr
+
+
+$ fastexec put local.txt
+exit: 1
+--- stdout
+Uso: fastexec put <local_path> <remote_path> [host]
+--- stderr
+
+
+$ fastexec sql
+exit: 1
+--- stdout
+Uso: fastexec sql "<query>" [session_ou_db] [host]
+--- stderr
+
+
+$ fastexec job start
+exit: 1
+--- stdout
+Uso: fastexec job start "<comando>" [job_id] [host]
+--- stderr
+
+
+$ fastexec daemon foo
+exit: 0
+--- stdout
+Uso: fastexec daemon <status|start|stop>
+--- stderr
+
+

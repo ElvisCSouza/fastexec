@@ -381,7 +381,12 @@ func (s *Server) Run() error {
 		s.writeNotification("notifications/tools/list_changed", map[string]any{})
 	})
 
-	scanner := bufio.NewScanner(os.Stdin)
+	return s.serve(os.Stdin)
+}
+
+// serve processa requisições JSON-RPC linha a linha de r. Separado de Run para os testes golden injetarem a entrada.
+func (s *Server) serve(r io.Reader) error {
+	scanner := bufio.NewScanner(r)
 
 	buf := make([]byte, 1024*1024)
 	scanner.Buffer(buf, 16*1024*1024)

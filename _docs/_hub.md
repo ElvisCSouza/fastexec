@@ -77,6 +77,8 @@ Isso impede que ferramentas de terminal abram paginadores (`less`/`more`), peça
 
 Telemetria (`internal/telemetry`): tabela `audit` ganhou `truncated` e `no_result` (migração `setupAuditSchema`, `ALTER TABLE ... ADD COLUMN` só se faltar). `RenderStats` mostra por ferramenta P50/P90/P99/máximo de `bytes_out`, contagem de truncados e de "sem resultado", e os 5 maiores retornos do período (comando limitado a 60 caracteres).
 
+**`stats <período>` respeita a janela** (`internal/telemetry/stats.go`: `ParsePeriod`, `periodWhere`, `periodDescription`): aceita `Nh` (horas) e `Nd` (dias), sem diferenciar maiúsculas (`stats 24h`, `stats 7d`). O cabeçalho mostra o período (ex.: `Últimos 7 dias`). Sem argumento, o relatório segue como histórico total. `--today` continua valendo e tem precedência. Valores inválidos (`0h`, `7x`) são ignorados e o relatório volta ao histórico total. Teste: `internal/telemetry/stats_period_test.go`.
+
 ## Execução no host `local` (`internal/transport/local.go`)
 
 Contrato síncrono e determinístico. Cada linha da tabela é uma regra com o motivo.
@@ -179,3 +181,28 @@ cd W:\ReposHomeLab
 - **Chaves de desligar:** `FASTEXEC_NO_DIRECT=1` (tudo pelo bash) e `FASTEXEC_NO_SX=1` (volta ao SE puro).
 - **Medido PC -> noteserver:** `ls -d /` 7,2 ms -> 3,2 ms; comando dominado pelo programa (git) não muda. Medição: `FASTEXEC_BENCH=1 go test -run MedicaoViaRede ./internal/transport/`; no servidor: `ops/tools/server-exec/bench/`.
 - **Reversão:** cliente: `bin\fastexec-old.exe` (renomear de volta para `fastexec.exe`); servidor: `ops/backups/server-exec-pre-v2/server-exec`. Roteadores e Firesticks seguem com o daemon antigo (sem SX), por isso o cliente os trata pelo SE.
+
+## Testes e Goldens (`internal/golden`)
+
+Goldens travam o que o LLM e o CLI veem. Cada um é um arquivo versionado em `testdata/golden/` do pacote que o gera; `golden.Check` compara a saída e, com `-update`, regrava o arquivo.
+
+| Golden | Pacote | O que trava |
+|---|---|---|
+| `tools_list_{core,docker,sql,homelab,all}.json` | `internal/mcp` | `tools/list` no fio: `wire_bytes` (tamanho da linha JSON-RPC com `\n`) e o array de tools (nomes, descrições, schemas) do núcleo e de cada módulo sob demanda |
+| `exec_format.txt` | `internal/tools` | `formatExecResult` com entradas fixas: sucesso, exit 1 sem saída, erro com exit N, dica de cmdlet, timeout com e sem saída parcial, truncamento |
+| `host_resolution.txt` | `internal/transport` | nome → alvo de cada host conhecido, host padrão via `FASTEXEC_DEFAULT_HOST`, erro de host desconhecido |
+| `cli_usage.txt` | `cmd/fastexec` | ajuda, comando desconhecido e erros de argumento do CLI; só caminhos que saem antes de rede, banco ou comando real |
+
+**Regenerar** (só quando a mudança for intencional; revise o diff dos goldens antes de commitar):
+
+```
+go test ./internal/mcp ./internal/tools ./internal/transport ./cmd/fastexec -run Golden -update
+```
+
+Regras:
+- Offline, independentes do host, do registro e de `W:\`: env pinado nos testes de host; o CLI roda com `HOME`/`USERPROFILE` num diretório temporário.
+- O CLI é testado re-executando o próprio binário de teste (`TestMain`, marcador `__fastexec_cli_golden__`), porque `main()` chama `os.Exit`.
+- `mcp.Server.serve(io.Reader)` recebe a entrada; `Run()` só liga o stdin e o stdout. O teste monta o `Server{}` direto, sem `telemetry.Init()`.
+- A ordem do `tools/list` é determinística: módulos por nome e tools por nome dentro de cada módulo.
+- `json.Marshal` escreve `&` como `\u0026` nas descrições; o golden registra a saída real do fio.
+- Tamanho atual do `tools/list` do núcleo: **8605 bytes** (`tools_list_core.json`, `wire_bytes`).

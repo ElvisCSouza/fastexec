@@ -260,16 +260,29 @@ func GetActiveDynamicSchemas() []any {
 	globalRegistry.mu.RLock()
 	defer globalRegistry.mu.RUnlock()
 
-	var res []any
+	// Ordem determinística (módulo, depois ferramenta): o schema vai ao LLM e precisa ser estável entre listagens.
+	var modNames []string
 	for modName, active := range globalRegistry.activeModules {
-		if !active {
+		if active {
+			modNames = append(modNames, modName)
+		}
+	}
+	sort.Strings(modNames)
+
+	var res []any
+	for _, modName := range modNames {
+		mod, ok := globalRegistry.modules[modName]
+		if !ok {
 			continue
 		}
-		if mod, ok := globalRegistry.modules[modName]; ok {
-			for _, t := range mod.Tools {
-				if t.Schema != nil {
-					res = append(res, t.Schema)
-				}
+		toolNames := make([]string, 0, len(mod.Tools))
+		for toolName := range mod.Tools {
+			toolNames = append(toolNames, toolName)
+		}
+		sort.Strings(toolNames)
+		for _, toolName := range toolNames {
+			if t := mod.Tools[toolName]; t.Schema != nil {
+				res = append(res, t.Schema)
 			}
 		}
 	}
