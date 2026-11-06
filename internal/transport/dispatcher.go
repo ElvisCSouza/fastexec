@@ -70,6 +70,10 @@ func DispatchArgv(hostName string, argv []string, cwd string, input string, time
 	if target.IsLocal {
 		return ExecLocalArgv(argv, cwd, input, timeout)
 	}
+	// Daemon com SX: argv, cwd e stdin viajam como campos, sem shell e sem aspas.
+	if res, ok, err := tryDaemonX(target, XRequest{Argv: argv, Cwd: cwd, Stdin: input}, timeout); ok || err != nil {
+		return res, err
+	}
 	return DispatchWithInput(hostName, QuoteArgvPOSIX(argv), cwd, input, timeout)
 }
 
@@ -92,6 +96,18 @@ func DispatchWithInput(hostName string, cmd string, cwd string, input string, ti
 	}
 	if target.IsLocal {
 		return ExecLocalWithInput(cmd, cwd, input, timeout)
+	}
+
+	// Daemon com SX: linha simples (só "programa args") vai direto, sem bash; o resto vai por bash -c, com cwd,
+	// stdin e ambiente como campos do pedido (sem "cd &&", sem printf|base64 e sem o prefixo export).
+	if !target.IsSSH {
+		q := XRequest{Shell: cmd, Cwd: cwd, Stdin: input}
+		if argv, simple := SimpleArgv(cmd); simple {
+			q = XRequest{Argv: argv, Cwd: cwd, Stdin: input}
+		}
+		if res, ok, err := tryDaemonX(target, q, timeout); ok || err != nil {
+			return res, err
+		}
 	}
 
 	effectiveCmd := cmd
