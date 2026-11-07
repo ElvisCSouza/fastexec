@@ -258,7 +258,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 		sb.WriteString("LARGEST RETURNS IN THE PERIOD\n")
 		sb.WriteString("--------------------------------------------------------------------------------\n")
 		tw = tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
-		fmt.Fprintf(tw, "DATA/HORA\tTOOL\tBYTES\tCOMANDO / ALVO\n")
+		fmt.Fprintf(tw, "TIME\tTOOL\tBYTES\tCOMMAND / TARGET\n")
 		for _, r := range topReturns {
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Timestamp, r.Tool, formatBytes(r.Bytes), truncRunes(r.CommandSummary, 60))
 		}
@@ -271,7 +271,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 		sb.WriteString(fmt.Sprintf("LATEST ERRORS (%d)\n", len(errors)))
 		sb.WriteString("--------------------------------------------------------------------------------\n")
 		tw := tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
-		fmt.Fprintf(tw, "DATA/HORA\tTOOL\tHOST\tCOMANDO / ALVO\tERRO\n")
+		fmt.Fprintf(tw, "TIME\tTOOL\tHOST\tCOMMAND / TARGET\tERROR\n")
 		for _, e := range errors {
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 				e.Timestamp, e.Tool, e.Host, truncate(e.CommandSummary, 35), truncate(e.ErrorMessage, 45))

@@ -610,13 +610,27 @@ func tryRemediateList(args ExecArgs) (string, bool, error) {
 		if len(items) == 0 {
 			formatted = "(empty directory)"
 		} else {
+			// listagem grande não vai inteira ao modelo: as primeiras lsMaxEntries e um resumo do resto
+			shown := items
+			if len(shown) > lsMaxEntries {
+				shown = shown[:lsMaxEntries]
+			}
 			var sb strings.Builder
-			for _, it := range items {
+			for _, it := range shown {
 				if it.IsDir {
 					sb.WriteString(fmt.Sprintf("%-6s %10s  %s/\n", "DIR", "-", it.Name))
 				} else {
 					sb.WriteString(fmt.Sprintf("%-6s %10d  %s\n", "FILE", it.Size, it.Name))
 				}
+			}
+			if rest := items[len(shown):]; len(rest) > 0 {
+				dirs := 0
+				for _, it := range rest {
+					if it.IsDir {
+						dirs++
+					}
+				}
+				fmt.Fprintf(&sb, "[truncated: %d more entries (%d folders, %d files); list a subfolder or filter with a pattern]\n", len(rest), dirs, len(rest)-dirs)
 			}
 			formatted = strings.TrimRight(sb.String(), "\n")
 		}
@@ -632,6 +646,9 @@ func tryRemediateList(args ExecArgs) (string, bool, error) {
 	out := fmt.Sprintf("[FastExec Auto-Remediation] '%s' was run as the native 'file_ops' tool (action='list', no process).\nNext time call 'file_ops' with action='list' directly to save time and tokens.\n---\n%s", cmdLabel, formatted)
 	return out, true, nil
 }
+
+// lsMaxEntries: teto de linhas da listagem nativa que substitui ls/dir (um dir de pasta grande chegou a 165 KB).
+const lsMaxEntries = 200
 
 // cdRegexes: os três padrões de 'cd <cwd padrão do host>' redundante (puro, com subpasta, com resto), um conjunto
 // por cwd, montado uma vez. /home/<usuário>/x também casa como ~/x.
