@@ -16,8 +16,8 @@ import (
 const searchMaxLines = 40
 
 var (
-	searchPrograms = map[string]bool{"grep": true, "egrep": true, "fgrep": true, "rg": true, "findstr": true}
-	limitPrograms  = map[string]bool{"head": true, "tail": true, "wc": true, "select-object": true, "measure-object": true}
+	searchPrograms = map[string]bool{"grep": true, "egrep": true, "fgrep": true, "rg": true, "findstr": true, "select-string": true, "sls": true}
+	limitPrograms  = map[string]bool{"head": true, "tail": true, "wc": true, "select-object": true, "select": true, "measure-object": true, "measure": true}
 )
 
 const searchExcludedNote = "[FastExec Guard] Skipped .git, node_modules, dist, build, vendor and similar dirs; pass --exclude-dir yourself to search them."
@@ -186,6 +186,8 @@ func isTextSearch(label string) bool {
 		}
 		prog := strings.ToLower(strings.TrimSuffix(filepath.Base(tokens[0]), ".exe"))
 		switch {
+		case (prog == "pwsh" || prog == "powershell") && pwshInlineSearch(tokens):
+			found = true
 		case searchPrograms[prog], prog == "git" && len(tokens) > 1 && tokens[1] == "grep":
 			found = true
 		case found && limitPrograms[prog]:
@@ -193,6 +195,16 @@ func isTextSearch(label string) bool {
 		}
 	}
 	return found
+}
+
+// pwshInlineSearch: "pwsh [-NoProfile] -Command <script>" cujo script é busca (Select-String, findstr...).
+func pwshInlineSearch(tokens []string) bool {
+	for i, t := range tokens {
+		if lt := strings.ToLower(t); (lt == "-command" || lt == "-c") && i+1 < len(tokens) {
+			return isTextSearch(strings.Join(tokens[i+1:], " "))
+		}
+	}
+	return false
 }
 
 // truncateSearchOutput corta a saída em searchMaxLines linhas; devolve o texto, o total de linhas e se cortou.
@@ -279,6 +291,16 @@ func shellWords(s string) []string {
 var reCallSearch = regexp.MustCompile(`[A-Za-z_]\w{2,}\\?\(`)
 
 const callSearchHint = "[FastExec FastHint] For call sites use tool 'code_graph' (action 'callers'): graph lookup, no file reading."
+
+// reDeclSearch: o padrão buscado parece declaração ("void Position", "struct Row", "func Foo", "def bar").
+var reDeclSearch = regexp.MustCompile(`\b(?:func|def|class|struct|enum|interface|void|bool|static|HRESULT|LRESULT|BOOL|DWORD)\s+[A-Za-z_]\w*`)
+
+const declSearchHint = "[FastExec FastHint] To find where something is declared use tool 'code_outline' (path = file or folder, symbol = name): line numbers, no file reading."
+
+// isDeclSearch: busca de texto que procura onde algo é declarado.
+func isDeclSearch(label string) bool {
+	return isTextSearch(label) && reDeclSearch.MatchString(label)
+}
 
 // isCallSearch: busca de texto cujo padrão parece chamada de função.
 func isCallSearch(label string) bool {

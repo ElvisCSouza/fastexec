@@ -37,7 +37,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "code_outline",
-		Description: "List a source file's declarations (funcs, types, classes, methods, routes) as 'L<line>: <signature>', or find where a symbol is declared across a directory (skips .git, node_modules, dist, vendor...). Use before read_file or grep to locate code. Go, TS/JS, Python, shell, PowerShell.",
+		Description: "List a source file's declarations (funcs, types, classes, methods, routes) as 'L<line>: <signature>', or find where a symbol is declared across a directory (skips .git, node_modules, dist, vendor...). Use before read_file or grep to locate code. Go, C/C++, TS/JS, Python, shell, PowerShell.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -51,7 +51,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "code_graph",
-		Description: "Code graph of a local repository (incremental index, built on first use, refreshed on every call): 'callers' = where a symbol is called or referenced; 'def' = where it is declared (line range, signature); 'impact' = files that use what a file or symbol defines (check before refactoring). Go via go/ast; TS/JS, Python, shell by line scanners; matched by name, no type resolution.",
+		Description: "Code graph of a local repository (incremental index, built on first use, refreshed on every call): 'callers' = where a symbol is called or referenced; 'def' = where it is declared (line range, signature); 'impact' = files that use what a file or symbol defines (check before refactoring). Go via go/ast; C/C++, TS/JS, Python, shell by line scanners; matched by name, no type resolution.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{

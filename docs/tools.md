@@ -46,8 +46,10 @@ Each one tells the model what it did and what to do next time.
 | `ls`, `dir` of a folder | Served by `file_ops list` |
 | `sleep N` / `timeout N` | Up to 15 s: done with a native timer. Longer: refused, with a pointer to `job` |
 | `cd <host default cwd> && ...` | The redundant `cd` is removed |
+| `grep`, `rg`, `findstr`, `Select-String` (also inside `pwsh -Command`) | Treated as searches by the rows below |
 | recursive `grep` | Gets `--exclude-dir` for `.git`, `node_modules`, `dist`, `build`, `vendor`, caches... |
 | search output over 40 lines | Cut to 40 with a hint to narrow it or use `code_outline` |
+| search for a declaration (`void Foo`, `struct Row`, `func X`) | Hint to use `code_outline` |
 | search for a function's call sites | Hint to use `code_graph` |
 | recursive scan of `C:\`, `C:\Users`, `/`, `/home` | Refused (it would take minutes and flood the context) |
 | PowerShell cmdlet in `cmd.exe` | Hint to use `pwsh` |
@@ -88,7 +90,7 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
 ## code_outline
 
 Declarations of a source file as `L<line>: <signature>`, or, for a folder, where a `symbol` is declared (skips
-dependency and build folders). Go, TypeScript/JavaScript, Python, shell, PowerShell. Use it before reading a file
+dependency and build folders). Go, C/C++, TypeScript/JavaScript, Python, shell, PowerShell. Use it before reading a file
 to jump to the right lines.
 
 ## code_graph
@@ -101,7 +103,9 @@ files are reparsed):
 - `impact`: files that use what a file or symbol defines (check before refactoring);
 - `index`: full rebuild.
 
-Go is parsed with `go/ast`; the other languages with line scanners, matched by name without type resolution.
+Go is parsed with `go/ast`; C/C++, TypeScript/JavaScript, Python, shell and PowerShell with line scanners,
+matched by name without type resolution (in C/C++: function and method definitions, classes, structs, unions,
+enums, `#define`, `using` aliases, `#include`; prototypes are not declarations).
 Only repositories (a `.git` folder) are indexed, each in isolation, up to 10 000 files. Index:
 `<data_dir>/telemetry/graph.db`. CLI: `fastexec graph clean` and `fastexec graph repos`.
 

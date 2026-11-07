@@ -120,6 +120,9 @@ func matchDecl(raw string, l *Lang) (Decl, bool) {
 			continue
 		}
 		kind := r.kind(raw)
+		if kind == "" {
+			continue // a regra casou, mas a linha não é declaração (comando, protótipo)
+		}
 		return Decl{Name: name, Kind: kind, Sig: signature(raw), Exported: exported(l, kind, name, raw)}, true
 	}
 	if l.routes {
@@ -142,7 +145,7 @@ func signature(s string) string {
 // endLine acha o índice (0-based) da última linha do bloco que começa em i: por chaves balanceadas no texto limpo,
 // ou por indentação (Python). Declaração sem bloco (type X = ..., rota) termina na própria linha.
 func endLine(lines, clean []string, i int, l *Lang, kind string) int {
-	if kind == "route" {
+	if kind == "route" || kind == "macro" || (kind == "type" && l.Name == "c") {
 		return i
 	}
 	if l.indentBlocks {
@@ -159,10 +162,15 @@ func endLine(lines, clean []string, i int, l *Lang, kind string) int {
 		}
 		return end
 	}
-	depth, started := 0, false
+	// parens abertos = assinatura em várias linhas: segue até fechar antes de procurar a chave do corpo
+	depth, parens, started := 0, 0, false
 	for j := i; j < len(clean) && j < i+20000; j++ {
 		for _, c := range clean[j] {
 			switch c {
+			case '(':
+				parens++
+			case ')':
+				parens--
 			case '{':
 				depth++
 				started = true
@@ -174,13 +182,35 @@ func endLine(lines, clean []string, i int, l *Lang, kind string) int {
 			return j
 		}
 		if !started {
-			if j == i && j+1 < len(clean) && strings.HasPrefix(strings.TrimSpace(clean[j+1]), "{") {
+			if parens > 0 && j-i < 50 {
 				continue
+			}
+			if j+1 < len(clean) {
+				next := strings.TrimSpace(clean[j+1])
+				// corpo na linha seguinte; em C++, também a lista de inicialização do construtor (": a(x)", ", b(y)")
+				if strings.HasPrefix(next, "{") || (l.cppRaw && j-i < 50 && (strings.HasPrefix(next, ":") || strings.HasPrefix(next, ","))) {
+					continue
+				}
 			}
 			return i
 		}
 	}
 	return i
+}
+
+// rawPrefixOK: o R de R"( começa um literal cru (não é o fim de um identificador), com ou sem prefixo L, u, U, u8.
+func rawPrefixOK(line string, i int) bool {
+	ident := func(b byte) bool {
+		return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+	}
+	j := i
+	switch {
+	case j >= 2 && line[j-2:j] == "u8":
+		j -= 2
+	case j >= 1 && (line[j-1] == 'L' || line[j-1] == 'u' || line[j-1] == 'U'):
+		j--
+	}
+	return j == 0 || !ident(line[j-1])
 }
 
 func indentOf(s string) int {
@@ -207,10 +237,12 @@ func cleanLines(lines []string, l *Lang) ([]string, []bool) {
 		tripleDQ
 		tripleSQ
 		backtick
+		rawStr // C++ R"delim(...)delim"
 	)
 	clean := make([]string, len(lines))
 	inside := make([]bool, len(lines))
 	state := none
+	rawClose := ""
 	var b strings.Builder
 	for n, line := range lines {
 		inside[n] = state != none
@@ -234,6 +266,13 @@ func cleanLines(lines []string, l *Lang) ([]string, []bool) {
 					state = none
 					b.WriteString(`""`)
 					i += 2
+				}
+				continue
+			case rawStr:
+				if strings.HasPrefix(line[i:], rawClose) {
+					state = none
+					b.WriteByte('"')
+					i += len(rawClose) - 1
 				}
 				continue
 			case backtick:
@@ -260,6 +299,15 @@ func cleanLines(lines []string, l *Lang) ([]string, []bool) {
 					state = tripleSQ
 				}
 				i += 2
+			case l.cppRaw && c == 'R' && i+1 < len(line) && line[i+1] == '"' && rawPrefixOK(line, i):
+				if j := strings.IndexByte(line[i+2:], '('); j >= 0 && j <= 16 {
+					rawClose = ")" + line[i+2:i+2+j] + "\""
+					b.WriteByte('"')
+					state = rawStr
+					i += 2 + j
+				} else {
+					b.WriteByte(c)
+				}
 			case l.backtick && c == '`':
 				b.WriteByte('`')
 				state = backtick

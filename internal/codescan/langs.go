@@ -21,6 +21,7 @@ type Lang struct {
 	backtick     bool             // strings `...` multilinha (JS template, Go raw)
 	backtickEsc  bool             // '\' escapa dentro da crase (JS template); em Go a crase é crua, sem escape
 	indentBlocks bool             // fim de bloco por indentação (Python); senão por chaves
+	cppRaw       bool             // strings cruas R"delim(...)delim" multilinha (C++)
 	imports      []*regexp.Regexp // grupo 1 = módulo importado
 	importNames  *regexp.Regexp   // grupo 1 = lista de nomes importados ("a, b as c")
 }
@@ -67,7 +68,9 @@ var (
 		"return": true, "else": true, "do": true, "with": true, "def": true, "class": true, "elif": true, "in": true,
 		"not": true, "and": true, "or": true, "lambda": true, "typeof": true, "sizeof": true, "try": true,
 		"except": true, "assert": true, "yield": true, "await": true, "async": true, "import": true, "from": true,
-		"require": true, "export": true, "func": true, "go": true, "defer": true, "case": true, "new": true}
+		"require": true, "export": true, "func": true, "go": true, "defer": true, "case": true, "new": true,
+		"defined": true, "decltype": true, "alignof": true, "alignas": true, "static_assert": true, "noexcept": true,
+		"__declspec": true, "__attribute__": true, "operator": true, "throw": true, "delete": true}
 
 	langGo = &Lang{Name: "go", slashComment: true, backtick: true, routes: true, rules: []rule{
 		{regexp.MustCompile(`^func\s+(?:\([^)]*\)\s*)?(?P<name>\w+)`), goFuncKind},
@@ -117,7 +120,23 @@ var (
 		imports: []*regexp.Regexp{regexp.MustCompile(`^\s*\.\s+([^\s;|&]+)`), regexp.MustCompile(`(?i)\bImport-Module\s+([^\s;|&]+)`)},
 	}
 
+	// C e C++: definições (não protótipos) de funções e métodos, classes/structs/unions/enums, #define, using.
+	// Função no nível do arquivo: linha sem recuo, tipo + nome + '(' e sem ';' no fim (Class::Metodo vira método).
+	// Recuada (método dentro da classe): exige tipo antes do nome e ')' no fim, sem '=' nem ';'.
+	langC = &Lang{Name: "c", slashComment: true, cppRaw: true,
+		rules: []rule{
+			{regexp.MustCompile(`^\s*#\s*define\s+(?P<name>\w+)`), fixed("macro")},
+			{regexp.MustCompile(`^\s*(?:template\s*<.*>\s*)?(?:typedef\s+)?(?:class|struct|union|enum(?:\s+(?:class|struct))?)\s+(?:__declspec\([^)]*\)\s+|alignas\([^)]*\)\s+|[A-Z_]{3,}\s+)*(?P<name>\w+)\s*(?:final\s*)?(?::[^;{]*)?\{?\s*$`), cTypeKind},
+			{regexp.MustCompile(`^\s*using\s+(?P<name>\w+)\s*=`), fixed("type")},
+			{regexp.MustCompile(`^(?:template\s*<.*>\s*)?(?:[\w:<>,~\[\]]+[*&]*\s+)*[\w:<>,~\[\]]+(?:\s+|\s*[*&]+\s*)(?:\w+::)*(?P<name>~?\w+)\s*\((?:[^;]*|.*\)\s*(?:const\s*)?(?:noexcept\s*)?\{.*)$`), cFuncKind},
+			{regexp.MustCompile(`^(?:\w+::)+(?P<name>~?\w+)\s*\([^;]*$`), fixed("method")}, // construtor/destrutor fora da classe
+			{regexp.MustCompile(`^\s+(?:(?:virtual|static|inline|explicit|constexpr|friend|STDMETHODCALLTYPE|WINAPI|CALLBACK|__stdcall)\s+)*(?:[\w:<>,*&\[\]]+\s+)+[*&]*\s*(?P<name>~?\w+)\s*\([^;=]*\)\s*(?:const\s*)?(?:noexcept\s*)?(?:override\s*)?(?:final\s*)?(?:\{.*|//.*)?$`), cFuncKind},
+		},
+		imports: []*regexp.Regexp{regexp.MustCompile(`^\s*#\s*include\s*[<"]([^>"]+)[>"]`)},
+	}
+
 	langByExt = map[string]*Lang{
+		".c": langC, ".h": langC, ".cc": langC, ".cpp": langC, ".cxx": langC, ".hpp": langC, ".hh": langC, ".hxx": langC, ".inl": langC,
 		".go": langGo,
 		".ts": langJS, ".tsx": langJS, ".mts": langJS, ".cts": langJS,
 		".js": langJS, ".jsx": langJS, ".mjs": langJS, ".cjs": langJS,
@@ -137,7 +156,49 @@ func LangFor(path string) *Lang {
 }
 
 // Supported lista as extensões aceitas (para mensagens de erro).
-const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1"
+const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp"
+
+// cKeywords: palavra que abre a linha e mostra que ela é comando, não declaração ("return f(x)", "else g(").
+var cKeywords = map[string]bool{"return": true, "else": true, "delete": true, "new": true, "case": true, "throw": true,
+	"goto": true, "co_return": true, "co_await": true, "co_yield": true, "if": true, "for": true, "while": true, "switch": true,
+	"do": true, "sizeof": true, "using": true, "typedef": true, "namespace": true, "operator": true, "static_assert": true,
+	"decltype": true, "defined": true, "#if": true, "#elif": true}
+
+func cFuncKind(line string) string {
+	t := strings.TrimSpace(line)
+	first := t
+	if i := strings.IndexAny(t, " \t("); i >= 0 {
+		first = t[:i]
+	}
+	// ':' e ',' no começo = lista de inicialização de construtor (": a(x), b(y)")
+	if cKeywords[first] || strings.HasPrefix(t, "#") || strings.HasPrefix(t, ":") || strings.HasPrefix(t, ",") || strings.Contains(t, "operator") {
+		return ""
+	}
+	pre := t
+	if i := strings.Index(t, "("); i >= 0 {
+		pre = t[:i]
+	}
+	if strings.Contains(pre, "=") || strings.Contains(pre, "(") || strings.Contains(pre, ".") || strings.Contains(pre, "->") {
+		return ""
+	}
+	if strings.Contains(pre, "::") || (len(line) > 0 && (line[0] == ' ' || line[0] == '\t')) {
+		return "method"
+	}
+	return "func"
+}
+
+func cTypeKind(line string) string {
+	t := strings.TrimSpace(line)
+	if strings.HasSuffix(t, ";") {
+		return "" // declaração adiantada (struct X;)
+	}
+	for _, k := range []string{"enum", "union", "class", "struct"} {
+		if strings.Contains(" "+t+" ", " "+k+" ") {
+			return k
+		}
+	}
+	return "type"
+}
 
 func exported(l *Lang, kind, name, line string) bool {
 	switch l.Name {
@@ -151,6 +212,8 @@ func exported(l *Lang, kind, name, line string) bool {
 		return strings.HasPrefix(strings.TrimSpace(line), "export")
 	case "py":
 		return !strings.HasPrefix(name, "_")
+	case "c":
+		return !strings.HasPrefix(strings.TrimSpace(line), "static ")
 	}
 	return true
 }

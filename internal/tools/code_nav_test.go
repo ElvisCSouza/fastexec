@@ -224,6 +224,22 @@ func TestIsCallSearch(t *testing.T) {
 	}
 }
 
+func TestIsDeclSearch(t *testing.T) {
+	cases := map[string]bool{
+		`findstr /n /c:"void Position" /c:"void Invalidate" GpuNavPane.wh.cpp`:     true,
+		`grep -n "func HandleExec" internal/tools/exec.go`:                         true,
+		`pwsh -NoProfile -Command Select-String -Path a.cpp -Pattern 'struct Row'`: true,
+		`grep -rn "Invalidate(" .`:                                                 false,
+		`echo "void Position"`:                                                     false,
+		`findstr /n /c:"g_overlayAtom" a.cpp`:                                      false,
+	}
+	for c, want := range cases {
+		if got := isDeclSearch(c); got != want {
+			t.Errorf("isDeclSearch(%q) = %v, quer %v", c, got, want)
+		}
+	}
+}
+
 func TestIsTextSearchAndTruncate(t *testing.T) {
 	cases := map[string]bool{
 		"grep -rn foo .":            true,

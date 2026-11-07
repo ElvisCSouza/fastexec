@@ -139,8 +139,13 @@ func HandleExec(args ExecArgs) (string, error) {
 	} else if excluded && out == NoResultText {
 		out += "\n" + searchExcludedNote
 	}
-	if !searchGuardOff() && isCallSearch(label) {
-		out = strings.TrimRight(out, "\r\n") + "\n" + callSearchHint
+	if !searchGuardOff() {
+		switch {
+		case isDeclSearch(label):
+			out = strings.TrimRight(out, "\r\n") + "\n" + declSearchHint
+		case isCallSearch(label):
+			out = strings.TrimRight(out, "\r\n") + "\n" + callSearchHint
+		}
 	}
 	if res.TimedOut && clampedFrom > 0 {
 		out += fmt.Sprintf("\nThe requested timeout_ms (%d) was capped at %d ms, the ceiling before the MCP client cuts the call.", clampedFrom.Milliseconds(), timeout.Milliseconds())
