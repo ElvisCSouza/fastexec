@@ -4,6 +4,7 @@ package transport
 
 import (
 	"fmt"
+	"os/exec"
 	"time"
 )
 
@@ -26,6 +27,10 @@ type LocalJobInfo struct {
 	Active       uint32
 	LastActivity time.Time
 	LogSize      int64
+}
+
+func handoffToJob(localSpec, time.Time, *exec.Cmd, *jobObject, string, *switchWriter, *switchWriter, <-chan error) (string, []byte, []byte, error) {
+	return "", nil, nil, fmt.Errorf("handoff to a job is only available on Windows")
 }
 
 func LocalJobsDir() (string, error) {

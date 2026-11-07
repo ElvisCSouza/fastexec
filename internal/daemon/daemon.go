@@ -10,6 +10,7 @@ import (
 
 	"homelab/fastexec/internal/logger"
 	"homelab/fastexec/internal/mcp"
+	"homelab/fastexec/internal/transport"
 )
 
 const (
@@ -41,6 +42,7 @@ type RPCError struct {
 
 // RunDaemon sobe o listener TCP do daemon residente em 127.0.0.1:9146.
 func RunDaemon() error {
+	transport.HandoffOnTimeout = true // o daemon vive além da chamada: exec que estoura vira job em vez de morrer
 	l, err := net.Listen("tcp", Addr)
 	if err != nil {
 		return fmt.Errorf("daemon already running or port in use: %w", err)

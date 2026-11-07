@@ -66,6 +66,7 @@ func Main() {
 		if replaced, err := daemon.EnsureCurrent(); replaced || err != nil {
 			logger.Info("[daemon] replaced a daemon from another binary (err: %v)", err)
 		}
+		transport.HandoffOnTimeout = true // sem daemon, as tools rodam neste processo, que vive a sessão inteira
 		server := mcp.NewServer()
 		server.Forwarder = func(name string, rawArgs json.RawMessage) (mcp.ToolCallResult, error) {
 			res, err := daemon.CallTool(name, rawArgs)

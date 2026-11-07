@@ -224,6 +224,22 @@ func TestIsCallSearch(t *testing.T) {
 	}
 }
 
+func TestIsEditScript(t *testing.T) {
+	cases := map[string]bool{
+		`pwsh -NoProfile -Command cd W:\x; (Get-Content a.wh.cpp -Raw) -replace '@version 1', '@version 2' | Set-Content a.wh.cpp`: true,
+		`pwsh -Command $t=[IO.File]::ReadAllText('a.cpp'); [IO.File]::WriteAllText('a.cpp', $t.Replace('a','b'))`:                  true,
+		`sed -i 's/a/b/' main.go`:              true,
+		`sed -n '1,20p' main.go`:               false,
+		`Get-Content a.txt | Select -First 5`:  false,
+		`(Get-Content a.txt) -replace 'a','b'`: false, // só mostra, não grava
+	}
+	for c, want := range cases {
+		if got := isEditScript(c); got != want {
+			t.Errorf("isEditScript(%q) = %v, quer %v", c, got, want)
+		}
+	}
+}
+
 func TestIsDeclSearch(t *testing.T) {
 	cases := map[string]bool{
 		`findstr /n /c:"void Position" /c:"void Invalidate" GpuNavPane.wh.cpp`:     true,

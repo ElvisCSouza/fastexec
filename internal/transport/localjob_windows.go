@@ -407,6 +407,51 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 	return &meta, nil
 }
 
+// handoffToJob transforma um exec que estourou o timeout em job de fundo, sem matar nada: o job object do exec
+// (nomeado) passa a ser do registro de jobs, a saída capturada vai para o log do job e o resto da saída também.
+// done entrega o fim do processo; aí o log ganha "[exit N]" e fecha. Devolve o id e a saída até agora.
+func handoffToJob(spec localSpec, start time.Time, cmd *exec.Cmd, job *jobObject, jobName string,
+	out, errOut *switchWriter, done <-chan error) (string, []byte, []byte, error) {
+	dir, err := LocalJobsDir()
+	if err != nil {
+		return "", nil, nil, err
+	}
+	running := 0
+	for _, j := range maintain(dir) {
+		if j.State == jobStateRunning {
+			running++
+		}
+	}
+	if running >= LocalJobMaxActive {
+		return "", nil, nil, fmt.Errorf("limit of %d active local jobs reached", LocalJobMaxActive)
+	}
+	id := newJobID()
+	logPath := filepath.Join(dir, id+".log")
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	meta := LocalJobMeta{ID: id, Command: spec.cmdStr, Argv: spec.argv, Cwd: spec.cwd, PID: cmd.Process.Pid,
+		CreatedAt: start, JobObjectName: jobName, LogPath: logPath, State: jobStateRunning}
+	if err := saveMeta(dir, meta); err != nil {
+		f.Close()
+		os.Remove(logPath)
+		return "", nil, nil, err
+	}
+	own(jobName, job.h) // o handle passa a ser do registro: o job vive enquanto este FastExec viver
+
+	stdout := out.toFile(f)
+	stderr := errOut.toFile(f)
+	go func() {
+		werr := <-done
+		out.detach()
+		errOut.detach()
+		fmt.Fprintf(f, "\n[exit %d]\n", exitCodeOf(cmd, werr))
+		f.Close()
+	}()
+	return id, stdout, stderr, nil
+}
+
 // LocalJobStatus devolve o estado vivo do job (aplicando a higiene antes).
 func LocalJobStatus(id string) (*LocalJobInfo, error) {
 	dir, err := LocalJobsDir()

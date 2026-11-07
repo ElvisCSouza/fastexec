@@ -8,6 +8,12 @@ func newJobObject() (*jobObject, error) {
 	return &jobObject{}, nil
 }
 
+// newExecJob: fora do Windows não há job nomeado nem handoff.
+func newExecJob(bool) (*jobObject, string, error) {
+	j, err := newJobObject()
+	return j, "", err
+}
+
 func (j *jobObject) assign(pid int) error {
 	return nil
 }

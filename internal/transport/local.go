@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"homelab/fastexec/internal/env"
@@ -63,14 +64,13 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	}
 
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 
 	// pwsh -Command - (script no stdin) descarta o bloco multilinha final sem linha em branco depois dele.
 	argv, stdin := spec.argv, pwshStdinInput(spec.argv, spec.input)
 
 	// Job Object: toda a árvore de processos do comando morre junto no timeout e ao fim da chamada (nada fica órfão).
-	job, jerr := newJobObject()
+	// Com HandoffOnTimeout o job tem nome, para poder virar job de fundo no estouro.
+	job, jobName, jerr := newExecJob(HandoffOnTimeout)
 	if jerr != nil {
 		logger.Debug("[local] job object unavailable, falling back to killing only the main process: %v", jerr)
 	}
@@ -78,20 +78,13 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	var cmd *exec.Cmd
 	if argv != nil {
 		effectiveArgv := ResolveShellArgv(argv)
-		cmd = exec.CommandContext(ctx, effectiveArgv[0], effectiveArgv[1:]...)
+		cmd = exec.Command(effectiveArgv[0], effectiveArgv[1:]...)
 		cmd.SysProcAttr = hideWindowSysProcAttr()
 	} else {
-		cmd = buildShellCommand(ctx, spec.cmdStr)
+		cmd = buildShellCommand(context.Background(), spec.cmdStr)
 	}
 	if spec.cwd != "" {
 		cmd.Dir = spec.cwd
-	}
-	cmd.Cancel = func() error {
-		if job != nil {
-			job.kill()
-		}
-		cmd.Process.Kill() // melhor esforço; o job já cobre a árvore quando disponível
-		return nil
 	}
 	cmd.WaitDelay = waitDelay
 
@@ -100,7 +93,7 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 
 	cmd.Env = localEnv()
 
-	stdoutBuf, stderrBuf := &capBuffer{}, &capBuffer{}
+	stdoutBuf, stderrBuf := &switchWriter{}, &switchWriter{}
 	cmd.Stdout = stdoutBuf
 	cmd.Stderr = stderrBuf
 
@@ -118,8 +111,32 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 		}
 	}
 
-	werr := cmd.Wait()
-	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	var werr error
+	timedOut := false
+	select {
+	case werr = <-done:
+	case <-timer.C:
+		// estourou: com o processo vivendo além da chamada (daemon/servidor MCP), vira job de fundo em vez de morrer
+		if job != nil && jobName != "" && HandoffOnTimeout {
+			id, out, errOut, herr := handoffToJob(spec, start, cmd, job, jobName, stdoutBuf, stderrBuf, done)
+			if herr == nil {
+				return &ExecResult{ExitCode: 0, Stdout: decodeMixed(out), Stderr: decodeMixed(errOut),
+					Duration: time.Since(start).Milliseconds(), Local: true, JobID: id}, nil
+			}
+			logger.Debug("[local] handoff to job failed, killing instead: %v", herr)
+		}
+		timedOut = true
+		if job != nil {
+			job.kill()
+		}
+		_ = cmd.Process.Kill() // melhor esforço; o job já cobre a árvore quando disponível
+		werr = <-done
+	}
 	var leftover uint32
 	if job != nil {
 		if !timedOut {
@@ -128,20 +145,10 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 		job.close() // KILL_ON_JOB_CLOSE: o que ainda estiver vivo na árvore morre aqui
 	}
 
-	switch {
-	case timedOut:
+	if timedOut {
 		exitCode = -1
-	case werr == nil:
-		exitCode = 0
-	default:
-		var exitErr *exec.ExitError
-		if errors.As(werr, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		} else if errors.Is(werr, exec.ErrWaitDelay) && cmd.ProcessState != nil {
-			exitCode = cmd.ProcessState.ExitCode() // o processo terminou; só um neto segurava o pipe
-		} else {
-			exitCode = -1
-		}
+	} else {
+		exitCode = exitCodeOf(cmd, werr)
 	}
 
 	durationMs := time.Since(start).Milliseconds()
@@ -156,6 +163,66 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 		Leftover: leftover,
 		Local:    true,
 	}, nil
+}
+
+// exitCodeOf traduz o retorno do Wait em código de saída (-1 quando não há código).
+func exitCodeOf(cmd *exec.Cmd, werr error) int {
+	if werr == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if errors.As(werr, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	if errors.Is(werr, exec.ErrWaitDelay) && cmd.ProcessState != nil {
+		return cmd.ProcessState.ExitCode() // o processo terminou; só um neto segurava o pipe
+	}
+	return -1
+}
+
+// HandoffOnTimeout: no estouro do timeout, o exec local (Windows) vira job de fundo em vez de matar a árvore.
+// Ligado só onde o processo vive além da chamada (daemon local e servidor MCP); no CLI de um comando só, o job
+// morreria junto com o processo, então lá o estouro continua matando.
+var HandoffOnTimeout bool
+
+// switchWriter captura a saída em memória e, depois do handoff, passa a escrever no log do job.
+type switchWriter struct {
+	mu   sync.Mutex
+	buf  capBuffer
+	file *os.File
+}
+
+func (w *switchWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file != nil {
+		_, _ = w.file.Write(p) // erro de disco não pode matar o filho por pipe quebrado
+		return len(p), nil
+	}
+	return w.buf.Write(p)
+}
+
+func (w *switchWriter) Bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Bytes()
+}
+
+// toFile grava no arquivo o que já foi capturado e manda o resto para lá; devolve a captura.
+func (w *switchWriter) toFile(f *os.File) []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	snap := w.buf.Bytes()
+	_, _ = f.Write(snap)
+	w.file = f
+	return snap
+}
+
+// detach para de escrever no arquivo (antes de fechá-lo).
+func (w *switchWriter) detach() {
+	w.mu.Lock()
+	w.file = nil
+	w.mu.Unlock()
 }
 
 // headlessEnv define as variáveis canônicas para execução 100% autônoma ("interface zero / humano zero").

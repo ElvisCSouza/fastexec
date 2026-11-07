@@ -1,10 +1,10 @@
 {
-  "wire_bytes": 9329,
+  "wire_bytes": 9395,
   "result": {
     "tools": [
       {
         "name": "exec",
-        "description": "Run a command on a host and return its output as soon as the process exits (default limit 45 s). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, file_ops to manage them, code_outline/code_graph to locate code, and the 'job' tool for anything over ~30 s. On timeout the process tree is killed and the partial output is returned; stdin without 'input' is an immediate EOF.",
+        "description": "Run a command on a host and return its output as soon as the process exits (default limit 45 s). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, file_ops to manage them, code_outline/code_graph to locate code, and the 'job' tool for anything over ~30 s. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
         "inputSchema": {
           "type": "object",
           "properties": {

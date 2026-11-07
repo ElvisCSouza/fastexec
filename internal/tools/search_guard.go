@@ -292,6 +292,24 @@ var reCallSearch = regexp.MustCompile(`[A-Za-z_]\w{2,}\\?\(`)
 
 const callSearchHint = "[FastExec FastHint] For call sites use tool 'code_graph' (action 'callers'): graph lookup, no file reading."
 
+// Edição de arquivo por script (ler, substituir, gravar): o edit_file faz o mesmo numa chamada, sem script, mantendo
+// a quebra de linha do arquivo e atualizando o grafo de código.
+var (
+	reEditRead    = regexp.MustCompile(`(?i)\bGet-Content\b|\bgc\s|ReadAllText|ReadAllLines`)
+	reEditWrite   = regexp.MustCompile(`(?i)\bSet-Content\b|\bsc\s|WriteAllText|WriteAllLines|\bOut-File\b`)
+	reEditReplace = regexp.MustCompile(`(?i)-c?replace\b|\.Replace\(`)
+	reSedInPlace  = regexp.MustCompile(`\bsed\s+(?:-[a-zA-Z]*\s+)*-i|\bperl\s+-[a-z]*p[a-z]*i`)
+)
+
+const editScriptHint = "[FastExec FastHint] To change a file use tool 'edit_file' (several exact replacements in one call with 'edits'): no script, keeps line endings, refreshes the code graph."
+
+func isEditScript(label string) bool {
+	if reSedInPlace.MatchString(label) {
+		return true
+	}
+	return reEditRead.MatchString(label) && reEditWrite.MatchString(label) && reEditReplace.MatchString(label)
+}
+
 // reDeclSearch: o padrão buscado parece declaração ("void Position", "struct Row", "func Foo", "def bar").
 var reDeclSearch = regexp.MustCompile(`\b(?:func|def|class|struct|enum|interface|void|bool|static|HRESULT|LRESULT|BOOL|DWORD)\s+[A-Za-z_]\w*`)
 

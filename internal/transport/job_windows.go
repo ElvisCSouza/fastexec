@@ -3,8 +3,11 @@
 package transport
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -19,6 +22,20 @@ type jobObject struct {
 }
 
 func newJobObject() (*jobObject, error) { return newNamedJobObject("") }
+
+var execJobSeq atomic.Uint64
+
+// newExecJob cria o job de um exec; named=true dá um nome único (Local\FastExec_Exec_<pid>_<n>) para o job poder
+// ser assumido pela tool job no handoff e achado por outro processo FastExec.
+func newExecJob(named bool) (*jobObject, string, error) {
+	if !named {
+		j, err := newJobObject()
+		return j, "", err
+	}
+	name := fmt.Sprintf(`Local\FastExec_Exec_%d_%d`, os.Getpid(), execJobSeq.Add(1))
+	j, err := newNamedJobObject(name)
+	return j, name, err
+}
 
 // newNamedJobObject cria o job (com KILL_ON_JOB_CLOSE); name vazio = job anônimo. Nome no namespace Local\ da sessão.
 func newNamedJobObject(name string) (*jobObject, error) {

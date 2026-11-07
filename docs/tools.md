@@ -13,8 +13,10 @@ Runs a command and returns as soon as it exits.
 - `cwd`: working directory; relative paths resolve from the host's configured `cwd`.
 - `input`: sent to stdin. Long scripts go here: `argv: ["python", "-"]` or
   `argv: ["pwsh", "-NoProfile", "-Command", "-"]` with the script in `input`, no temp files.
-- `timeout_ms`: default 45 000, at most 50 000, to stay under the 60 s limit of MCP clients. On timeout the whole
-  process tree is killed and the partial output returned. Longer work belongs in `job`.
+- `timeout_ms`: default 45 000, at most 50 000, to stay under the 60 s limit of MCP clients. On timeout the partial
+  output is returned and the whole process tree is killed; on Windows `local` (from an MCP client) the command is
+  not killed but moved to a background job, with the id to `wait` on, so a long build or deploy is never cut in
+  the middle. Longer work belongs in `job` from the start.
 - `powershell` is promoted to PowerShell 7 (`pwsh`) when it is installed.
 
 Every command runs non-interactively: `CI=1`, `TERM=dumb`, `NO_COLOR=1`, `PAGER=cat`, `GIT_PAGER=cat`,
@@ -54,6 +56,7 @@ Each one tells the model what it did and what to do next time.
 | recursive scan of `C:\`, `C:\Users`, `/`, `/home` | Refused (it would take minutes and flood the context) |
 | PowerShell cmdlet in `cmd.exe` | Hint to use `pwsh` |
 | child processes left running after the command | Killed, with a warning to use `job` |
+| edit by script (`Get-Content ... -replace ... Set-Content`, `sed -i`) | Hint to use `edit_file` with `edits` |
 
 `FASTEXEC_NO_SEARCH_GUARD=1` disables the search and broad-root guards.
 

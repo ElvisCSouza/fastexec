@@ -125,6 +125,9 @@ func HandleExec(args ExecArgs) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if res.JobID != "" {
+		return handoffResult(*res, timeout), nil
+	}
 
 	searchHint := ""
 	if !res.TimedOut && !searchGuardOff() && isTextSearch(label) {
@@ -141,6 +144,8 @@ func HandleExec(args ExecArgs) (string, error) {
 	}
 	if !searchGuardOff() {
 		switch {
+		case isEditScript(label):
+			out = strings.TrimRight(out, "\r\n") + "\n" + editScriptHint
 		case isDeclSearch(label):
 			out = strings.TrimRight(out, "\r\n") + "\n" + declSearchHint
 		case isCallSearch(label):
@@ -650,6 +655,23 @@ func tryRemediateList(args ExecArgs) (string, bool, error) {
 
 	out := fmt.Sprintf("[FastExec Auto-Remediation] '%s' was run as the native 'file_ops' tool (action='list', no process).\nNext time call 'file_ops' with action='list' directly to save time and tokens.\n---\n%s", cmdLabel, formatted)
 	return out, true, nil
+}
+
+// handoffResult: o comando estourou o timeout e seguiu como job de fundo (nada foi morto). Saída parcial limpa e
+// cortada como qualquer saída, e o que fazer a seguir.
+func handoffResult(res transport.ExecResult, timeout time.Duration) string {
+	var b strings.Builder
+	if s := strings.TrimRight(cleanOutputFor(res.Stdout, ""), "\r\n"); s != "" {
+		b.WriteString(s + "\n")
+	}
+	if s := strings.TrimRight(cleanOutputFor(res.Stderr, ""), "\r\n"); s != "" {
+		b.WriteString("[stderr]\n" + s + "\n")
+	}
+	fmt.Fprintf(&b, "[FastExec] Still running after %s, so it was moved to background job '%s' (nothing was killed; output above is partial). "+
+		"Next: job(host='local', action='wait', job_id='%s'); 'tail' shows the log, 'stop' cancels. "+
+		"Next time start commands this long with job(action='start').",
+		human(timeout), res.JobID, res.JobID)
+	return b.String()
 }
 
 // lsMaxEntries: teto de linhas da listagem nativa que substitui ls/dir (um dir de pasta grande chegou a 165 KB).
