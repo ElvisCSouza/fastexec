@@ -23,7 +23,7 @@ type discAgg struct {
 }
 
 func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, error) {
-	q := `SELECT tool, COALESCE(command_summary,''), COALESCE(est_tokens_out,0) FROM audit ` + periodWhere(filter)
+	q := `SELECT tool, COALESCE(command_summary,''), COALESCE(est_tokens_out,0), COALESCE(client,'') FROM audit ` + periodWhere(filter)
 	rows, err := db.Query(q)
 	if err != nil {
 		return "", err
@@ -31,15 +31,29 @@ func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, 
 	defer rows.Close()
 
 	byTool := map[string]*discAgg{}
+	byClient := map[string]*discAgg{}
 	byCmd := map[string]*discAgg{}
 	reads := map[string]int64{}
 	var execCalls, execTokens, overCap, saved int64
 	for rows.Next() {
-		var tool, summary string
+		var tool, summary, client string
 		var tok int64
-		if err := rows.Scan(&tool, &summary, &tok); err != nil {
+		if err := rows.Scan(&tool, &summary, &tok, &client); err != nil {
 			return "", err
 		}
+		if i := strings.LastIndexByte(client, '#'); i > 0 {
+			client = client[:i] // agrupa pelo nome do cliente, sem o pid
+		}
+		if client == "" {
+			client = "(unknown / before tracking)"
+		}
+		ca := byClient[client]
+		if ca == nil {
+			ca = &discAgg{}
+			byClient[client] = ca
+		}
+		ca.calls++
+		ca.tokens += tok
 		a := byTool[tool]
 		if a == nil {
 			a = &discAgg{}
@@ -83,6 +97,11 @@ func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, 
 	for _, k := range topKeys(byTool, 8) {
 		a := byTool[k]
 		fmt.Fprintf(&b, "  %-12s %7d calls %10d tokens  (largest %d)\n", k, a.calls, a.tokens, a.max)
+	}
+	fmt.Fprintf(&b, "\nBy client (MCP channel):\n")
+	for _, k := range topKeys(byClient, 8) {
+		a := byClient[k]
+		fmt.Fprintf(&b, "  %-28s %7d calls %10d tokens\n", k, a.calls, a.tokens)
 	}
 	fmt.Fprintf(&b, "\nexec: %d calls, %d tokens. Soft cap %d tokens would cut %d calls and save ~%d tokens.\n", execCalls, execTokens, softCapTokens, overCap, saved)
 	fmt.Fprintf(&b, "\nexec by command (first word):\n")

@@ -65,6 +65,8 @@ type PropertyDef struct {
 }
 
 type Server struct {
+	clientMu   sync.Mutex
+	clientName string // clientInfo.name do initialize (ex.: claude-ai, local-agent-mode-fastexec)
 	mu        sync.Mutex
 	writer    *bufio.Writer
 	Forwarder func(name string, rawArgs json.RawMessage) (ToolCallResult, error)
@@ -124,7 +126,11 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) ToolCallResu
 
 func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
 	start := time.Now()
+	client := callerOf(rawArgs)
 	bytesIn := len(rawArgs)
+	if client != "" {
+		bytesIn -= len(`,"_caller":""`) + len(client) // não conta o campo interno como entrada da LLM
+	}
 	host, summary := telemetry.SummarizeCall(name, rawArgs)
 
 	defer func() {
@@ -198,6 +204,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		ExitCode:       exitCode,
 		ErrorMessage:   errMsg,
 		CommandSummary: summary,
+		Client:         client,
 		Truncated:      name == "exec" && tools.IsTruncated(outText),
 		NoResult:       name == "exec" && tools.IsNoResult(outText),
 	})
@@ -245,6 +252,7 @@ func (s *Server) serve(r io.Reader) error {
 
 		switch req.Method {
 		case "initialize":
+			s.setClient(req.Params)
 			s.writeResponse(JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
@@ -294,7 +302,7 @@ func (s *Server) serve(r io.Reader) error {
 					return
 				}
 
-				result := s.dispatchTool(callParams.Name, callParams.Arguments)
+				result := s.dispatchTool(callParams.Name, withCaller(callParams.Arguments, s.callerID()))
 				s.writeResponse(JSONRPCResponse{
 					JSONRPC: "2.0",
 					ID:      r.ID,

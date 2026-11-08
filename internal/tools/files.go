@@ -26,6 +26,7 @@ type ReadFileArgs struct {
 	Numbered  bool   `json:"numbered,omitempty"`
 	Pattern   string `json:"pattern,omitempty"`
 	Context   int    `json:"context,omitempty"`
+	Caller    string `json:"_caller,omitempty"` // canal MCP (injetado pelo proxy, não vem da LLM)
 }
 
 type EditFileArgs struct {
@@ -34,6 +35,7 @@ type EditFileArgs struct {
 	Target      string   `json:"target"`
 	Replacement string   `json:"replacement"`
 	Edits       []EditOp `json:"edits,omitempty"`
+	Caller      string   `json:"_caller,omitempty"` // canal MCP (injetado pelo proxy)
 }
 
 // EditOp é uma troca de 'edits': aplicada em ordem sobre o resultado da anterior; todas ou nenhuma.
@@ -245,7 +247,7 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		// (edit_file, code_outline) use handleReadFileInner and see everything.
 		out = capWholeFile(out, args.Path)
 	}
-	if err == nil && noteRead(args.Host, args.Path) == rereadHintAt {
+	if err == nil && noteRead(args.Caller, args.Host, args.Path) == rereadHintAt {
 		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] Third read of this file. To locate code without re-reading: code_outline(path, symbol='name') gives the line; code_graph(action='callers') lists who calls it; read_file(pattern='regex', context=3) returns only matching lines."
 	}
 	return out, err
@@ -270,7 +272,7 @@ func handleReadFileInner(args ReadFileArgs) (string, error) {
 		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			return "", err
+			return "", notFoundWithSuggestions(filePath, err)
 		}
 		if sel, handled, serr := selectLines(string(data), args); handled {
 			return sel, serr
@@ -565,7 +567,11 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 		t, r := matchEOL(newContent, op.Target, op.Replacement)
 		n := strings.Count(newContent, t)
 		if n == 0 {
-			return "", fmt.Errorf("%s not found in '%s'; nothing was written", label, args.Path)
+			msg := fmt.Sprintf("%s not found in '%s'; nothing was written", label, args.Path)
+			if h := nearMiss(newContent, op.Target); h != "" {
+				msg += "\n" + h
+			}
+			return "", fmt.Errorf("%s", msg)
 		}
 		if n > 1 {
 			notes = append(notes, fmt.Sprintf("%s matched %d times; only the first was changed", label, n))
@@ -589,6 +595,9 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 	msg := fmt.Sprintf("[edit_file] %d change(s) applied (%d -> %d bytes) in %s.", len(ops), oldBytes, newBytes, args.Path)
 	if len(notes) > 0 {
 		msg += " Note: " + strings.Join(notes, "; ") + "."
+	}
+	if h := editBatchHint(args.Caller, args.Path, len(ops)); h != "" {
+		msg += "\n" + h
 	}
 	return msg, nil
 }

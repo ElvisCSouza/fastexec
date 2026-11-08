@@ -30,6 +30,7 @@ type AuditEntry struct {
 	CommandSummary string
 	Truncated      bool
 	NoResult       bool
+	Client         string // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
 }
 
 var (
@@ -150,6 +151,11 @@ func setupAuditSchema(db *sql.DB) {
 			}
 		}
 	}
+	if !existing["client"] {
+		if _, err := db.Exec("ALTER TABLE audit ADD COLUMN client TEXT NOT NULL DEFAULT '';"); err != nil {
+			noteFailure("schema migration", err)
+		}
+	}
 }
 
 // Close fecha o banco (usado pelos testes antes de apagar a pasta temporária: no Windows um SQLite aberto
@@ -179,15 +185,15 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		session_id, tool, host, duration_ms,
 		bytes_in, bytes_out, est_tokens_in, est_tokens_out,
 		success, exit_code, error_message, command_summary,
-		truncated, no_result
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		truncated, no_result, client
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := db.Exec(
 		query,
 		e.SessionID, e.Tool, e.Host, e.DurationMs,
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
 		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
-		boolInt(e.Truncated), boolInt(e.NoResult),
+		boolInt(e.Truncated), boolInt(e.NoResult), e.Client,
 	)
 	return err
 }

@@ -23,7 +23,7 @@ type JobArgs struct {
 
 // jobWaitMax mantém o `wait` (local e Linux) abaixo do teto de 60 s do Claude Desktop: passou disso, responde que o job
 // segue ativo em vez de deixar o transporte JSON-RPC cair. Variável só para os testes encurtarem.
-var jobWaitMax = 35 * time.Second
+var jobWaitMax = 45 * time.Second // + 5 s de folga do transporte remoto = 50 s, abaixo dos 55 s do proxy e dos 60 s do cliente
 
 // waitTimeoutMarker é impresso pelo laço remoto quando o prazo do wait acaba com o job ainda ativo.
 const waitTimeoutMarker = "__FASTEXEC_WAIT_TIMEOUT__"
@@ -108,11 +108,9 @@ func HandleJob(args JobArgs) (string, error) {
 		if out == "" {
 			out = res.Stderr
 		}
-		if strings.Contains(out, waitTimeoutMarker) {
-			out = strings.TrimSpace(strings.ReplaceAll(out, waitTimeoutMarker, ""))
-			return fmt.Sprintf("[job %s still running after %s]\nANTI-POLLING: do not call 'wait' back to back. Use your client's scheduling (e.g. a timer) to check again in a few minutes, or end your turn telling the user.\n%s", unit, human(jobWaitMax), out), nil
-		}
-		return fmt.Sprintf("[job %s finished]\n%s", unit, out), nil
+		running := strings.Contains(out, waitTimeoutMarker)
+		out = strings.TrimSpace(strings.ReplaceAll(out, waitTimeoutMarker, ""))
+		return waitReport(unit, args.Host+"|"+unit, out, !running, ""), nil
 
 	case "status":
 		unit := sanitizeUnit(args.JobID)

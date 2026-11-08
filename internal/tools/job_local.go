@@ -98,10 +98,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		}
 		tail, _ := transport.TailLocalJob(args.JobID, 20)
 		tail = capOutput(cleanOutput(tail))
-		if !finished {
-			return fmt.Sprintf("[job %s still running after %s]\nANTI-POLLING: do not call 'wait' back to back. Use your client's scheduling (e.g. a timer) to check again in a few minutes, or end your turn telling the user.\n%s", j.Meta.ID, human(jobWaitMax), tail), nil
-		}
-		return fmt.Sprintf("[job %s finished: %s]\n%s", j.Meta.ID, j.State, tail), nil
+		return waitReport(j.Meta.ID, "local|"+j.Meta.ID, tail, finished, fmt.Sprint(j.State)), nil
 
 	case "list", "ls":
 		jobs, err := transport.LocalJobList()

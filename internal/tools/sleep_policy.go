@@ -60,7 +60,7 @@ func sleepAllowance(cmd string) (notice string, reason string, ok bool) {
 		return fmt.Sprintf("[FastExec Auto-Remediation] Embedded sleep (%gs in total) was allowed because it is within the %gs budget. FastExec is event-driven: prefer waiting on the port, file or job instead of a fixed pause.", total, embeddedSleepBudgetSec), "", true
 	}
 
-	return "", fmt.Sprintf("[FastExec Guard] Embedded sleeps total %gs (budget %gs). Nothing was run. Next: start the long work with job(action='start') and then job(action='wait', job_id=...) (blocks up to 35 s per call); or split the command and drop the pause.", total, embeddedSleepBudgetSec), false
+	return "", fmt.Sprintf("[FastExec Guard] Embedded sleeps total %gs (budget %gs). Nothing was run. Next: start the long work with job(action='start') and then job(action='wait', job_id=...) (blocks up to 45 s per call); or split the command and drop the pause.", total, embeddedSleepBudgetSec), false
 }
 
 // fixTimeoutWrappers is documentation of the prefixes accepted before the
