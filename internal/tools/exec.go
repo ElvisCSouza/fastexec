@@ -245,10 +245,26 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 			"\n[FastExec] Exit code was 0, but the command wrote errors to stderr (above): check that it really did what you expected."), nil
 	}
 
+	// avisos do daemon remoto (ex.: processo em segundo plano que ficou rodando) sempre chegam à LLM
+	if notes := daemonNotes(stderr); notes != "" {
+		return shapeOrCap(strings.TrimRight(stdout, "\r\n") + "\n" + notes), nil
+	}
+
 	return shapeOrCap(stdout), nil
 }
 
 var stderrErrorRegex = regexp.MustCompile(`(?i)(exception|\berror\b|\bfatal\b|traceback|not recognized|cannot find|could not|failed|permission denied|no such file)`)
+
+// daemonNotes devolve as linhas "[server-exec] ..." do stderr (avisos do daemon remoto).
+func daemonNotes(stderr string) string {
+	var keep []string
+	for _, l := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "[server-exec]") {
+			keep = append(keep, strings.TrimSpace(l))
+		}
+	}
+	return strings.Join(keep, "\n")
+}
 
 // stderrErrors devolve o stderr (até ~2 KB finais) quando ele contém sinais de erro; "" caso contrário.
 func stderrErrors(stderr string) string {

@@ -176,7 +176,7 @@ func parseSE(addr string) respParser {
 				}
 			}
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				return nil, fmt.Errorf("timeout waiting for %s: the command exceeded the limit", addr)
+				return nil, fmt.Errorf("timeout on %s: the command exceeded the limit and was stopped on the host together with its child processes; for work over ~30 s use job(action='start')", addr)
 			}
 			return nil, fmt.Errorf("could not read the response header from %s: %w", addr, err)
 		}
@@ -296,7 +296,7 @@ func parseX(addr string) respParser {
 				}
 			}
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				return nil, fmt.Errorf("timeout waiting for %s: the command exceeded the limit", addr)
+				return nil, fmt.Errorf("timeout on %s: the command exceeded the limit and was stopped on the host together with its child processes; for work over ~30 s use job(action='start')", addr)
 			}
 			return nil, fmt.Errorf("could not read the response header from %s: %w", addr, err)
 		}

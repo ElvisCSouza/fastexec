@@ -179,18 +179,211 @@ fn watchThread(w: *Watch) void {
         if (fds[1].revents != 0) return; // o filho terminou normalmente
         const rev = fds[0].revents;
         if (rev & (posix.POLL.HUP | posix.POLL.ERR | POLLRDHUP) != 0) {
-            posix.kill(w.child_id, posix.SIG.KILL) catch {};
+            killTree(w.child_id);
             return;
         }
         if (rev & posix.POLL.IN != 0) {
             var b: [1]u8 = undefined;
             const n = posix.recvfrom(w.sock, &b, posix.MSG.PEEK | posix.MSG.DONTWAIT, null, null) catch 0;
             if (n == 0) {
-                posix.kill(w.child_id, posix.SIG.KILL) catch {};
+                killTree(w.child_id);
             }
             return; // dado antecipado do cliente não é suportado: para de vigiar
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Árvore de processos (Linux, via /proc; funciona também no busybox dos roteadores).
+// O daemon matava só o filho direto (o shell): no timeout, netos como `tail -f`, `tcpdump` ou um
+// `docker stop` travado ficavam órfãos rodando. Agora o timeout mata a árvore inteira.
+// ---------------------------------------------------------------------------------------------
+
+const ProcInfo = struct { pid: posix.pid_t, ppid: posix.pid_t, state: u8 };
+
+// readProcStat lê estado e ppid de /proc/<pid>/stat ("pid (comm) S ppid ..."; comm pode ter espaços).
+fn readProcStat(pid: posix.pid_t) ?ProcInfo {
+    var pbuf: [32]u8 = undefined;
+    const path = std.fmt.bufPrint(&pbuf, "/proc/{d}/stat", .{pid}) catch return null;
+    const f = fs.openFileAbsolute(path, .{}) catch return null;
+    defer f.close();
+    var buf: [512]u8 = undefined;
+    const n = f.read(&buf) catch return null;
+    const s = buf[0..n];
+    const rp = std.mem.lastIndexOfScalar(u8, s, ')') orelse return null;
+    if (rp + 4 > s.len) return null;
+    const state = s[rp + 2];
+    var it = std.mem.tokenizeScalar(u8, s[rp + 4 ..], ' ');
+    const ppid = std.fmt.parseInt(posix.pid_t, it.next() orelse return null, 10) catch return null;
+    return .{ .pid = pid, .ppid = ppid, .state = state };
+}
+
+fn listProcs(list: *std.ArrayList(ProcInfo)) void {
+    var dir = fs.openDirAbsolute("/proc", .{ .iterate = true }) catch return;
+    defer dir.close();
+    var it = dir.iterate();
+    while (it.next() catch null) |e| {
+        const pid = std.fmt.parseInt(posix.pid_t, e.name, 10) catch continue;
+        if (readProcStat(pid)) |p| list.append(p) catch return;
+    }
+}
+
+fn inSet(set: []const posix.pid_t, pid: posix.pid_t) bool {
+    for (set) |p| if (p == pid) return true;
+    return false;
+}
+
+// addDescendants acrescenta a set todo processo cujo pai já está em set (até estabilizar).
+fn addDescendants(procs: []const ProcInfo, set: *std.ArrayList(posix.pid_t)) void {
+    var grew = true;
+    while (grew) {
+        grew = false;
+        for (procs) |p| {
+            if (inSet(set.items, p.ppid) and !inSet(set.items, p.pid)) {
+                set.append(p.pid) catch return;
+                grew = true;
+            }
+        }
+    }
+}
+
+// killTree congela (SIGSTOP) a árvore para ela não criar processos novos, relê /proc para pegar quem
+// nasceu no meio do caminho e manda SIGKILL em todos. Se /proc falhar, ao menos o filho direto morre.
+fn killTree(root: posix.pid_t) void {
+    const a = std.heap.page_allocator;
+    var set = std.ArrayList(posix.pid_t).init(a);
+    defer set.deinit();
+    set.append(root) catch {};
+    var pass: u8 = 0;
+    while (pass < 2) : (pass += 1) {
+        var procs = std.ArrayList(ProcInfo).init(a);
+        defer procs.deinit();
+        listProcs(&procs);
+        addDescendants(procs.items, &set);
+        for (set.items) |p| posix.kill(p, posix.SIG.STOP) catch {};
+    }
+    for (set.items) |p| posix.kill(p, posix.SIG.KILL) catch {};
+}
+
+fn isZombie(pid: posix.pid_t) bool {
+    const p = readProcStat(pid) orelse return true; // sumiu: já terminou
+    return p.state == 'Z' or p.state == 'X';
+}
+
+// pipeHolders lista (até out.len) os processos, fora este daemon, que têm aberto o pipe de inode ino.
+fn pipeHolders(ino: u64, out: []posix.pid_t) usize {
+    var want_buf: [40]u8 = undefined;
+    const want = std.fmt.bufPrint(&want_buf, "pipe:[{d}]", .{ino}) catch return 0;
+    const self_pid = std.os.linux.getpid();
+    var count: usize = 0;
+    var dir = fs.openDirAbsolute("/proc", .{ .iterate = true }) catch return 0;
+    defer dir.close();
+    var it = dir.iterate();
+    while (it.next() catch null) |e| {
+        const pid = std.fmt.parseInt(posix.pid_t, e.name, 10) catch continue;
+        if (pid == self_pid) continue;
+        var pbuf: [40]u8 = undefined;
+        const fdpath = std.fmt.bufPrint(&pbuf, "/proc/{d}/fd", .{pid}) catch continue;
+        var fdd = fs.openDirAbsolute(fdpath, .{ .iterate = true }) catch continue;
+        defer fdd.close();
+        var fit = fdd.iterate();
+        while (fit.next() catch null) |fe| {
+            var lbuf: [64]u8 = undefined;
+            const target = fdd.readLink(fe.name, &lbuf) catch continue;
+            if (std.mem.eql(u8, target, want)) {
+                if (count < out.len) out[count] = pid;
+                count += 1;
+                break;
+            }
+        }
+    }
+    return count;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Coleta da saída que não espera processos em segundo plano (Linux).
+// Antes, `nohup build.sh &` (ou qualquer `&` sem redirecionar a saída) prendia o pedido até o
+// timeout: o processo em segundo plano herdava o pipe e o daemon esperava o EOF. Agora, quando o
+// processo principal termina, o daemon espera BG_GRACE_MS pelo resto da saída e responde; o que
+// ainda segura o pipe segue vivo (como o `&` pede) e uma thread descarta a saída dele até o fim.
+// ---------------------------------------------------------------------------------------------
+
+const BG_GRACE_MS: i64 = 200;
+const ZOMBIE_CHECK_MS: i64 = 50;
+const MAX_DRAINERS: u32 = 32;
+var drainers = std.atomic.Value(u32).init(0);
+
+fn drainThread(fd_out: posix.fd_t, fd_err: posix.fd_t) void {
+    defer _ = drainers.fetchSub(1, .monotonic);
+    var fds = [2]posix.pollfd{
+        .{ .fd = fd_out, .events = posix.POLL.IN, .revents = 0 },
+        .{ .fd = fd_err, .events = posix.POLL.IN, .revents = 0 },
+    };
+    var buf: [4096]u8 = undefined;
+    while (fds[0].fd != -1 or fds[1].fd != -1) {
+        _ = posix.poll(&fds, -1) catch break;
+        for (&fds) |*p| {
+            if (p.fd == -1 or p.revents == 0) continue;
+            const n = posix.read(p.fd, &buf) catch 0;
+            if (n == 0) {
+                posix.close(p.fd);
+                p.fd = -1;
+            }
+        }
+    }
+    for (fds) |p| if (p.fd != -1) posix.close(p.fd);
+}
+
+// collectPosix lê stdout/stderr do filho até EOF ou até BG_GRACE_MS depois de o processo principal
+// terminar. Devolve quantos processos em segundo plano ficaram com a saída (0 = nenhum) e até 8 pids.
+fn collectPosix(child: *std.process.Child, stdout: *std.ArrayList(u8), stderr: *std.ArrayList(u8), max: usize, holders: *[8]posix.pid_t) !usize {
+    var fds = [2]posix.pollfd{
+        .{ .fd = if (child.stdout) |f| f.handle else -1, .events = posix.POLL.IN, .revents = 0 },
+        .{ .fd = if (child.stderr) |f| f.handle else -1, .events = posix.POLL.IN, .revents = 0 },
+    };
+    child.stdout = null; // os fds agora são desta função (o wait() não fecha de novo)
+    child.stderr = null;
+    const lists = [2]*std.ArrayList(u8){ stdout, stderr };
+    var buf: [16 * 1024]u8 = undefined;
+    var exited_at: ?i64 = null;
+    var last_check: i64 = 0;
+    while (fds[0].fd != -1 or fds[1].fd != -1) {
+        const now = std.time.milliTimestamp();
+        if (exited_at) |t| {
+            if (now - t >= BG_GRACE_MS) break;
+        } else if (now - last_check >= ZOMBIE_CHECK_MS) {
+            last_check = now;
+            if (isZombie(child.id)) exited_at = now;
+        }
+        const ready = posix.poll(&fds, @intCast(ZOMBIE_CHECK_MS)) catch break;
+        if (ready == 0) continue;
+        for (0..2) |i| {
+            if (fds[i].fd == -1 or fds[i].revents == 0) continue;
+            const r = posix.read(fds[i].fd, &buf) catch 0;
+            if (r == 0) {
+                posix.close(fds[i].fd);
+                fds[i].fd = -1;
+                continue;
+            }
+            const room = max -| lists[i].items.len;
+            try lists[i].appendSlice(buf[0..@min(r, room)]);
+        }
+    }
+    if (fds[0].fd == -1 and fds[1].fd == -1) return 0;
+
+    // algo em segundo plano ainda segura a saída
+    const open_fd = if (fds[0].fd != -1) fds[0].fd else fds[1].fd;
+    var n_holders: usize = 0;
+    if (posix.fstat(open_fd)) |st| n_holders = pipeHolders(@intCast(st.ino), holders) else |_| {}
+    if (drainers.fetchAdd(1, .monotonic) < MAX_DRAINERS) {
+        if (std.Thread.spawn(.{ .stack_size = 64 * 1024 }, drainThread, .{ fds[0].fd, fds[1].fd })) |t| {
+            t.detach();
+            return @max(n_holders, 1);
+        } else |_| {}
+    }
+    _ = drainers.fetchSub(1, .monotonic);
+    for (fds) |p| if (p.fd != -1) posix.close(p.fd);
+    return @max(n_holders, 1);
 }
 
 fn feedStdin(f: fs.File, data: []const u8) void {
@@ -251,9 +444,18 @@ fn runChild(
         } else |_| {}
     }
 
-    child.collectOutput(stdout, stderr, MAX_OUTPUT_LEN) catch |err| {
-        std.log.err("Collect output error: {s}", .{@errorName(err)});
-    };
+    var holders = [_]posix.pid_t{0} ** 8;
+    var n_bg: usize = 0;
+    if (is_windows) {
+        child.collectOutput(stdout, stderr, MAX_OUTPUT_LEN) catch |err| {
+            std.log.err("Collect output error: {s}", .{@errorName(err)});
+        };
+    } else {
+        n_bg = collectPosix(&child, stdout, stderr, MAX_OUTPUT_LEN, &holders) catch |err| blk: {
+            std.log.err("Collect output error: {s}", .{@errorName(err)});
+            break :blk 0;
+        };
+    }
 
     if (!is_windows) {
         if (watch_thread) |t| {
@@ -268,6 +470,19 @@ fn runChild(
     if (stdin_thread) |t| t.join();
 
     const term = try child.wait();
+    if (n_bg > 0) {
+        // sempre avisar quem chamou: o comando voltou, mas algo dele segue rodando
+        const ew = stderr.writer();
+        ew.print("[server-exec] The command exited, but {d} background process(es) still hold its output", .{n_bg}) catch {};
+        if (holders[0] != 0) {
+            ew.writeAll(" (pid") catch {};
+            for (holders) |p| {
+                if (p != 0) ew.print(" {d}", .{p}) catch {};
+            }
+            ew.writeAll(")") catch {};
+        }
+        ew.writeAll("; they keep running and their later output is discarded. For background work use the job tool or redirect the output to a file.\n") catch {};
+    }
     return exitCodeOf(term);
 }
 

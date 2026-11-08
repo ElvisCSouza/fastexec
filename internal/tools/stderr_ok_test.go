@@ -22,6 +22,16 @@ func TestExit0StderrErrorIsShown(t *testing.T) {
 	}
 }
 
+func TestDaemonNoteIsShown(t *testing.T) {
+	out, err := formatExecResult("nohup build.sh & echo pronto", transport.ExecResult{
+		Stdout: "pronto\n",
+		Stderr: "[server-exec] The command exited, but 1 background process(es) still hold its output (pid 42); they keep running\n",
+	})
+	if err != nil || !strings.Contains(out, "pronto\n[server-exec] The command exited") || strings.Contains(out, "[stderr]") {
+		t.Fatalf("daemon note: %q %v", out, err)
+	}
+}
+
 func TestExit0BenignStderrStaysHidden(t *testing.T) {
 	out, _ := formatExecResult("git pull", transport.ExecResult{
 		Stdout: "Already up to date.\n",
