@@ -7,6 +7,7 @@ import (
 
 	"homelab/fastexec/internal/analytics"
 	"homelab/fastexec/internal/config"
+	"homelab/fastexec/internal/telemetry"
 )
 
 // TestMain fixa a config de exemplo (server, router, devbox) e uma pasta de dados temporária: os testes não
@@ -15,6 +16,7 @@ func TestMain(m *testing.M) {
 	dir, cleanup := config.Isolate()
 	analytics.SessionsRoot = filepath.Join(dir, "sessions") // calculada no init, antes do Isolate
 	code := m.Run()
+	telemetry.Close()
 	cleanup()
 	os.Exit(code)
 }

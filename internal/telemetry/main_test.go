@@ -10,6 +10,7 @@ import (
 func TestMain(m *testing.M) {
 	_, cleanup := config.Isolate()
 	code := m.Run()
+	Close()
 	cleanup()
 	os.Exit(code)
 }

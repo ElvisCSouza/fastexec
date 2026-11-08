@@ -237,7 +237,34 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 		return shapeOrCap(stderr), nil
 	}
 
+	// Exit 0 com erro no stderr (ex.: `pwsh -Command -` segue após um throw e sai 0): antes o stderr era
+	// descartado e a LLM via só o stdout, sem saber que algo falhou. Só anexa quando o stderr tem cara de erro,
+	// para não trazer progresso/avisos comuns.
+	if errPart := stderrErrors(stderr); errPart != "" {
+		return shapeOrCap(strings.TrimRight(stdout, "\r\n") + "\n[stderr]\n" + errPart +
+			"\n[FastExec] Exit code was 0, but the command wrote errors to stderr (above): check that it really did what you expected."), nil
+	}
+
 	return shapeOrCap(stdout), nil
+}
+
+var stderrErrorRegex = regexp.MustCompile(`(?i)(exception|\berror\b|\bfatal\b|traceback|not recognized|cannot find|could not|failed|permission denied|no such file)`)
+
+// stderrErrors devolve o stderr (até ~2 KB finais) quando ele contém sinais de erro; "" caso contrário.
+func stderrErrors(stderr string) string {
+	s := strings.TrimSpace(stderr)
+	if s == "" || !stderrErrorRegex.MatchString(s) {
+		return ""
+	}
+	const max = 2048
+	if len(s) > max {
+		cut := len(s) - max
+		if i := strings.IndexByte(s[cut:], '\n'); i >= 0 {
+			cut += i + 1
+		}
+		s = "[…] " + s[cut:]
+	}
+	return s
 }
 
 // formatTimeout devolve ao agente um desfecho inequívoco: estourou o prazo, a árvore foi encerrada e o que foi emitido

@@ -241,6 +241,8 @@ func (s *Server) serve(r io.Reader) error {
 			continue
 		}
 
+		probeRecord(req.Method, req.Params)
+
 		switch req.Method {
 		case "initialize":
 			s.writeResponse(JSONRPCResponse{

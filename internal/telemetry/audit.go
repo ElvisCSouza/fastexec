@@ -152,6 +152,14 @@ func setupAuditSchema(db *sql.DB) {
 	}
 }
 
+// Close fecha o banco (usado pelos testes antes de apagar a pasta temporária: no Windows um SQLite aberto
+// impede o RemoveAll e deixava pastas fastexec-test-* no %TEMP%).
+func Close() {
+	if dbInstance != nil {
+		_ = dbInstance.Close()
+	}
+}
+
 func worker() {
 	for entry := range auditQueue {
 		insertEntry(entry)
