@@ -22,6 +22,10 @@ type ReadFileArgs struct {
 	Limit     int64  `json:"limit,omitempty"`
 	StartLine int    `json:"start_line,omitempty"`
 	EndLine   int    `json:"end_line,omitempty"`
+	Ranges    string `json:"ranges,omitempty"`
+	Numbered  bool   `json:"numbered,omitempty"`
+	Pattern   string `json:"pattern,omitempty"`
+	Context   int    `json:"context,omitempty"`
 }
 
 type EditFileArgs struct {
@@ -230,7 +234,24 @@ func ResolveTargetHost(host, path string) (transport.HostTarget, error) {
 	return transport.ResolveHost(host)
 }
 
+// HandleReadFile reads a file and, from the 3rd read of the same file in this
+// process, points to the graph tools (code_outline / code_graph), which answer
+// "where is X / who calls X" without reading line ranges again.
 func HandleReadFile(args ReadFileArgs) (string, error) {
+	out, err := handleReadFileInner(args)
+	if err == nil && args.StartLine == 0 && args.EndLine == 0 && args.Offset == 0 && args.Limit == 0 &&
+		args.Ranges == "" && args.Pattern == "" && !args.Numbered {
+		// Only the model-facing whole-file read is capped. Internal callers
+		// (edit_file, code_outline) use handleReadFileInner and see everything.
+		out = capWholeFile(out, args.Path)
+	}
+	if err == nil && noteRead(args.Host, args.Path) == rereadHintAt {
+		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] Third read of this file. To locate code without re-reading: code_outline(path, symbol='name') gives the line; code_graph(action='callers') lists who calls it; read_file(pattern='regex', context=3) returns only matching lines."
+	}
+	return out, err
+}
+
+func handleReadFileInner(args ReadFileArgs) (string, error) {
 	if args.Path == "" {
 		return "", fmt.Errorf("parameter 'path' is required")
 	}
@@ -250,6 +271,9 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return "", err
+		}
+		if sel, handled, serr := selectLines(string(data), args); handled {
+			return sel, serr
 		}
 		if args.StartLine > 0 || args.EndLine > 0 {
 			lines := strings.Split(string(data), "\n")
@@ -518,7 +542,7 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 		host = "local"
 	}
 
-	content, err := HandleReadFile(ReadFileArgs{
+	content, err := handleReadFileInner(ReadFileArgs{
 		Host: host,
 		Path: args.Path,
 	})

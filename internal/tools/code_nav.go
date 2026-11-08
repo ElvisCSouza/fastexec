@@ -49,12 +49,11 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		if lang == nil {
 			return "", unsupportedErr(args.Path)
 		}
-		content, err := HandleReadFile(ReadFileArgs{Host: args.Host, Path: args.Path})
+		content, err := handleReadFileInner(ReadFileArgs{Host: args.Host, Path: args.Path})
 		if err != nil {
 			return "", fmt.Errorf("%v (on remote hosts code_outline takes a file; a directory runs only on host 'local')", err)
 		}
-		decls, _ := codescan.Scan([]byte(content), lang)
-		return renderFile(filterDecls(decls, args.Symbol), max, args.Symbol), nil
+		return outlineSource([]byte(content), lang, args.Symbol, max), nil
 	}
 
 	path := expandHome(args.Path)
@@ -67,11 +66,11 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		if lang == nil {
 			return "", unsupportedErr(path)
 		}
-		decls, err := scanFile(path, lang)
+		src, err := os.ReadFile(path)
 		if err != nil {
 			return "", err
 		}
-		return renderFile(filterDecls(decls, args.Symbol), max, args.Symbol), nil
+		return outlineSource(src, lang, args.Symbol, max), nil
 	}
 	return outlineTree(path, args.Symbol, max)
 }
@@ -112,7 +111,44 @@ func filterDecls(decls []codescan.Decl, symbol string) []codescan.Decl {
 	return out
 }
 
+// outlineSource renders one file as "L<start>-L<end>: <declaration>". The end
+// is approximate: the line before the next declaration, minus trailing blank
+// and comment lines, so read_file(start_line, end_line) returns the whole body.
+func outlineSource(src []byte, lang *codescan.Lang, symbol string, max int) string {
+	decls, _ := codescan.Scan(src, lang)
+	ends := declEnds(src, decls)
+	return renderFileEnds(filterDecls(decls, symbol), max, symbol, ends)
+}
+
+func declEnds(src []byte, decls []codescan.Decl) map[int]int {
+	lines := strings.Split(string(src), "\n")
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	ends := make(map[int]int, len(decls))
+	for i, d := range decls {
+		end := len(lines)
+		if i+1 < len(decls) {
+			end = decls[i+1].Line - 1
+		}
+		for end > d.Line {
+			t := strings.TrimSpace(lines[end-1])
+			if t == "" || strings.HasPrefix(t, "//") || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "*") || strings.HasPrefix(t, "/*") {
+				end--
+				continue
+			}
+			break
+		}
+		ends[d.Line] = end
+	}
+	return ends
+}
+
 func renderFile(decls []codescan.Decl, max int, symbol string) string {
+	return renderFileEnds(decls, max, symbol, nil)
+}
+
+func renderFileEnds(decls []codescan.Decl, max int, symbol string, ends map[int]int) string {
 	if len(decls) == 0 {
 		if symbol != "" {
 			return fmt.Sprintf("(no declaration matching %q)", symbol)
@@ -125,7 +161,11 @@ func renderFile(decls []codescan.Decl, max int, symbol string) string {
 			fmt.Fprintf(&b, "[FastExec Guard] %d more declarations; pass 'symbol' or a higher 'max'.\n", len(decls)-max)
 			break
 		}
-		fmt.Fprintf(&b, "L%d: %s\n", d.Line, d.Sig)
+		if e, ok := ends[d.Line]; ok && e > d.Line {
+			fmt.Fprintf(&b, "L%d-L%d: %s\n", d.Line, e, d.Sig)
+		} else {
+			fmt.Fprintf(&b, "L%d: %s\n", d.Line, d.Sig)
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

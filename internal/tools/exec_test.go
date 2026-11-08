@@ -57,7 +57,7 @@ func TestSleepGuardRejection(t *testing.T) {
 	proibidos := []string{
 		"sleep 140",
 		"bash -c 'sleep 100; echo oi'",
-		"sleep 5 && ls",
+		"sleep 10 && sleep 10 && ls", // soma > 15 s (sleep embutido curto agora é permitido)
 		"timeout 20",
 		"timeout /t 25",
 	}

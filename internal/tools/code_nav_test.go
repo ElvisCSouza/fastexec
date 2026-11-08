@@ -25,10 +25,10 @@ func TestCodeOutlineGo(t *testing.T) {
 	src := "package x\n\n// func Fake() in comment\ntype Server struct {\n\tn int\n}\n\ntype Runner interface {\n\tRun() error\n}\n\nfunc HandleReadFile(args ReadFileArgs) (string, error) {\n\treturn \"\", nil\n}\n\nfunc (s *Server) Run() error {\n\treturn nil\n}\n\n/*\nfunc Hidden() {}\n*/\nfunc init() { http.HandleFunc(\"/health\", h) }\n"
 	got := outlineOf(t, "a.go", src, "")
 	want := []string{
-		"L4: type Server struct",
-		"L8: type Runner interface",
-		"L12: func HandleReadFile(args ReadFileArgs) (string, error)",
-		"L16: func (s *Server) Run() error",
+		"L4-L6: type Server struct",
+		"L8-L10: type Runner interface",
+		"L12-L14: func HandleReadFile(args ReadFileArgs) (string, error)",
+		"L16-L21: func (s *Server) Run() error", // end is approximate: a commented-out func before the next decl is included
 		"L23: func init() { http.HandleFunc(\"/health\", h) }",
 	}
 	if got != strings.Join(want, "\n") {
@@ -57,10 +57,10 @@ func TestCodeOutlineTS(t *testing.T) {
 	for _, want := range []string{
 		"L1: export interface User { id: string }",
 		"L2: export type Id = string | number;",
-		"L3: export async function loadUser(id: Id): Promise<User>",
+		"L3-L6: export async function loadUser(id: Id): Promise<User>",
 		"L7: export const toId = (x: number): Id => String(x);",
 		"L8: export default class UserService",
-		"L9: private async fetchAll(limit: number): Promise<User[]>",
+		"L9-L13: private async fetchAll(limit: number): Promise<User[]>",
 		"L14: router.get('/users/:id', handler);",
 	} {
 		if !strings.Contains(got, want) {
@@ -76,7 +76,7 @@ func TestCodeOutlineTS(t *testing.T) {
 
 func TestCodeOutlinePythonShellPS(t *testing.T) {
 	py := outlineOf(t, "m.py", "# def nope():\nclass Repo:\n    async def get(self, id):\n        pass\n\n@app.route('/items')\ndef items():\n    pass\n", "")
-	for _, want := range []string{"L2: class Repo:", "L3: async def get(self, id):", "L6: @app.route('/items')", "L7: def items():"} {
+	for _, want := range []string{"L2: class Repo:", "L3-L4: async def get(self, id):", "L6: @app.route('/items')", "L7-L8: def items():"} {
 		if !strings.Contains(py, want) {
 			t.Errorf("py: faltou %q em:\n%s", want, py)
 		}
@@ -85,11 +85,11 @@ func TestCodeOutlinePythonShellPS(t *testing.T) {
 		t.Errorf("py: comentário virou declaração:\n%s", py)
 	}
 	sh := outlineOf(t, "s.sh", "#!/bin/bash\ndeploy() {\n  echo\n}\nfunction backup_db {\n}\n", "")
-	if sh != "L2: deploy()\nL5: function backup_db" {
+	if sh != "L2-L4: deploy()\nL5-L6: function backup_db" {
 		t.Errorf("sh:\n%s", sh)
 	}
 	ps := outlineOf(t, "p.ps1", "Function Get-Thing {\n}\n", "")
-	if ps != "L1: Function Get-Thing" {
+	if ps != "L1-L2: Function Get-Thing" {
 		t.Errorf("ps1:\n%s", ps)
 	}
 }

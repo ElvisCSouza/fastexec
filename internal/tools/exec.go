@@ -65,8 +65,13 @@ func HandleExec(args ExecArgs) (string, error) {
 	}
 
 	// Bloqueio determinístico de sleep / timeout artificial
+	var sleepNotice string
 	if checkSleepGuard(cmdToCheck, args) {
-		return "", fmt.Errorf(sleepGuardMsg)
+		notice, reason, ok := sleepAllowance(cmdToCheck)
+		if !ok {
+			return "", fmt.Errorf("%s", reason)
+		}
+		sleepNotice = notice
 	}
 
 	// Auto-remediação de prefixo redundante 'cd <cwd padrão do host> &&' ou ';'
@@ -150,6 +155,8 @@ func HandleExec(args ExecArgs) (string, error) {
 			out = strings.TrimRight(out, "\r\n") + "\n" + declSearchHint
 		case isCallSearch(label):
 			out = strings.TrimRight(out, "\r\n") + "\n" + callSearchHint
+		case isLineSliceRead(label):
+			out = strings.TrimRight(out, "\r\n") + "\n" + lineSliceHint
 		}
 	}
 	if res.TimedOut && clampedFrom > 0 {
@@ -178,6 +185,9 @@ func HandleExec(args ExecArgs) (string, error) {
 		} else {
 			out = cdHint
 		}
+	}
+	if sleepNotice != "" {
+		out = strings.TrimRight(out, "\r\n") + "\n\n" + sleepNotice
 	}
 	return out, ferr
 }
@@ -213,7 +223,7 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 		if errMsg == "" {
 			errMsg = fmt.Sprintf("command failed with exit code %d (no output)", res.ExitCode)
 		}
-		errMsg = capOutput(errMsg)
+		errMsg = shapeOrCap(errMsg)
 		if res.Local && isWindowsCmdletMismatch(command, errMsg) {
 			errMsg += "\n[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use 'file_ops'."
 		}
@@ -224,10 +234,10 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 	}
 
 	if stdout == "" && stderr != "" {
-		return capOutput(stderr), nil
+		return shapeOrCap(stderr), nil
 	}
 
-	return capOutput(stdout), nil
+	return shapeOrCap(stdout), nil
 }
 
 // formatTimeout devolve ao agente um desfecho inequívoco: estourou o prazo, a árvore foi encerrada e o que foi emitido
@@ -309,7 +319,7 @@ func stripHeredocs(cmd string) string {
 // coreutilsTimeoutRegex identifica o utilitário GNU coreutils `timeout [options] <duration> <command> [args]`.
 // Ex: `timeout 40 docker exec ...` ou `timeout 10s curl http://...`.
 // O grupo 1 captura o comando filho executado com deadline.
-var coreutilsTimeoutRegex = regexp.MustCompile(`(?i)(?:^|[;&|]\s*)timeout(?:\s+-[A-Za-z0-9_-]+|\s+--[a-z0-9_-]+(?:=\S+)?)*\s+\d+(?:\.\d+)?[smhd]?\s+([a-zA-Z0-9_\.\/-]+)`)
+var coreutilsTimeoutRegex = regexp.MustCompile(`(?i)(?:^|[;&|]\s*)(?:(?:nice|ionice|env|sudo|stdbuf|time)(?:\s+-{1,2}[A-Za-z0-9_=-]+(?:\s+\d+)?)*\s+)*timeout(?:\s+-[A-Za-z0-9_-]+|\s+--[a-z0-9_-]+(?:=\S+)?)*\s+\d+(?:\.\d+)?[smhd]?\s+([a-zA-Z0-9_\.\/-]+)`)
 
 func isCoreutilsTimeout(cmd string) bool {
 	matches := coreutilsTimeoutRegex.FindStringSubmatch(cmd)

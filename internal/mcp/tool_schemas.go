@@ -21,7 +21,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "read_file",
-		Description: "Read a local or remote file, whole or a slice (byte offset/limit or start_line/end_line). Use it instead of cat, type or head through exec.",
+		Description: "Read a local or remote file, whole or a slice (byte offset/limit start_line/end_line, ranges 'a-b,c-d', or pattern+context; local files). Files over 32 KB come back cut; use code_outline first. Use it instead of cat, type or head through exec.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -31,6 +31,10 @@ var serverTools = []ToolSchema{
 				"limit":      {Type: "integer", Description: "Max bytes to read"},
 				"start_line": {Type: "integer", Description: "First line (1-based)"},
 				"end_line":   {Type: "integer", Description: "Last line (inclusive)"},
+				"ranges":     {Type: "string", Description: "Several line ranges in one call, e.g. '10-40,90-120' (numbered)"},
+				"pattern":    {Type: "string", Description: "Regex (case-insensitive): return matching lines with context, numbered"},
+				"context":    {Type: "integer", Description: "Lines around each pattern match (default 2)"},
+				"numbered":   {Type: "boolean", Description: "Prefix lines with their number"},
 			},
 			Required: []string{"path"},
 		},

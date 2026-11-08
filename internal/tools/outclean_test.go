@@ -191,6 +191,7 @@ func TestFormatExecResultKeepsOtherFailures(t *testing.T) {
 }
 
 func TestFormatExecResultCleanOutputIsByteIdentical(t *testing.T) {
+	t.Setenv("FASTEXEC_NO_SHAPE", "1") // testa o caminho legado (capOutput); o shaper tem spill_test.go
 	cases := []string{
 		"saida simples\n",
 		"linha1\r\nlinha2\r\n",
@@ -219,6 +220,7 @@ func TestFormatExecResultCleanOutputIsByteIdentical(t *testing.T) {
 }
 
 func TestFormatExecResultCapAt63KBIsUntouched(t *testing.T) {
+	t.Setenv("FASTEXEC_NO_SHAPE", "1")
 	in := distinctText(63 * 1024)
 	out, err := formatExecResult("cmd", transport.ExecResult{Stdout: in})
 	if err != nil || out != in {
@@ -227,6 +229,7 @@ func TestFormatExecResultCapAt63KBIsUntouched(t *testing.T) {
 }
 
 func TestFormatExecResultCapAt65KB(t *testing.T) {
+	t.Setenv("FASTEXEC_NO_SHAPE", "1")
 	in := distinctText(65 * 1024)
 	out, err := formatExecResult("cmd", transport.ExecResult{Stdout: in})
 	if err != nil {

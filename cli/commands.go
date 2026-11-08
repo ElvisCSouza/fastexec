@@ -28,6 +28,7 @@ var commands = map[string]func(subArgs []string){
 	"job":           cmdJob,
 	"ping":          cmdPing,
 	"stats":         cmdStats,
+	"discover":      cmdDiscover,
 	"handoff":       cmdHandoff,
 	"memory":        cmdHandoff,
 	"graph":         cmdGraph,
@@ -342,6 +343,24 @@ func cmdStats(subArgs []string) {
 	}
 
 	out, err := telemetry.RenderStats(filter)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Telemetry error:", err)
+		os.Exit(1)
+	}
+	fmt.Print(out)
+}
+
+// cmdDiscover atende: discover [24h|7d|--today]. Where output tokens go and what the exec soft cap saves.
+func cmdDiscover(subArgs []string) {
+	filter := telemetry.StatsFilter{}
+	for _, arg := range subArgs {
+		if strings.EqualFold(arg, "--today") || arg == "-t" {
+			filter.Today = true
+		} else if h, ok := telemetry.ParsePeriod(arg); ok {
+			filter.PeriodH = h
+		}
+	}
+	out, err := telemetry.RenderDiscover(filter, 3000)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Telemetry error:", err)
 		os.Exit(1)

@@ -46,7 +46,7 @@ func TestExecArgvSleepGuard(t *testing.T) {
 
 	// Comandos com encadeamento ou shells que usam sleep continuam barrados pelo guard
 	for _, argv := range [][]string{
-		{"bash", "-c", "sleep 3 && ls"},
+		{"bash", "-c", "sleep 10 && sleep 10 && ls"},
 		{"cmd", "/c", "timeout /t 5"},
 	} {
 		if _, err := HandleExec(ExecArgs{Host: "local", Argv: argv}); err == nil || !strings.Contains(err.Error(), "FastExec Guard") {
