@@ -126,10 +126,13 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) ToolCallResu
 
 func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
 	start := time.Now()
-	client := callerOf(rawArgs)
+	client, conversation := callerOf(rawArgs)
 	bytesIn := len(rawArgs)
 	if client != "" {
-		bytesIn -= len(`,"_caller":""`) + len(client) // não conta o campo interno como entrada da LLM
+		bytesIn -= len(`,"_caller":""`) + len(client) // não conta os campos internos como entrada da LLM
+	}
+	if conversation != "" {
+		bytesIn -= len(`,"_conversation":""`) + len(conversation)
 	}
 	host, summary := telemetry.SummarizeCall(name, rawArgs)
 
@@ -205,6 +208,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		ErrorMessage:   errMsg,
 		CommandSummary: summary,
 		Client:         client,
+		Conversation:   conversation,
 		Truncated:      name == "exec" && tools.IsTruncated(outText),
 		NoResult:       name == "exec" && tools.IsNoResult(outText),
 	})
@@ -248,8 +252,6 @@ func (s *Server) serve(r io.Reader) error {
 			continue
 		}
 
-		probeRecord(req.Method, req.Params)
-
 		switch req.Method {
 		case "initialize":
 			s.setClient(req.Params)
@@ -290,8 +292,9 @@ func (s *Server) serve(r io.Reader) error {
 		case "tools/call":
 			go func(r JSONRPCRequest) {
 				var callParams struct {
-					Name      string          `json:"name"`
-					Arguments json.RawMessage `json:"arguments"`
+					Name      string                     `json:"name"`
+					Arguments json.RawMessage            `json:"arguments"`
+					Meta      map[string]json.RawMessage `json:"_meta"`
 				}
 				if err := json.Unmarshal(r.Params, &callParams); err != nil {
 					s.writeResponse(JSONRPCResponse{
@@ -302,7 +305,7 @@ func (s *Server) serve(r io.Reader) error {
 					return
 				}
 
-				result := s.dispatchTool(callParams.Name, withCaller(callParams.Arguments, s.callerID()))
+				result := s.dispatchTool(callParams.Name, withCaller(callParams.Arguments, s.callerID(), conversationOf(callParams.Meta)))
 				s.writeResponse(JSONRPCResponse{
 					JSONRPC: "2.0",
 					ID:      r.ID,

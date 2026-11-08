@@ -13,9 +13,6 @@ func TestMain(m *testing.M) {
 	_, cleanup := config.Isolate()
 	code := m.Run()
 	telemetry.Close()
-	if probeFile != nil {
-		_ = probeFile.Close()
-	}
 	cleanup()
 	os.Exit(code)
 }

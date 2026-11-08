@@ -26,7 +26,8 @@ type ReadFileArgs struct {
 	Numbered  bool   `json:"numbered,omitempty"`
 	Pattern   string `json:"pattern,omitempty"`
 	Context   int    `json:"context,omitempty"`
-	Caller    string `json:"_caller,omitempty"` // canal MCP (injetado pelo proxy, não vem da LLM)
+	Caller    string `json:"_caller,omitempty"`       // canal MCP (injetado pelo proxy, não vem da LLM)
+	Conv      string `json:"_conversation,omitempty"` // id de conversa do cliente, quando houver
 }
 
 type EditFileArgs struct {
@@ -35,7 +36,8 @@ type EditFileArgs struct {
 	Target      string   `json:"target"`
 	Replacement string   `json:"replacement"`
 	Edits       []EditOp `json:"edits,omitempty"`
-	Caller      string   `json:"_caller,omitempty"` // canal MCP (injetado pelo proxy)
+	Caller      string   `json:"_caller,omitempty"`       // canal MCP (injetado pelo proxy)
+	Conv        string   `json:"_conversation,omitempty"` // id de conversa do cliente, quando houver
 }
 
 // EditOp é uma troca de 'edits': aplicada em ordem sobre o resultado da anterior; todas ou nenhuma.
@@ -247,7 +249,7 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		// (edit_file, code_outline) use handleReadFileInner and see everything.
 		out = capWholeFile(out, args.Path)
 	}
-	if err == nil && noteRead(args.Caller, args.Host, args.Path) == rereadHintAt {
+	if err == nil && noteRead(identity(args.Caller, args.Conv), args.Host, args.Path) == rereadHintAt {
 		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] Third read of this file. To locate code without re-reading: code_outline(path, symbol='name') gives the line; code_graph(action='callers') lists who calls it; read_file(pattern='regex', context=3) returns only matching lines."
 	}
 	return out, err
@@ -596,7 +598,7 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 	if len(notes) > 0 {
 		msg += " Note: " + strings.Join(notes, "; ") + "."
 	}
-	if h := editBatchHint(args.Caller, args.Path, len(ops)); h != "" {
+	if h := editBatchHint(identity(args.Caller, args.Conv), args.Path, len(ops)); h != "" {
 		msg += "\n" + h
 	}
 	return msg, nil

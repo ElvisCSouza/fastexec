@@ -23,7 +23,7 @@ type discAgg struct {
 }
 
 func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, error) {
-	q := `SELECT tool, COALESCE(command_summary,''), COALESCE(est_tokens_out,0), COALESCE(client,'') FROM audit ` + periodWhere(filter)
+	q := `SELECT tool, COALESCE(command_summary,''), COALESCE(est_tokens_out,0), COALESCE(client,''), COALESCE(conversation,'') FROM audit ` + periodWhere(filter)
 	rows, err := db.Query(q)
 	if err != nil {
 		return "", err
@@ -32,13 +32,14 @@ func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, 
 
 	byTool := map[string]*discAgg{}
 	byClient := map[string]*discAgg{}
+	byConv := map[string]*discAgg{}
 	byCmd := map[string]*discAgg{}
 	reads := map[string]int64{}
 	var execCalls, execTokens, overCap, saved int64
 	for rows.Next() {
-		var tool, summary, client string
+		var tool, summary, client, conv string
 		var tok int64
-		if err := rows.Scan(&tool, &summary, &tok, &client); err != nil {
+		if err := rows.Scan(&tool, &summary, &tok, &client, &conv); err != nil {
 			return "", err
 		}
 		if i := strings.LastIndexByte(client, '#'); i > 0 {
@@ -54,6 +55,19 @@ func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, 
 		}
 		ca.calls++
 		ca.tokens += tok
+		if conv != "" {
+			k := client + " " + conv
+			if len(conv) > 8 {
+				k = client + " " + conv[:8]
+			}
+			cv := byConv[k]
+			if cv == nil {
+				cv = &discAgg{}
+				byConv[k] = cv
+			}
+			cv.calls++
+			cv.tokens += tok
+		}
 		a := byTool[tool]
 		if a == nil {
 			a = &discAgg{}
@@ -102,6 +116,13 @@ func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, 
 	for _, k := range topKeys(byClient, 8) {
 		a := byClient[k]
 		fmt.Fprintf(&b, "  %-28s %7d calls %10d tokens\n", k, a.calls, a.tokens)
+	}
+	if len(byConv) > 0 {
+		fmt.Fprintf(&b, "\nBy conversation (clients that send an id), %d tracked:\n", len(byConv))
+		for _, k := range topKeys(byConv, 6) {
+			a := byConv[k]
+			fmt.Fprintf(&b, "  %-37s %7d calls %10d tokens\n", k, a.calls, a.tokens)
+		}
 	}
 	fmt.Fprintf(&b, "\nexec: %d calls, %d tokens. Soft cap %d tokens would cut %d calls and save ~%d tokens.\n", execCalls, execTokens, softCapTokens, overCap, saved)
 	fmt.Fprintf(&b, "\nexec by command (first word):\n")

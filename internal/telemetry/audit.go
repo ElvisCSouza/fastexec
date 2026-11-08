@@ -31,6 +31,7 @@ type AuditEntry struct {
 	Truncated      bool
 	NoResult       bool
 	Client         string // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
+	Conversation   string // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
 }
 
 var (
@@ -151,9 +152,11 @@ func setupAuditSchema(db *sql.DB) {
 			}
 		}
 	}
-	if !existing["client"] {
-		if _, err := db.Exec("ALTER TABLE audit ADD COLUMN client TEXT NOT NULL DEFAULT '';"); err != nil {
-			noteFailure("schema migration", err)
+	for _, col := range []string{"client", "conversation"} {
+		if !existing[col] {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s TEXT NOT NULL DEFAULT '';", col)); err != nil {
+				noteFailure("schema migration", err)
+			}
 		}
 	}
 }
@@ -185,15 +188,15 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		session_id, tool, host, duration_ms,
 		bytes_in, bytes_out, est_tokens_in, est_tokens_out,
 		success, exit_code, error_message, command_summary,
-		truncated, no_result, client
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		truncated, no_result, client, conversation
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := db.Exec(
 		query,
 		e.SessionID, e.Tool, e.Host, e.DurationMs,
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
 		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
-		boolInt(e.Truncated), boolInt(e.NoResult), e.Client,
+		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation,
 	)
 	return err
 }

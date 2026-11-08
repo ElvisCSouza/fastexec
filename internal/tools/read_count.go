@@ -6,10 +6,19 @@ import (
 	"time"
 )
 
-// Per-channel counters. The key includes the MCP channel ("_caller":
-// clientInfo.name#pid), so two different clients never trigger each other's
-// hints. Inside one channel (e.g. several Claude Desktop conversations) a hint
-// may rarely reach the neighbour conversation; it is only a hint.
+// Per-identity counters. The key is the conversation id when the client sends
+// one (Antigravity, Codex), otherwise the MCP channel (clientInfo.name#pid).
+// Inside one channel without conversation id (several Claude Desktop
+// conversations) a hint may rarely reach the neighbour conversation; these
+// counters only ever produce hints, never block or change data.
+
+// identity returns the finest deterministic identity available.
+func identity(caller, conversation string) string {
+	if conversation != "" {
+		return "conv:" + conversation
+	}
+	return caller
+}
 
 // rereadHintAt is the read number (per file, per channel) that triggers the
 // graph hint. Only that exact read gets it, so it is never repeated.
