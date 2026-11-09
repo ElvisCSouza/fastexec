@@ -150,8 +150,28 @@ func selectLines(data string, args ReadFileArgs) (string, bool, error) {
 	return renderRanges(lines, []lineRange{{from, to}}, true), true, nil
 }
 
-// capWholeFile cuts a big whole-file read at a line boundary and says how
-// to read the rest. Disabled with FASTEXEC_NO_READ_CAP=1.
+// capReadText cuts a big read (whole file or a big line range) at a line
+// boundary and says how to read the rest. Repeating the exact same call within
+// graphRepeatWindow returns everything. Disabled with FASTEXEC_NO_READ_CAP=1.
+func capReadText(data, path, what, key string) string {
+	if len(data) <= readWholeCap || os.Getenv("FASTEXEC_NO_READ_CAP") != "" {
+		return data
+	}
+	if graphRepeat(key) {
+		return strings.TrimRight(data, "\r\n") + "\n\n[FastExec] Full text returned because this exact read was repeated."
+	}
+	cut := strings.LastIndexByte(data[:readWholeCap], '\n')
+	if cut < 0 {
+		cut = readWholeCap
+	}
+	shown := strings.Count(data[:cut], "\n") + 1
+	total := len(splitLines(data))
+	return data[:cut] + fmt.Sprintf(
+		"\n\n[FastExec] %s: %d lines (%d KB); showing the first %d. Next: read_file(start_line, end_line), read_file(ranges='a-b,c-d') or read_file(pattern='regex', context=3) for what you need, or repeat this exact call to get %s.",
+		what, total, len(data)/1024, shown, what)
+}
+
+// capWholeFile is the whole-file cap without the repeat escape (kept for callers and tests).
 func capWholeFile(data string, path string) string {
 	if len(data) <= readWholeCap || os.Getenv("FASTEXEC_NO_READ_CAP") != "" {
 		return data

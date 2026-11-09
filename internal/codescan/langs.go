@@ -135,7 +135,39 @@ var (
 		imports: []*regexp.Regexp{regexp.MustCompile(`^\s*#\s*include\s*[<"]([^>"]+)[>"]`)},
 	}
 
+	// C#: tipos (class/struct/interface/record/enum) e métodos/construtores com modificador de acesso. Expressão
+	// "=> x;" e propriedades ficam de fora; o fim do bloco sai das chaves.
+	langCS = &Lang{Name: "cs", slashComment: true, routes: true,
+		rules: []rule{
+			{regexp.MustCompile(`^\s*(?:\[[^\]]*\]\s*)*(?:(?:public|private|protected|internal|static|abstract|sealed|partial|readonly|unsafe|new|file|ref)\s+)*(?:class|struct|interface|record(?:\s+(?:struct|class))?|enum)\s+(?P<name>\w+)`), kwKind},
+			{regexp.MustCompile(`^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|async|sealed|extern|unsafe|new|partial|readonly)\s+)+[\w<>\[\],.?]+(?:<[^()]*>)?\??\s+(?P<name>\w+)\s*(?:<[^>()]*>)?\s*\([^;]*$`), fixed("method")},
+			{regexp.MustCompile(`^\s*(?:public|private|protected|internal|static)\s+(?P<name>[A-Z]\w*)\s*\([^;]*$`), fixed("method")}, // construtor
+		},
+		imports: []*regexp.Regexp{regexp.MustCompile(`^\s*using\s+(?:static\s+)?([\w.]+)\s*;`)},
+	}
+
+	// Java: tipos e métodos com modificador ou tipo de retorno; anotações (@Override) ficam na linha anterior.
+	langJava = &Lang{Name: "java", slashComment: true,
+		rules: []rule{
+			{regexp.MustCompile(`^\s*(?:@\w+\s+)*(?:(?:public|private|protected|static|final|abstract|sealed|non-sealed|strictfp)\s+)*(?:class|interface|enum|record|@interface)\s+(?P<name>\w+)`), kwKind},
+			{regexp.MustCompile(`^\s*(?:(?:public|private|protected|static|final|abstract|synchronized|native|default|strictfp)\s+)+(?:<[^>]+>\s+)?[\w<>\[\],.?]+\s+(?P<name>\w+)\s*\([^;]*$`), fixed("method")},
+			{regexp.MustCompile(`^\s*(?:public|private|protected)\s+(?P<name>[A-Z]\w*)\s*\([^;]*$`), fixed("method")}, // construtor
+		},
+		imports: []*regexp.Regexp{regexp.MustCompile(`^\s*import\s+(?:static\s+)?([\w.]+)`)},
+	}
+
+	// Kotlin: class/interface/object (inclusive data/sealed/enum class), fun (inclusive extensão T.nome) e typealias.
+	langKt = &Lang{Name: "kt", slashComment: true, tripleQuote: true,
+		rules: []rule{
+			{regexp.MustCompile(`^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:(?:public|private|protected|internal|open|abstract|sealed|data|enum|annotation|inner|value|inline|companion|actual|expect|fun)\s+)*(?:class|interface|object)\s+(?P<name>\w+)`), kwKind},
+			{regexp.MustCompile(`^\s*(?:(?:public|private|protected|internal|open|abstract|override|inline|suspend|operator|infix|tailrec|external|actual|expect|final)\s+)*fun\s+(?:<[^>]*>\s*)?(?:[\w.<>?, ]+\.)?(?P<name>\w+)\s*\(`), indentedKind("func", "method")},
+			{regexp.MustCompile(`^\s*(?:(?:public|private|internal)\s+)?typealias\s+(?P<name>\w+)`), fixed("type")},
+		},
+		imports: []*regexp.Regexp{regexp.MustCompile(`^\s*import\s+([\w.]+)`)},
+	}
+
 	langByExt = map[string]*Lang{
+		".cs": langCS, ".java": langJava, ".kt": langKt, ".kts": langKt,
 		".c": langC, ".h": langC, ".cc": langC, ".cpp": langC, ".cxx": langC, ".hpp": langC, ".hh": langC, ".hxx": langC, ".inl": langC,
 		".go": langGo,
 		".ts": langJS, ".tsx": langJS, ".mts": langJS, ".cts": langJS,
@@ -156,7 +188,18 @@ func LangFor(path string) *Lang {
 }
 
 // Supported lista as extensões aceitas (para mensagens de erro).
-const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp"
+const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp, .cs, .java, .kt/.kts"
+
+// kwKind devolve a palavra-chave de tipo da linha (class, struct, interface, record, enum, object).
+func kwKind(line string) string {
+	t := " " + strings.TrimSpace(line) + " "
+	for _, k := range []string{"record", "enum", "interface", "struct", "object", "class"} {
+		if strings.Contains(t, " "+k+" ") {
+			return k
+		}
+	}
+	return "class"
+}
 
 // cKeywords: palavra que abre a linha e mostra que ela é comando, não declaração ("return f(x)", "else g(").
 var cKeywords = map[string]bool{"return": true, "else": true, "delete": true, "new": true, "case": true, "throw": true,
@@ -214,6 +257,10 @@ func exported(l *Lang, kind, name, line string) bool {
 		return !strings.HasPrefix(name, "_")
 	case "c":
 		return !strings.HasPrefix(strings.TrimSpace(line), "static ")
+	case "cs", "java":
+		return strings.Contains(line, "public ")
+	case "kt":
+		return !strings.Contains(line, "private ") && !strings.Contains(line, "internal ")
 	}
 	return true
 }

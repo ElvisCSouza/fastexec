@@ -28,7 +28,7 @@ func TestCodeOutlineGo(t *testing.T) {
 		"L4-L6: type Server struct",
 		"L8-L10: type Runner interface",
 		"L12-L14: func HandleReadFile(args ReadFileArgs) (string, error)",
-		"L16-L21: func (s *Server) Run() error", // end is approximate: a commented-out func before the next decl is included
+		"L16-L18: func (s *Server) Run() error", // fim real do bloco (chaves balanceadas)
 		"L23: func init() { http.HandleFunc(\"/health\", h) }",
 	}
 	if got != strings.Join(want, "\n") {
@@ -59,8 +59,8 @@ func TestCodeOutlineTS(t *testing.T) {
 		"L2: export type Id = string | number;",
 		"L3-L6: export async function loadUser(id: Id): Promise<User>",
 		"L7: export const toId = (x: number): Id => String(x);",
-		"L8: export default class UserService",
-		"L9-L13: private async fetchAll(limit: number): Promise<User[]>",
+		"L8-L13: export default class UserService",
+		"L9-L10: private async fetchAll(limit: number): Promise<User[]>",
 		"L14: router.get('/users/:id', handler);",
 	} {
 		if !strings.Contains(got, want) {
@@ -76,7 +76,7 @@ func TestCodeOutlineTS(t *testing.T) {
 
 func TestCodeOutlinePythonShellPS(t *testing.T) {
 	py := outlineOf(t, "m.py", "# def nope():\nclass Repo:\n    async def get(self, id):\n        pass\n\n@app.route('/items')\ndef items():\n    pass\n", "")
-	for _, want := range []string{"L2: class Repo:", "L3-L4: async def get(self, id):", "L6: @app.route('/items')", "L7-L8: def items():"} {
+	for _, want := range []string{"L2-L4: class Repo:", "L3-L4: async def get(self, id):", "L6: @app.route('/items')", "L7-L8: def items():"} {
 		if !strings.Contains(py, want) {
 			t.Errorf("py: faltou %q em:\n%s", want, py)
 		}

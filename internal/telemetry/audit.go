@@ -32,6 +32,8 @@ type AuditEntry struct {
 	NoResult       bool
 	Client         string // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
 	Conversation   string // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
+	Graph          string // decisão do grafo: outline, repeat, search ("" = nenhuma)
+	GraphSavedKB   int    // tamanho do texto que o outline substituiu
 }
 
 var (
@@ -152,7 +154,12 @@ func setupAuditSchema(db *sql.DB) {
 			}
 		}
 	}
-	for _, col := range []string{"client", "conversation"} {
+	if !existing["graph_saved_kb"] {
+		if _, err := db.Exec("ALTER TABLE audit ADD COLUMN graph_saved_kb INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			noteFailure("schema migration", err)
+		}
+	}
+	for _, col := range []string{"client", "conversation", "graph"} {
 		if !existing[col] {
 			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s TEXT NOT NULL DEFAULT '';", col)); err != nil {
 				noteFailure("schema migration", err)
@@ -188,15 +195,15 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		session_id, tool, host, duration_ms,
 		bytes_in, bytes_out, est_tokens_in, est_tokens_out,
 		success, exit_code, error_message, command_summary,
-		truncated, no_result, client, conversation
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		truncated, no_result, client, conversation, graph, graph_saved_kb
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := db.Exec(
 		query,
 		e.SessionID, e.Tool, e.Host, e.DurationMs,
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
 		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
-		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation,
+		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation, e.Graph, e.GraphSavedKB,
 	)
 	return err
 }
@@ -270,8 +277,26 @@ func SummarizeCall(toolName string, rawArgs []byte) (string, string) {
 		path, _ := generic["path"].(string)
 		summary = fmt.Sprintf("%s %s", action, path)
 	case "read_file":
+		// caminho + o que foi pedido, para medir o uso de intervalos/pattern e o corte ("arq [L10-40]", "arq [whole]")
 		path, _ := generic["path"].(string)
-		summary = path
+		num := func(k string) int { f, _ := generic[k].(float64); return int(f) }
+		var sel []string
+		if s, e := num("start_line"), num("end_line"); s > 0 || e > 0 {
+			sel = append(sel, fmt.Sprintf("L%d-%d", s, e))
+		}
+		if r, _ := generic["ranges"].(string); r != "" {
+			sel = append(sel, "ranges="+truncate(r, 40))
+		}
+		if p, _ := generic["pattern"].(string); p != "" {
+			sel = append(sel, "pattern="+truncate(cleanLine(p), 40))
+		}
+		if num("offset") > 0 || num("limit") > 0 {
+			sel = append(sel, fmt.Sprintf("bytes %d+%d", num("offset"), num("limit")))
+		}
+		if len(sel) == 0 {
+			sel = append(sel, "whole")
+		}
+		summary = path + " [" + strings.Join(sel, " ") + "]"
 	case "write_file", "edit_file":
 		path, _ := generic["path"].(string)
 		summary = path

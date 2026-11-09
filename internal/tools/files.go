@@ -238,18 +238,44 @@ func ResolveTargetHost(host, path string) (transport.HostTarget, error) {
 	return transport.ResolveHost(host)
 }
 
-// HandleReadFile reads a file and, from the 3rd read of the same file in this
-// process, points to the graph tools (code_outline / code_graph), which answer
-// "where is X / who calls X" without reading line ranges again.
+// HandleReadFile is the model-facing read. On top of handleReadFileInner it
+// applies, in order: graph first for big source files (outline instead of text),
+// the size cap for other big reads, and the graph hint on the 3rd read of a
+// file. Repeating the exact same call returns the full text (no lost
+// functionality). Internal callers (edit_file, code_outline) use
+// handleReadFileInner and are never affected.
 func HandleReadFile(args ReadFileArgs) (string, error) {
 	out, err := handleReadFileInner(args)
-	if err == nil && args.StartLine == 0 && args.EndLine == 0 && args.Offset == 0 && args.Limit == 0 &&
-		args.Ranges == "" && args.Pattern == "" && !args.Numbered {
-		// Only the model-facing whole-file read is capped. Internal callers
-		// (edit_file, code_outline) use handleReadFileInner and see everything.
-		out = capWholeFile(out, args.Path)
+	if err != nil {
+		return out, err
 	}
-	if err == nil && noteRead(identity(args.Caller, args.Conv), args.Host, args.Path) == rereadHintAt {
+	noSlice := args.Offset == 0 && args.Limit == 0 && args.Ranges == "" && args.Pattern == ""
+	whole := noSlice && args.StartLine == 0 && args.EndLine == 0
+	lineRange := noSlice && !whole
+	id := identity(args.Caller, args.Conv)
+	switch {
+	case whole:
+		if g, ok, note := graphFirstRead(args, out, 0, 0); ok {
+			out = g
+		} else if note != "" {
+			out = strings.TrimRight(out, "\r\n") + "\n\n" + note
+		} else {
+			out = capReadText(out, args.Path, "the whole file", "cap|"+id+"|"+strings.ToLower(args.Host+"|"+args.Path))
+		}
+	case lineRange && (args.EndLine == 0 || args.EndLine-max(args.StartLine, 1)+1 > graphMinLines):
+		if full, ferr := handleReadFileInner(ReadFileArgs{Host: args.Host, Path: args.Path}); ferr == nil {
+			if g, ok, note := graphFirstRead(args, full, args.StartLine, args.EndLine); ok {
+				out = g
+				break
+			} else if note != "" {
+				out = strings.TrimRight(out, "\r\n") + "\n\n" + note
+				break
+			}
+		}
+		label := fmt.Sprintf("lines %d-%d", max(args.StartLine, 1), args.EndLine)
+		out = capReadText(out, args.Path, label, fmt.Sprintf("cap|%s|%s|%d-%d", id, strings.ToLower(args.Host+"|"+args.Path), args.StartLine, args.EndLine))
+	}
+	if noteRead(identity(args.Caller, args.Conv), args.Host, args.Path) == rereadHintAt {
 		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] Third read of this file. To locate code without re-reading: code_outline(path, symbol='name') gives the line; code_graph(action='callers') lists who calls it; read_file(pattern='regex', context=3) returns only matching lines."
 	}
 	return out, err

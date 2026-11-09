@@ -26,7 +26,7 @@ func TestEditFileOnBigFileKeepsEverything(t *testing.T) {
 	}
 
 	out, err := HandleReadFile(ReadFileArgs{Path: p})
-	if err != nil || !strings.Contains(out, "[FastExec] File has") {
+	if err != nil || !strings.Contains(out, "[FastExec] the whole file:") {
 		t.Fatalf("direct whole read of a big file must be capped with a hint: %v", err)
 	}
 	out, _ = HandleReadFile(ReadFileArgs{Path: p, Pattern: "DONE_END"})

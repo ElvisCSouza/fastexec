@@ -98,7 +98,11 @@ func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, 
 				saved += tok - int64(softCapTokens)
 			}
 		case "read_file":
-			reads[summary]++
+			p := summary
+			if i := strings.Index(p, " ["); i > 0 {
+				p = p[:i] // agrupa pelo arquivo, sem o intervalo pedido
+			}
+			reads[p]++
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -129,6 +133,35 @@ func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, 
 	for _, k := range topKeys(byCmd, 12) {
 		a := byCmd[k]
 		fmt.Fprintf(&b, "  %-16s %7d calls %10d tokens  (largest %d)\n", k, a.calls, a.tokens, a.max)
+	}
+
+	// grafo primeiro: quantas respostas vieram do grafo, quantas a LLM precisou repetir e o texto evitado
+	gq := `SELECT COALESCE(graph,''), COUNT(*), COALESCE(SUM(graph_saved_kb),0), COALESCE(SUM(est_tokens_out),0) FROM audit ` +
+		strings.Replace(periodWhere(filter)+" ", "WHERE", "WHERE graph <> '' AND", 1)
+	if periodWhere(filter) == "" {
+		gq = `SELECT graph, COUNT(*), COALESCE(SUM(graph_saved_kb),0), COALESCE(SUM(est_tokens_out),0) FROM audit WHERE graph <> ''`
+	}
+	if grows, err := db.Query(gq + " GROUP BY graph"); err == nil {
+		var lines []string
+		for grows.Next() {
+			var g string
+			var n, kb, tok int64
+			if grows.Scan(&g, &n, &kb, &tok) == nil {
+				switch g {
+				case "outline":
+					saved := int64(float64(kb*1024)/3.5) - tok
+					lines = append(lines, fmt.Sprintf("  outline instead of text: %d reads, ~%d tokens avoided", n, saved))
+				case "search":
+					lines = append(lines, fmt.Sprintf("  identifier search from the graph: %d", n))
+				case "repeat":
+					lines = append(lines, fmt.Sprintf("  repeated to get the raw text: %d", n))
+				}
+			}
+		}
+		grows.Close()
+		if len(lines) > 0 {
+			fmt.Fprintf(&b, "\nGraph first:\n%s\n", strings.Join(lines, "\n"))
+		}
 	}
 
 	type rd struct {

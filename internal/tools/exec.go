@@ -38,6 +38,8 @@ type ExecArgs struct {
 	Cwd       string   `json:"cwd,omitempty"`
 	Input     string   `json:"input,omitempty"`
 	TimeoutMs int      `json:"timeout_ms,omitempty"`
+	Caller    string   `json:"_caller,omitempty"`       // canal MCP (injetado pelo proxy)
+	Conv      string   `json:"_conversation,omitempty"` // id de conversa do cliente, quando houver
 }
 
 const sleepGuardMsg = "[FastExec Guard] 'sleep' and 'timeout' are blocked: exec is event-driven and returns the moment the process exits. For long work raise 'timeout_ms' (e.g. 300000); for asynchronous work use the 'job' tool with action 'wait'"
@@ -82,6 +84,19 @@ func HandleExec(args ExecArgs) (string, error) {
 		} else {
 			cdHint = hint
 			label = args.Command
+		}
+	}
+
+	// Busca de identificador num repositório: respondida pelo grafo (repetir o comando roda a busca crua)
+	var graphNote string
+	if hasCmd {
+		if out, handled, note := tryGraphSearch(args, args.Command); handled {
+			if cdHint != "" {
+				out = cdHint + "\n---\n" + out
+			}
+			return out, nil
+		} else {
+			graphNote = note
 		}
 	}
 
@@ -188,6 +203,9 @@ func HandleExec(args ExecArgs) (string, error) {
 	}
 	if sleepNotice != "" {
 		out = strings.TrimRight(out, "\r\n") + "\n\n" + sleepNotice
+	}
+	if graphNote != "" {
+		out = strings.TrimRight(out, "\r\n") + "\n\n" + graphNote
 	}
 	return out, ferr
 }

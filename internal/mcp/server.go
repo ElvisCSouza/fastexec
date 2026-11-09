@@ -67,9 +67,9 @@ type PropertyDef struct {
 type Server struct {
 	clientMu   sync.Mutex
 	clientName string // clientInfo.name do initialize (ex.: claude-ai, local-agent-mode-fastexec)
-	mu        sync.Mutex
-	writer    *bufio.Writer
-	Forwarder func(name string, rawArgs json.RawMessage) (ToolCallResult, error)
+	mu         sync.Mutex
+	writer     *bufio.Writer
+	Forwarder  func(name string, rawArgs json.RawMessage) (ToolCallResult, error)
 }
 
 func NewServer() *Server {
@@ -209,6 +209,8 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		CommandSummary: summary,
 		Client:         client,
 		Conversation:   conversation,
+		Graph:          graphDecision(outText),
+		GraphSavedKB:   graphSavedKB(outText),
 		Truncated:      name == "exec" && tools.IsTruncated(outText),
 		NoResult:       name == "exec" && tools.IsNoResult(outText),
 	})

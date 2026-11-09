@@ -112,11 +112,16 @@ func filterDecls(decls []codescan.Decl, symbol string) []codescan.Decl {
 }
 
 // outlineSource renders one file as "L<start>-L<end>: <declaration>". The end
-// is approximate: the line before the next declaration, minus trailing blank
-// and comment lines, so read_file(start_line, end_line) returns the whole body.
+// comes from the scanner (balanced braces, or indentation in Python); when the
+// scanner has none, the line before the next declaration is used.
 func outlineSource(src []byte, lang *codescan.Lang, symbol string, max int) string {
 	decls, _ := codescan.Scan(src, lang)
 	ends := declEnds(src, decls)
+	for _, d := range decls {
+		if d.EndLine > d.Line {
+			ends[d.Line] = d.EndLine
+		}
+	}
 	return renderFileEnds(filterDecls(decls, symbol), max, symbol, ends)
 }
 
