@@ -166,8 +166,20 @@ var (
 		imports: []*regexp.Regexp{regexp.MustCompile(`^\s*import\s+([\w.]+)`)},
 	}
 
+	// Zig: fn (pub/export/extern/inline; dentro de struct vira método), const X = struct/enum/union/opaque/error,
+	// e blocos test "nome". Fim do bloco pelas chaves.
+	langZig = &Lang{Name: "zig", slashComment: true,
+		rules: []rule{
+			{regexp.MustCompile(`^\s*(?:pub\s+)?(?:(?:export|inline|noinline)\s+|extern\s+(?:"\w+"\s+)?)*fn\s+(?P<name>[A-Za-z_]\w*)\s*\(`), indentedKind("func", "method")},
+			{regexp.MustCompile(`^\s*(?:pub\s+)?const\s+(?P<name>[A-Za-z_]\w*)\s*(?::[^=]+)?=\s*(?:extern\s+|packed\s+)?(?:struct|enum|union|opaque|error)\b`), zigTypeKind},
+			{regexp.MustCompile(`^\s*test\s+"(?P<name>[^"]+)"`), fixed("test")},
+		},
+		imports: []*regexp.Regexp{regexp.MustCompile(`@import\(\s*"([^"]+)"`)},
+	}
+
 	langByExt = map[string]*Lang{
-		".cs": langCS, ".java": langJava, ".kt": langKt, ".kts": langKt,
+		".zig": langZig,
+		".cs":  langCS, ".java": langJava, ".kt": langKt, ".kts": langKt,
 		".c": langC, ".h": langC, ".cc": langC, ".cpp": langC, ".cxx": langC, ".hpp": langC, ".hh": langC, ".hxx": langC, ".inl": langC,
 		".go": langGo,
 		".ts": langJS, ".tsx": langJS, ".mts": langJS, ".cts": langJS,
@@ -188,7 +200,17 @@ func LangFor(path string) *Lang {
 }
 
 // Supported lista as extensões aceitas (para mensagens de erro).
-const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp, .cs, .java, .kt/.kts"
+const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp, .cs, .java, .kt/.kts, .zig"
+
+// zigTypeKind: struct, enum, union, opaque ou error (conjunto de erros).
+func zigTypeKind(line string) string {
+	for _, k := range []string{"struct", "enum", "union", "opaque", "error"} {
+		if strings.Contains(line, k) {
+			return k
+		}
+	}
+	return "type"
+}
 
 // kwKind devolve a palavra-chave de tipo da linha (class, struct, interface, record, enum, object).
 func kwKind(line string) string {
@@ -261,6 +283,8 @@ func exported(l *Lang, kind, name, line string) bool {
 		return strings.Contains(line, "public ")
 	case "kt":
 		return !strings.Contains(line, "private ") && !strings.Contains(line, "internal ")
+	case "zig":
+		return strings.HasPrefix(strings.TrimSpace(line), "pub ") || strings.Contains(line, "export ")
 	}
 	return true
 }

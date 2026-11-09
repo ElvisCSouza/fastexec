@@ -94,6 +94,47 @@ typealias Lista = List<Canal>
 	}
 }
 
+func TestZig(t *testing.T) {
+	src := `const std = @import("std");
+const posix = std.posix;
+
+pub const Options = struct {
+    port: u16 = 53,
+
+    pub fn parse(args: []const []const u8) !Options {
+        var o = Options{};
+        if (args.len > 0) {
+            o.port = 54;
+        }
+        return o;
+    }
+};
+
+const Kind = enum { a, b };
+pub const Error = error{ Timeout, Refused };
+
+fn handle(sock: posix.socket_t) void {
+    const s = "fn naoEDeclaracao() {";
+    _ = s;
+}
+
+extern "c" fn getpid() c_int;
+
+test "parse sem argumentos" {
+    try std.testing.expect(true);
+}
+`
+	got := outline(t, "a.zig", src)
+	for _, want := range []string{"4-14 struct Options", "7-13 method parse", "16-16 enum Kind", "17-17 error Error", "19-22 func handle", "24-24 func getpid", "26-28 test parse sem argumentos"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "naoEDeclaracao") || strings.Contains(got, " std\n") || strings.Contains(got, " posix\n") {
+		t.Errorf("false positive:\n%s", got)
+	}
+}
+
 func TestJava(t *testing.T) {
 	src := `package x;
 import java.util.List;
