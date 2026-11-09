@@ -1,18 +1,23 @@
 // root_guard.go: guard de sistema do exec. Busca ou listagem recursiva sobre uma raiz ampla (raiz de disco, C:\Users,
 // /, /home) varreria o PC inteiro: minutos de CPU e uma saída que estoura o contexto. É bloqueada antes de executar,
 // inclusive quando o caminho é "." e o cwd é a raiz ampla. Desligar: FASTEXEC_NO_SEARCH_GUARD=1.
+// Letra de unidade (C:, W:) só é raiz no host Windows; num host Linux 'W:' é um nome de pasta comum.
 package tools
 
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
+
+	"homelab/fastexec/internal/transport"
 )
 
 var broadUnixRoots = map[string]bool{"/": true, "/home": true, "/users": true, "/root": true}
 
-// isBroadRoot: raiz de disco (C:\, D:), pasta de perfis (C:\Users) ou raiz Unix ampla, com ou sem curinga final.
-func isBroadRoot(p string) bool {
+// isBroadRoot: raiz Unix ampla e, no host Windows (win), raiz de disco (C:\, D:) ou pasta de perfis (C:\Users);
+// com ou sem curinga final.
+func isBroadRoot(p string, win bool) bool {
 	p = strings.Trim(strings.TrimSpace(p), `"'`)
 	if p == "" {
 		return false
@@ -31,7 +36,7 @@ func isBroadRoot(p string) bool {
 	if broadUnixRoots[lower] {
 		return true
 	}
-	if len(lower) >= 2 && lower[1] == ':' && isLetter(lower[0]) {
+	if win && len(lower) >= 2 && lower[1] == ':' && isLetter(lower[0]) {
 		rest := lower[2:]
 		return rest == "" || rest == "/users"
 	}
@@ -145,7 +150,15 @@ func recursiveScanPaths(tokens []string) ([]string, bool) {
 }
 
 // broadScan devolve a raiz ampla que o comando varreria recursivamente ("" se nenhuma).
-func broadScan(args ExecArgs) string {
+func broadScan(args ExecArgs) string { return broadScanOn(args, hostIsWindows(args.Host)) }
+
+// hostIsWindows: o host do comando é este computador e ele é Windows (os remotos são Linux/OpenWrt).
+func hostIsWindows(host string) bool {
+	t, err := transport.ResolveHost(host)
+	return err == nil && t.IsLocal && runtime.GOOS == "windows"
+}
+
+func broadScanOn(args ExecArgs, win bool) string {
 	if searchGuardOff() {
 		return ""
 	}
@@ -167,12 +180,12 @@ func broadScan(args ExecArgs) string {
 		}
 		for _, p := range paths {
 			if isDotPath(p) {
-				if isBroadRoot(args.Cwd) {
+				if isBroadRoot(args.Cwd, win) {
 					return args.Cwd
 				}
 				continue
 			}
-			if isBroadRoot(p) {
+			if isBroadRoot(p, win) {
 				return p
 			}
 		}

@@ -235,7 +235,25 @@ func ResolveTargetHost(host, path string) (transport.HostTarget, error) {
 			host = "local"
 		}
 	}
-	return transport.ResolveHost(host)
+	t, err := transport.ResolveHost(host)
+	if err == nil && !t.IsLocal && isWindowsPath(path) {
+		// os hosts remotos são Linux/OpenWrt: lá 'W:\x' viraria uma pasta chamada 'W:' (ou um nome com barras invertidas)
+		return t, fmt.Errorf("path '%s' is a Windows path, but host '%s' is Linux: nothing was read or written. "+
+			"For a file on this Windows computer use host='local'; for %s use its Linux path (e.g. /home/...)", path, t.Name, t.Name)
+	}
+	return t, err
+}
+
+// isWindowsPath: letra de unidade seguida de separador ou fim (C:, W:\x, d:/x) ou prefixo UNC (\\server).
+func isWindowsPath(p string) bool {
+	if strings.HasPrefix(p, `\\`) {
+		return true
+	}
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	c := p[0] | 0x20
+	return c >= 'a' && c <= 'z' && (len(p) == 2 || p[2] == '\\' || p[2] == '/')
 }
 
 // HandleReadFile is the model-facing read. On top of handleReadFileInner it

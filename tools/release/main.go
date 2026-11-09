@@ -50,11 +50,11 @@ func main() {
 			name += ".exe"
 			ldflags = "-H=windowsgui " + ldflags
 		}
-		fmt.Println("==", name)
-		cmd := exec.Command("go", "build", "-trimpath", "-ldflags="+ldflags, "-o", filepath.Join(out, name), "./cmd/fastexec")
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+t.goos, "GOARCH="+t.goarch)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		check(cmd.Run())
+		goBuild(out, name, ldflags, t)
+		if t.goos == "windows" {
+			// gêmeo de console para o terminal: o pwsh não espera nem captura a saída de um app sem console
+			goBuild(out, "fastexec-cli-"+t.goos+"-"+t.goarch+".exe", strings.TrimPrefix(ldflags, "-H=windowsgui "), t)
+		}
 	}
 
 	if *zig != "" {
@@ -67,6 +67,14 @@ func main() {
 
 	writeSums(out)
 	fmt.Println("release files in", out)
+}
+
+func goBuild(out, name, ldflags string, t target) {
+	fmt.Println("==", name)
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags="+ldflags, "-o", filepath.Join(out, name), "./cmd/fastexec")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+t.goos, "GOARCH="+t.goarch)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	check(cmd.Run())
 }
 
 // buildServer compila o server-exec para os mesmos alvos do server/build.sh, direto com o zig (sem sh).

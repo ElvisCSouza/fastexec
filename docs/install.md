@@ -13,6 +13,10 @@
    - Windows: `%LOCALAPPDATA%\Programs\FastExec\fastexec.exe`
    - Linux and macOS: `~/.local/bin/fastexec` (make it executable: `chmod +x`)
 3. Run `fastexec setup` from that folder, restart your AI clients and run `fastexec doctor`.
+4. Windows, optional: for scripts and the terminal, also put `fastexec-cli-windows-amd64.exe` in the same folder as
+   `fastexec-cli.exe` and call that one. `fastexec.exe` has no console (so nothing flashes when a client starts it), and
+   PowerShell neither waits for nor captures the output of such a program; the console twin behaves normally. It
+   starts the daemon from the sibling `fastexec.exe`.
 
 Do not run it from Downloads or a temp folder: the clients keep the path you register.
 
@@ -85,5 +89,6 @@ Go 1.26 or newer:
 go build -o fastexec ./cmd/fastexec
 ```
 
-On Windows add `-ldflags="-H=windowsgui"` so no console window flashes when a client starts it.
+On Windows add `-ldflags="-H=windowsgui"` so no console window flashes when a client starts it, and build the same
+package again without that flag as `fastexec-cli.exe` for the terminal (see Install, step 4).
 `go run ./tools/release -version vX.Y.Z` builds every release file and `SHA256SUMS` into `dist/`.
