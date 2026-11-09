@@ -620,6 +620,14 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 		t, r := matchEOL(newContent, op.Target, op.Replacement)
 		n := strings.Count(newContent, t)
 		if n == 0 {
+			if matched, desc, ok := matchRemediation(args.Path, newContent, op.Target, r); ok {
+				t = matched
+				t, r = matchEOL(newContent, t, r)
+				n = strings.Count(newContent, t)
+				notes = append(notes, fmt.Sprintf("[FastExec Auto-Remediation] %s matched %s; applied automatically", label, desc))
+			}
+		}
+		if n == 0 {
 			msg := fmt.Sprintf("%s not found in '%s'; nothing was written", label, args.Path)
 			if h := nearMiss(newContent, op.Target); h != "" {
 				msg += "\n" + h
