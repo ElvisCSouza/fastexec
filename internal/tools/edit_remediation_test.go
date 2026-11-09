@@ -109,3 +109,58 @@ func TestHandleEditFileRemediationSymbolAST(t *testing.T) {
 		t.Errorf("corpo da função não foi atualizado:\n%s", string(updated))
 	}
 }
+
+func TestHandleReadFileWithSymbol(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "worker.go")
+	content := "package main\n\nfunc Init() {\n\tprintln(\"init\")\n}\n\nfunc Work(task string) int {\n\tx := len(task)\n\treturn x * 2\n}\n\nfunc Cleanup() {}\n"
+	_ = os.WriteFile(p, []byte(content), 0o644)
+
+	// Lê diretamente o símbolo 'Work'
+	out, err := HandleReadFile(ReadFileArgs{
+		Path:   p,
+		Symbol: "Work",
+	})
+	if err != nil {
+		t.Fatalf("HandleReadFile com Symbol falhou: %v", err)
+	}
+	if !strings.Contains(out, "// L7-L10 (func) func Work(task string) int") {
+		t.Errorf("cabeçalho de símbolo ausente ou incorreto:\n%s", out)
+	}
+	if !strings.Contains(out, "x := len(task)") || strings.Contains(out, "Cleanup") {
+		t.Errorf("conteúdo deveria conter apenas Work e não Cleanup:\n%s", out)
+	}
+
+	// Símbolo inexistente deve sugerir disponíveis
+	_, err = HandleReadFile(ReadFileArgs{
+		Path:   p,
+		Symbol: "NonExistent",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Available symbols") {
+		t.Fatalf("esperava erro com Available symbols: %v", err)
+	}
+}
+
+func TestHandleEditFileWithExplicitSymbol(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "module.py")
+	content := "def helper():\n    return 42\n\ndef main():\n    print(helper())\n"
+	_ = os.WriteFile(p, []byte(content), 0o644)
+
+	// Substitui helper usando symbol diretamente sem target
+	repl := "def helper():\n    return 100\n"
+	msg, err := HandleEditFile(EditFileArgs{
+		Path:        p,
+		Symbol:      "helper",
+		Replacement: repl,
+	})
+	if err != nil {
+		t.Fatalf("HandleEditFile com Symbol explícito falhou: %v", err)
+	}
+	if !strings.Contains(msg, "replaced symbol 'helper'") {
+		t.Errorf("mensagem de sucesso incorreta: %s", msg)
+	}
+
+	updated, _ := os.ReadFile(p)
+	if !strings.Contains(string(updated), "return 100") || !strings.Contains(string(updated), "def main():") {
+		t.Errorf("arquivo Python modificado incorretamente:\n%s", string(updated))
+	}
+}

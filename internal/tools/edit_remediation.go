@@ -2,8 +2,10 @@ package tools
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
+	"homelab/fastexec/internal/codescan"
 	"homelab/fastexec/internal/graph"
 )
 
@@ -221,4 +223,128 @@ func matchSymbolAST(path, content, target, replacement string) (string, string, 
 	exact := content[startByte:endByte]
 	desc := fmt.Sprintf("symbol '%s' (%s, lines %d-%d via code_graph AST)", d.Name, d.Kind, d.Line, d.EndLine)
 	return exact, desc, true
+}
+
+// selectSymbol busca a declaração do símbolo no conteúdo e devolve apenas o bloco do símbolo.
+func selectSymbol(path, data, symbol string) (string, bool, error) {
+	if symbol == "" {
+		return "", false, nil
+	}
+	decls, _, ok := graph.ParseFile(path, []byte(data))
+	if !ok || len(decls) == 0 {
+		return "", true, fmt.Errorf("no declarations found or file type not supported for symbol extraction in '%s'", path)
+	}
+
+	var match *codescan.Decl
+	var names []string
+	for i := range decls {
+		d := &decls[i]
+		if d.Name == "" {
+			continue
+		}
+		names = append(names, d.Name)
+		if d.Name == symbol {
+			match = d
+			break
+		}
+	}
+	if match == nil {
+		for i := range decls {
+			d := &decls[i]
+			if strings.EqualFold(d.Name, symbol) {
+				match = d
+				break
+			}
+		}
+	}
+
+	if match == nil {
+		if len(names) > 15 {
+			names = names[:15]
+		}
+		return "", true, fmt.Errorf("symbol %q not found in %s. Available symbols: %s", symbol, path, strings.Join(names, ", "))
+	}
+
+	lines := splitLines(data)
+	if match.Line < 1 || match.Line > len(lines) {
+		return "", true, fmt.Errorf("invalid line range for symbol %q in %s", symbol, path)
+	}
+	end := match.EndLine
+	if end < match.Line || end > len(lines) {
+		end = match.Line
+	}
+
+	commentPrefix := "//"
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".py" || ext == ".sh" || ext == ".bash" || ext == ".rb" {
+		commentPrefix = "#"
+	} else if ext == ".sql" || ext == ".lua" {
+		commentPrefix = "--"
+	}
+
+	hdr := fmt.Sprintf("%s L%d-L%d (%s) %s\n", commentPrefix, match.Line, end, match.Kind, match.Sig)
+	block := strings.Join(lines[match.Line-1:end], "\n")
+	return hdr + block, true, nil
+}
+
+// editSymbol substitui o corpo completo de uma declaração de símbolo no conteúdo pelo replacement.
+func editSymbol(path, content, symbol, replacement string) (string, string, error) {
+	if symbol == "" {
+		return "", "", fmt.Errorf("symbol name is required")
+	}
+	decls, _, ok := graph.ParseFile(path, []byte(content))
+	if !ok || len(decls) == 0 {
+		return "", "", fmt.Errorf("no declarations found or file type not supported for symbol replacement in '%s'", path)
+	}
+
+	var match *codescan.Decl
+	var names []string
+	for i := range decls {
+		d := &decls[i]
+		if d.Name == "" {
+			continue
+		}
+		names = append(names, d.Name)
+		if d.Name == symbol {
+			match = d
+			break
+		}
+	}
+	if match == nil {
+		for i := range decls {
+			d := &decls[i]
+			if strings.EqualFold(d.Name, symbol) {
+				match = d
+				break
+			}
+		}
+	}
+	if match == nil {
+		if len(names) > 15 {
+			names = names[:15]
+		}
+		return "", "", fmt.Errorf("symbol %q not found in %s. Available declarations: %s", symbol, path, strings.Join(names, ", "))
+	}
+
+	spans := computeLineSpans(content)
+	if match.Line < 1 || match.EndLine > len(spans) || match.Line > match.EndLine {
+		return "", "", fmt.Errorf("invalid line range %d-%d for symbol %q in %s", match.Line, match.EndLine, symbol, path)
+	}
+
+	startByte := spans[match.Line-1].startByte
+	endByte := spans[match.EndLine-1].fullEnd
+	oldBlock := content[startByte:endByte]
+
+	_, r := matchEOL(content, oldBlock, replacement)
+	if !strings.HasSuffix(r, "\n") && strings.HasSuffix(oldBlock, "\n") {
+		if strings.HasSuffix(oldBlock, "\r\n") {
+			r += "\r\n"
+		} else {
+			r += "\n"
+		}
+	}
+
+	newContent := content[:startByte] + r + content[endByte:]
+	msg := fmt.Sprintf("[edit_file] replaced symbol '%s' (%s, lines %d-%d, %d -> %d bytes) in %s.", match.Name, match.Kind, match.Line, match.EndLine, len(oldBlock), len(r), path)
+	return newContent, msg, nil
 }

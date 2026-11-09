@@ -1,5 +1,5 @@
 {
-  "wire_bytes": 9818,
+  "wire_bytes": 10134,
   "result": {
     "tools": [
       {
@@ -84,6 +84,10 @@
             "start_line": {
               "type": "integer",
               "description": "First line (1-based)"
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Read only the declaration and body of this symbol via AST (e.g. 'FunctionName' or 'ClassName') without reading the rest of the file"
             }
           },
           "required": [
@@ -177,6 +181,10 @@
             "replacement": {
               "type": "string",
               "description": "New text (empty deletes the target)"
+            },
+            "symbol": {
+              "type": "string",
+              "description": "Symbol name to replace (replaces its entire declaration/body via AST without needing target text)"
             },
             "target": {
               "type": "string",

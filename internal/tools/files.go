@@ -26,6 +26,7 @@ type ReadFileArgs struct {
 	Numbered  bool   `json:"numbered,omitempty"`
 	Pattern   string `json:"pattern,omitempty"`
 	Context   int    `json:"context,omitempty"`
+	Symbol    string `json:"symbol,omitempty"`
 	Caller    string `json:"_caller,omitempty"`       // canal MCP (injetado pelo proxy, não vem da LLM)
 	Conv      string `json:"_conversation,omitempty"` // id de conversa do cliente, quando houver
 }
@@ -33,8 +34,9 @@ type ReadFileArgs struct {
 type EditFileArgs struct {
 	Host        string   `json:"host,omitempty"`
 	Path        string   `json:"path"`
-	Target      string   `json:"target"`
-	Replacement string   `json:"replacement"`
+	Target      string   `json:"target,omitempty"`
+	Replacement string   `json:"replacement,omitempty"`
+	Symbol      string   `json:"symbol,omitempty"`
 	Edits       []EditOp `json:"edits,omitempty"`
 	Caller      string   `json:"_caller,omitempty"`       // canal MCP (injetado pelo proxy)
 	Conv        string   `json:"_conversation,omitempty"` // id de conversa do cliente, quando houver
@@ -267,7 +269,7 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 	if err != nil {
 		return out, err
 	}
-	noSlice := args.Offset == 0 && args.Limit == 0 && args.Ranges == "" && args.Pattern == ""
+	noSlice := args.Offset == 0 && args.Limit == 0 && args.Ranges == "" && args.Pattern == "" && args.Symbol == ""
 	whole := noSlice && args.StartLine == 0 && args.EndLine == 0
 	lineRange := noSlice && !whole
 	// chaves do escape "repita para o texto completo" só com o pedido, nunca com a identidade (graph_first.go)
@@ -319,6 +321,11 @@ func handleReadFileInner(args ReadFileArgs) (string, error) {
 		data, err := os.ReadFile(filePath)
 		if err != nil {
 			return "", notFoundWithSuggestions(filePath, err)
+		}
+		if args.Symbol != "" {
+			if sel, handled, serr := selectSymbol(filePath, string(data), args.Symbol); handled {
+				return sel, serr
+			}
 		}
 		if sel, handled, serr := selectLines(string(data), args); handled {
 			return sel, serr
@@ -377,6 +384,11 @@ func handleReadFileInner(args ReadFileArgs) (string, error) {
 	}
 	if res.ExitCode != 0 {
 		return "", fmt.Errorf("could not read the remote file: %s", strings.TrimSpace(res.Stderr))
+	}
+	if args.Symbol != "" {
+		if sel, handled, serr := selectSymbol(filePath, res.Stdout, args.Symbol); handled {
+			return sel, serr
+		}
 	}
 	return res.Stdout, nil
 }
@@ -584,17 +596,46 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 	if args.Path == "" {
 		return "", fmt.Errorf("parameter 'path' is required")
 	}
+
+	host := args.Host
+	if host == "" && (filepath.VolumeName(args.Path) != "" || strings.HasPrefix(args.Path, `\\`)) {
+		host = "local"
+	}
+
+	if args.Symbol != "" {
+		if args.Replacement == "" {
+			return "", fmt.Errorf("parameter 'replacement' is required when 'symbol' is specified")
+		}
+		content, err := handleReadFileInner(ReadFileArgs{
+			Host: host,
+			Path: args.Path,
+		})
+		if err != nil {
+			return "", fmt.Errorf("could not read '%s' to edit it: %w", args.Path, err)
+		}
+		newContent, note, err := editSymbol(args.Path, content, args.Symbol, args.Replacement)
+		if err != nil {
+			return "", err
+		}
+		_, err = HandleWriteFile(WriteFileArgs{
+			Host:      host,
+			Path:      args.Path,
+			Content:   newContent,
+			Atomic:    true,
+			Overwrite: true,
+		})
+		if err != nil {
+			return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
+		}
+		return note, nil
+	}
+
 	ops := args.Edits
 	if args.Target != "" {
 		ops = append([]EditOp{{Target: args.Target, Replacement: args.Replacement}}, ops...)
 	}
 	if len(ops) == 0 {
-		return "", fmt.Errorf("parameter 'target' (or 'edits') is required")
-	}
-
-	host := args.Host
-	if host == "" && (filepath.VolumeName(args.Path) != "" || strings.HasPrefix(args.Path, `\\`)) {
-		host = "local"
+		return "", fmt.Errorf("parameter 'target', 'symbol' (or 'edits') is required")
 	}
 
 	content, err := handleReadFileInner(ReadFileArgs{
