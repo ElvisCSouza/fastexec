@@ -65,11 +65,12 @@ func rewriteHint(oldText, newText string) string {
 	}
 	avgLine := len(newText) / len(newL)
 	editBytes := 2*changedBytes + blocks*4*avgLine + 64*blocks
-	saveKB := (len(newText) - editBytes) / 1024
+	saveKB := (len(newText) - editBytes) / 1024 // inteiro: é o que a telemetria lê em "(avoidable N KB)"
 	if saveKB < rewriteMinSaveKB {
 		return ""
 	}
-	return fmt.Sprintf("%s This overwrite kept %d of %d lines unchanged: you sent %d KB to change about %d line(s) in %d place(s) (avoidable %d KB). "+
-		"Next time use edit_file with edits=[{target, replacement}, ...]: it sends only the changed parts (about %d KB here). The file was written as sent.",
-		RewriteMark, kept, len(newL), len(newText)/1024, len(newL)-kept, blocks, saveKB, max(editBytes/1024, 1))
+	kb := func(n int) float64 { return float64(n) / 1024 }
+	return fmt.Sprintf("%s This overwrite kept %d of %d lines unchanged: you sent %.1f KB to change about %d line(s) in %d place(s); edit_file would have sent about %.1f KB (avoidable %d KB). "+
+		"Next time use edit_file with edits=[{target, replacement}, ...]. The file was written as sent.",
+		RewriteMark, kept, len(newL), kb(len(newText)), len(newL)-kept, blocks, kb(editBytes), saveKB)
 }
