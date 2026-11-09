@@ -182,6 +182,11 @@ func HandleExec(args ExecArgs) (string, error) {
 			out = strings.TrimRight(out, "\r\n") + "\n" + lineSliceHint
 		}
 	}
+	if res.ExitCode != 0 && !res.TimedOut {
+		if hint := checkCompileOrTestFailure(args.Cwd, label, out); hint != "" {
+			out = strings.TrimRight(out, "\r\n") + "\n\n" + hint
+		}
+	}
 	if res.TimedOut && clampedFrom > 0 {
 		out += fmt.Sprintf("\nThe requested timeout_ms (%d) was capped at %d ms, the ceiling before the MCP client cuts the call.", clampedFrom.Milliseconds(), timeout.Milliseconds())
 	}

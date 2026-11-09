@@ -301,7 +301,7 @@ var (
 	reSedInPlace  = regexp.MustCompile(`\bsed\s+(?:-[a-zA-Z]*\s+)*-i|\bperl\s+-[a-z]*p[a-z]*i`)
 )
 
-const editScriptHint = "[FastExec FastHint] To change a file use tool 'edit_file' (several exact replacements in one call with 'edits'): no script, keeps line endings, refreshes the code graph."
+const editScriptHint = "[FastExec FastHint] To change a file use tool 'edit_file' with symbol='name' (AST replacement) or 'edits': no script escaping, keeps line endings, refreshes the code graph."
 
 func isEditScript(label string) bool {
 	if reSedInPlace.MatchString(label) {
