@@ -31,7 +31,7 @@ import (
 // never less.
 
 const (
-	graphMinLines     = 250
+	graphMinLines     = 120
 	graphMinDecls     = 3
 	graphHeaderMax    = 40
 	graphMaxEntries   = 300

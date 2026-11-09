@@ -70,6 +70,8 @@ func parseIdentSearch(cmd string) (searchReq, bool) {
 		rest, recursive = w[2:], true
 	case prog == "findstr":
 		rest = w[1:]
+	case prog == "select-string" || prog == "sls":
+		rest, recursive = w[1:], true
 	default:
 		return searchReq{}, false
 	}
@@ -82,16 +84,37 @@ func parseIdentSearch(cmd string) (searchReq, bool) {
 		case t == "--":
 			pos = append(pos, rest[i+1:]...)
 			i = len(rest)
+		case (prog == "select-string" || prog == "sls") && strings.HasPrefix(t, "-"):
+			switch {
+			case lt == "-pattern":
+				if i+1 < len(rest) {
+					i++
+					pattern = rest[i]
+				}
+			case strings.HasPrefix(lt, "-pattern:"):
+				pattern = t[9:]
+			case lt == "-path" || lt == "-literalpath":
+				if i+1 < len(rest) {
+					i++
+					pos = append(pos, rest[i])
+				}
+			case strings.HasPrefix(lt, "-path:") || strings.HasPrefix(lt, "-literalpath:"):
+				colon := strings.Index(t, ":")
+				pos = append(pos, t[colon+1:])
+			case lt == "-casesensitive" || lt == "-simplematch":
+			default:
+				// ignora flags desconhecidas sem valor
+			}
 		case prog == "findstr" && strings.HasPrefix(t, "/"):
 			switch lt {
 			case "/s":
 				recursive = true
-			case "/n", "/r", "/c", "/l", "/p":
+			case "/n", "/r", "/c", "/l", "/p", "/i":
 			default:
 				if strings.HasPrefix(lt, "/c:") {
 					pattern = t[3:]
 				} else {
-					return searchReq{}, false // /v, /i, /m, /x ...: saída diferente
+					return searchReq{}, false // /v, /m, /x ...: saída diferente
 				}
 			}
 		case strings.HasPrefix(t, "--"):
@@ -99,7 +122,7 @@ func parseIdentSearch(cmd string) (searchReq, bool) {
 			switch name {
 			case "--recursive", "--dereference-recursive":
 				recursive = true
-			case "--line-number", "--with-filename", "--no-heading", "--color", "--colour", "--word-regexp", "--extended-regexp", "--fixed-strings", "--perl-regexp", "--exclude-dir", "--exclude", "--hidden", "--no-ignore", "--glob", "--type":
+			case "--line-number", "--with-filename", "--no-heading", "--color", "--colour", "--word-regexp", "--extended-regexp", "--fixed-strings", "--perl-regexp", "--exclude-dir", "--exclude", "--hidden", "--no-ignore", "--glob", "--type", "--ignore-case":
 				if !strings.Contains(t, "=") && (name == "--exclude-dir" || name == "--exclude" || name == "--glob" || name == "--type") {
 					i++
 				}
@@ -123,7 +146,7 @@ func parseIdentSearch(cmd string) (searchReq, bool) {
 				switch f {
 				case 'r', 'R':
 					recursive = true
-				case 'n', 'H', 'w', 'E', 'F', 'P', 's', 'I':
+				case 'n', 'H', 'w', 'E', 'F', 'P', 's', 'I', 'i':
 				case 'e':
 					if k == len(flags)-1 && i+1 < len(rest) {
 						i++
@@ -134,7 +157,7 @@ func parseIdentSearch(cmd string) (searchReq, bool) {
 						i++ // valor da flag
 					}
 				default:
-					return searchReq{}, false // -v, -c, -l, -i, -o, -A/-B/-C ...: o grafo não dá essa saída
+					return searchReq{}, false // -v, -c, -l, -o, -A/-B/-C ...: o grafo não dá essa saída
 				}
 			}
 		default:
@@ -157,7 +180,7 @@ func parseIdentSearch(cmd string) (searchReq, bool) {
 // tryGraphSearch answers an identifier search from the graph. handled=false:
 // run the command; note (when set) explains why the raw output comes.
 func tryGraphSearch(args ExecArgs, label string) (out string, handled bool, note string) {
-	if searchGuardOff() || os.Getenv("FASTEXEC_NO_GRAPH_SEARCH") != "" || len(args.Argv) > 0 {
+	if searchGuardOff() || os.Getenv("FASTEXEC_NO_GRAPH_SEARCH") != "" {
 		return "", false, ""
 	}
 	if t, err := transport.ResolveHost(args.Host); err != nil || !t.IsLocal {
@@ -165,9 +188,19 @@ func tryGraphSearch(args ExecArgs, label string) (out string, handled bool, note
 	}
 	req, ok := parseIdentSearch(label)
 	if !ok {
+		if script, _ := unwrapShell(args, true); script != "" && script != label {
+			req, ok = parseIdentSearch(script)
+		}
+	}
+	if !ok {
 		return "", false, ""
 	}
 	base := args.Cwd
+	if base == "" {
+		if wd, err := os.Getwd(); err == nil {
+			base = wd
+		}
+	}
 	target := base
 	if len(req.paths) > 1 {
 		return "", false, ""

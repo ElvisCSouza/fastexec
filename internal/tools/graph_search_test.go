@@ -11,10 +11,15 @@ func TestParseIdentSearch(t *testing.T) {
 	yes := map[string]string{
 		`grep -rn HandleReadFile .`:               "HandleReadFile",
 		`grep -rn "func HandleReadFile" internal`: "HandleReadFile",
+		`grep -rni HandleReadFile .`:              "HandleReadFile",
 		`rg 'HandleReadFile\('`:                   "HandleReadFile",
 		`rg -n -t go \bloadUser\b src`:            "loadUser",
 		`git grep -n PedidoService`:               "PedidoService",
+		`git grep -n -i PedidoService`:            "PedidoService",
 		`findstr /s /n HandleExec *.go`:           "HandleExec",
+		`findstr /s /i HandleExec *.go`:           "HandleExec",
+		`Select-String -Pattern HandleReadFile`:   "HandleReadFile",
+		`sls CalcTotal`:                           "CalcTotal",
 	}
 	for cmd, want := range yes {
 		r, ok := parseIdentSearch(cmd)
@@ -27,7 +32,6 @@ func TestParseIdentSearch(t *testing.T) {
 		`grep -rn "connection refused" .`,          // texto
 		`grep -rln HandleReadFile .`,               // -l: lista de arquivos
 		`grep -rvn HandleReadFile .`,               // -v
-		`grep -rin handlereadfile .`,               // -i
 		`grep -rn HandleReadFile . | wc -l`,        // pipeline
 		`grep -rn --include=*.md HandleReadFile .`, // só docs
 		`findstr /n HandleExec *.go`,               // sem /s
@@ -69,5 +73,11 @@ func TestGraphSearchAnswersAndRepeats(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(plain, "a.go"), []byte("package x\nfunc CalcTotal() {}\n"), 0o644)
 	if _, handled, _ := tryGraphSearch(ExecArgs{Host: "local", Command: "grep -rn CalcTotal .", Cwd: plain}, "grep -rn CalcTotal ."); handled {
 		t.Fatal("outside a git repository the search must run as usual")
+	}
+
+	// busca embrulhada em pwsh -Command
+	wrappedArgs := ExecArgs{Host: "local", Command: `pwsh -NoProfile -Command "git grep -n CalcTotal"`, Cwd: repo, Caller: "test#gs2"}
+	if outW, handledW, _ := tryGraphSearch(wrappedArgs, wrappedArgs.Command); !handledW || !strings.Contains(outW, "CalcTotal") {
+		t.Fatalf("wrapped search should be handled by graph: handled=%v out=%s", handledW, outW)
 	}
 }
