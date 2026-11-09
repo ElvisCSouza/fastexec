@@ -19,4 +19,8 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) first: layout, tests, golden files and h
 - Anything that withholds content (outline instead of text, cut, incremental wait) keys its escape by the request,
   never by `identity()`: several conversations can share one MCP channel. A shared channel may cause more text,
   never less. `identity()` is only for hints.
+- An exec that only reads whole files (also wrapped in `pwsh -Command` / `bash -c`, with `cd` and separators) is
+  answered through `HandleReadFile` (`read_script.go`), so graph first and the cap apply as in `read_file`. Anything
+  else in the command (pipe, redirect, variable, line slice, another program) runs in the shell unchanged.
+- `write_file` overwriting a local file it mostly kept only warns (`rewrite_hint.go`); the file is always written.
 - The remote daemon is Zig 0.13 in `server/`; build with `server/build.sh`.

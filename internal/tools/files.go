@@ -400,6 +400,10 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 	}
 
 	if target.IsLocal {
+		oldText := ""
+		if args.Overwrite {
+			oldText = oldContentForRewrite(args.Path) // para o aviso de reescrita (rewrite_hint.go)
+		}
 		dir := filepath.Dir(args.Path)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", err
@@ -419,6 +423,9 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 			}
 		}
 		graph.Touch(args.Path) // índice de código: reindexa em segundo plano se o repositório já é indexado
+		if h := rewriteHint(oldText, args.Content); h != "" {
+			return okReply(int64(len(contentBytes))) + "\n" + h, nil
+		}
 		return okReply(int64(len(contentBytes))), nil
 	}
 

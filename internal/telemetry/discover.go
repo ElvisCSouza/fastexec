@@ -155,6 +155,8 @@ func renderDiscover(db *sql.DB, filter StatsFilter, softCapTokens int) (string, 
 					lines = append(lines, fmt.Sprintf("  identifier search from the graph: %d", n))
 				case "repeat":
 					lines = append(lines, fmt.Sprintf("  repeated to get the raw text: %d", n))
+				case "rewrite":
+					lines = append(lines, fmt.Sprintf("  write_file rewrote a mostly unchanged file: %d, ~%d tokens edit_file would have avoided", n, int64(float64(kb*1024)/3.5)))
 				}
 			}
 		}

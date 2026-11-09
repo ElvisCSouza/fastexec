@@ -108,6 +108,14 @@ func HandleExec(args ExecArgs) (string, error) {
 		return out, err
 	}
 
+	// Leitura embrulhada (pwsh -Command / bash -c / várias leituras com cd e separadores): cada arquivo via read_file
+	if out, handled := tryRemediateReadScript(args); handled {
+		if cdHint != "" {
+			out = cdHint + "\n---\n" + out
+		}
+		return out, nil
+	}
+
 	// Auto-remediação de listagem pura dir / ls / get-childitem (conversão para file_ops list com notificação pedagógica)
 	if out, handled, err := tryRemediateList(args); handled {
 		if cdHint != "" && out != "" {
