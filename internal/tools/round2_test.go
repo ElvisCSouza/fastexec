@@ -18,7 +18,7 @@ func TestWaitReportIncremental(t *testing.T) {
 		t.Fatalf("repeat wait must not resend the log: %q", same)
 	}
 	more := waitReport("job1", key, "b\nc\nd\ne", true, "exited")
-	if !strings.Contains(more, "finished: exited") || !strings.Contains(more, "(2 new line(s) since the last wait)\nd\ne") || strings.Contains(more, "\nb\n") {
+	if !strings.Contains(more, "finished: exited") || !strings.Contains(more, "(2 new line(s) since the last wait; job(action='tail') for the full log)\nd\ne") || strings.Contains(more, "\nb\n") {
 		t.Fatalf("only new lines expected: %q", more)
 	}
 }

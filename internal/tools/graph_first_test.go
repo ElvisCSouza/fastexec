@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func bigGoFile(t *testing.T, funcs, bodyLines int) string {
@@ -46,10 +47,32 @@ func TestGraphFirstWholeReadAndRepeat(t *testing.T) {
 		t.Fatalf("repeated read must return the full text with a note:\n%.300s", full)
 	}
 
-	// outra identidade não herda a repetição
-	other, _ := HandleReadFile(ReadFileArgs{Path: p, Caller: "test#gf2"})
-	if !strings.HasPrefix(other, GraphMarkOutline) {
-		t.Fatal("another identity must get the outline first")
+	// sem alternância: dentro da janela continua vindo o texto completo
+	again, _ := HandleReadFile(args)
+	if !strings.Contains(again, "x += 29") {
+		t.Fatal("a third read inside the window must still return the full text")
+	}
+}
+
+// Duas conversas no mesmo canal MCP (Claude Desktop não manda id de conversa) ou em canais diferentes: uma nunca
+// consome a repetição da outra. O pior caso é receber o texto completo antes; nunca o índice quando pediu o texto.
+func TestGraphFirstSharedIdentityNeverWithholds(t *testing.T) {
+	p := bigGoFile(t, 10, 30)
+	for _, ids := range [][2]string{{"canal#1", "canal#1"}, {"canal#1", "canal#2"}} {
+		graphSeenMu.Lock()
+		graphSeen = map[string]time.Time{}
+		graphSeenMu.Unlock()
+		a := ReadFileArgs{Path: p, Caller: ids[0]}
+		b := ReadFileArgs{Path: p, Caller: ids[1]}
+		if out, _ := HandleReadFile(a); !strings.HasPrefix(out, GraphMarkOutline) {
+			t.Fatalf("%v: A deveria receber o índice", ids)
+		}
+		if out, _ := HandleReadFile(b); !strings.Contains(out, "x += 29") {
+			t.Fatalf("%v: B lendo o mesmo arquivo recebe o texto completo (lado seguro)", ids)
+		}
+		if out, _ := HandleReadFile(a); !strings.Contains(out, "x += 29") {
+			t.Fatalf("%v: A repetiu e tem que receber o texto completo, mesmo depois da leitura de B", ids)
+		}
 	}
 }
 

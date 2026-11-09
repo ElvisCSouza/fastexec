@@ -205,7 +205,7 @@ func tryGraphSearch(args ExecArgs, label string) (out string, handled bool, note
 	if !strings.Contains(def, "\n- ") {
 		return "", false, ""
 	}
-	key := fmt.Sprintf("search|%s|%s|%s", identity(args.Caller, args.Conv), strings.ToLower(args.Cwd), label)
+	key := fmt.Sprintf("search|%s|%s", strings.ToLower(args.Cwd), label) // sem identidade: ver graph_first.go
 	if graphRepeat(key) {
 		return "", false, GraphMarkRepeat + ": raw search output because this exact command was repeated."
 	}

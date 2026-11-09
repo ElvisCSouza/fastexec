@@ -10,7 +10,8 @@ import (
 // one (Antigravity, Codex), otherwise the MCP channel (clientInfo.name#pid).
 // Inside one channel without conversation id (several Claude Desktop
 // conversations) a hint may rarely reach the neighbour conversation; these
-// counters only ever produce hints, never block or change data.
+// counters only ever produce hints, never block or change data. Anything that
+// withholds content must NOT use identity() for its escape (see graph_first.go).
 
 // identity returns the finest deterministic identity available.
 func identity(caller, conversation string) string {

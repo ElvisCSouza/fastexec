@@ -9,6 +9,9 @@ import (
 // Incremental job wait: every 'wait' used to return the same last lines of the
 // log again (20 local, 50 remote). Now each wait returns only what is new since
 // the previous wait of the same job, or one line saying nothing changed.
+// The key is the job, not the caller: if two conversations wait on the same job
+// one may get "no new output" for lines the other received, so every
+// incremental answer names job(action='tail'), which always shows the full log.
 
 var (
 	jobSeenMu sync.Mutex
@@ -90,11 +93,11 @@ func waitReport(jobID, key, log string, finished bool, state string) string {
 	var body string
 	switch {
 	case hadPrev && len(fresh) == 0:
-		body = "(no new output since the last wait)"
+		body = "(no new output since the last wait; job(action='tail') shows the full log)"
 	case hadPrev && scrolled:
 		body = "(more new output than shown; job(action='tail', lines=200) for the rest)\n" + strings.Join(fresh, "\n")
 	case hadPrev:
-		body = fmt.Sprintf("(%d new line(s) since the last wait)\n%s", len(fresh), strings.Join(fresh, "\n"))
+		body = fmt.Sprintf("(%d new line(s) since the last wait; job(action='tail') for the full log)\n%s", len(fresh), strings.Join(fresh, "\n"))
 	default:
 		body = strings.Join(fresh, "\n")
 	}

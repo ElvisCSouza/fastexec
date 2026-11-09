@@ -16,4 +16,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) first: layout, tests, golden files and h
 - Size caps are for what the model reads. Code that reads files for its own work (`edit_file`, `code_outline`) calls
   `handleReadFileInner`, never `HandleReadFile`, so a cap can never truncate a file that is then written back.
 - When output is cut, keep the full text (see `spill.go`) or do not cut.
+- Anything that withholds content (outline instead of text, cut, incremental wait) keys its escape by the request,
+  never by `identity()`: several conversations can share one MCP channel. A shared channel may cause more text,
+  never less. `identity()` is only for hints.
 - The remote daemon is Zig 0.13 in `server/`; build with `server/build.sh`.

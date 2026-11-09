@@ -270,7 +270,7 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 	noSlice := args.Offset == 0 && args.Limit == 0 && args.Ranges == "" && args.Pattern == ""
 	whole := noSlice && args.StartLine == 0 && args.EndLine == 0
 	lineRange := noSlice && !whole
-	id := identity(args.Caller, args.Conv)
+	// chaves do escape "repita para o texto completo" só com o pedido, nunca com a identidade (graph_first.go)
 	switch {
 	case whole:
 		if g, ok, note := graphFirstRead(args, out, 0, 0); ok {
@@ -278,7 +278,7 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 		} else if note != "" {
 			out = strings.TrimRight(out, "\r\n") + "\n\n" + note
 		} else {
-			out = capReadText(out, args.Path, "the whole file", "cap|"+id+"|"+strings.ToLower(args.Host+"|"+args.Path))
+			out = capReadText(out, args.Path, "the whole file", "cap|"+strings.ToLower(args.Host+"|"+args.Path))
 		}
 	case lineRange && (args.EndLine == 0 || args.EndLine-max(args.StartLine, 1)+1 > graphMinLines):
 		if full, ferr := handleReadFileInner(ReadFileArgs{Host: args.Host, Path: args.Path}); ferr == nil {
@@ -291,10 +291,10 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 			}
 		}
 		label := fmt.Sprintf("lines %d-%d", max(args.StartLine, 1), args.EndLine)
-		out = capReadText(out, args.Path, label, fmt.Sprintf("cap|%s|%s|%d-%d", id, strings.ToLower(args.Host+"|"+args.Path), args.StartLine, args.EndLine))
+		out = capReadText(out, args.Path, label, fmt.Sprintf("cap|%s|%d-%d", strings.ToLower(args.Host+"|"+args.Path), args.StartLine, args.EndLine))
 	}
 	if noteRead(identity(args.Caller, args.Conv), args.Host, args.Path) == rereadHintAt {
-		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] Third read of this file. To locate code without re-reading: code_outline(path, symbol='name') gives the line; code_graph(action='callers') lists who calls it; read_file(pattern='regex', context=3) returns only matching lines."
+		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] This file was read several times recently. To locate code without re-reading: code_outline(path, symbol='name') gives the line; code_graph(action='callers') lists who calls it; read_file(pattern='regex', context=3) returns only matching lines."
 	}
 	return out, err
 }

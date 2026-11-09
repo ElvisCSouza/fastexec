@@ -19,9 +19,16 @@ import (
 //  3. the outline has real structure (>= graphMinDecls declarations in it), so a
 //     linear script without functions comes back as text.
 //
-// Nothing is lost: repeating the exact same call (same identity, within
-// graphRepeatWindow) returns the full text. edit_file and code_outline read
-// through handleReadFileInner and are never affected.
+// Nothing is lost: repeating the exact same call within graphRepeatWindow
+// returns the full text. edit_file and code_outline read through
+// handleReadFileInner and are never affected.
+//
+// Identity rule: anything that withholds content keys its escape by the request
+// only (host, path, range, search), never by caller or conversation. Several
+// conversations can share one MCP channel (Claude Desktop sends no conversation
+// id), and a key per identity would let one conversation consume another's
+// repeat. With request keys a shared channel can only cause more full text,
+// never less.
 
 const (
 	graphMinLines     = 250
@@ -45,25 +52,27 @@ var (
 
 // graphRepeat records a graph-first answer for key and reports whether the same
 // request was already answered that way within the window (then: deliver raw).
+// It does not toggle: once repeated, every same request inside the window gets
+// the full text, whoever sends it (see the identity rule above).
 func graphRepeat(key string) bool {
 	now := time.Now()
 	graphSeenMu.Lock()
 	defer graphSeenMu.Unlock()
 	if len(graphSeen) > 2000 {
-		graphSeen = map[string]time.Time{}
+		for k, t := range graphSeen {
+			if now.Sub(t) >= graphRepeatWindow {
+				delete(graphSeen, k)
+			}
+		}
+		if len(graphSeen) > 2000 {
+			graphSeen = map[string]time.Time{}
+		}
 	}
 	if t, ok := graphSeen[key]; ok && now.Sub(t) < graphRepeatWindow {
-		delete(graphSeen, key) // a próxima volta a ser grafo-primeiro
 		return true
 	}
 	graphSeen[key] = now
 	return false
-}
-
-func graphNoRepeat(key string) {
-	graphSeenMu.Lock()
-	delete(graphSeen, key)
-	graphSeenMu.Unlock()
 }
 
 // graphFirstRead decides and builds the outline answer. full is the whole file,
@@ -100,7 +109,7 @@ func graphFirstRead(args ReadFileArgs, full string, from, to int) (out string, o
 		return "", false, ""
 	}
 
-	key := fmt.Sprintf("%s|%s|%s|%d-%d", identity(args.Caller, args.Conv), strings.ToLower(args.Host), strings.ToLower(args.Path), from, to)
+	key := fmt.Sprintf("read|%s|%s|%d-%d", strings.ToLower(args.Host), strings.ToLower(args.Path), from, to)
 	if graphRepeat(key) {
 		return "", false, GraphMarkRepeat + ": full text returned because this exact read was repeated."
 	}
