@@ -149,6 +149,8 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 			CommandSummary: summary,
 			Client:         client,
 			Conversation:   conversation,
+			ArgsHash:       telemetry.ArgsHash(rawArgs),
+			Marks:          "args-refused",
 		})
 		return ToolCallResult{
 			Content: []ToolContent{{Type: "text", Text: nerr.Error()}},
@@ -231,6 +233,9 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		Conversation:   conversation,
 		Graph:          graphDecision(outText),
 		GraphSavedKB:   graphSavedKB(outText),
+		ArgsHash:       telemetry.ArgsHash(rawArgs),
+		OutHash:        telemetry.ShortHash(outText),
+		Marks:          telemetry.Marks(outText, len(notes) > 0),
 		Truncated:      name == "exec" && tools.IsTruncated(outText),
 		NoResult:       name == "exec" && tools.IsNoResult(outText),
 	})

@@ -34,6 +34,9 @@ type AuditEntry struct {
 	Conversation   string // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
 	Graph          string // decisão do grafo: outline, repeat, search ("" = nenhuma)
 	GraphSavedKB   int    // tamanho do texto que o outline substituiu
+	ArgsHash       string // sha256 (16 hex) dos argumentos completos, sem campos internos: repetição real de comando/script/arquivo
+	OutHash        string // sha256 (16 hex) do texto devolvido: saída idêntica de verdade
+	Marks          string // marcas do FastExec na resposta ("Hint:ab12,Guard:cd34,args"): o que foi dito ao agente
 }
 
 var (
@@ -159,7 +162,7 @@ func setupAuditSchema(db *sql.DB) {
 			noteFailure("schema migration", err)
 		}
 	}
-	for _, col := range []string{"client", "conversation", "graph"} {
+	for _, col := range []string{"client", "conversation", "graph", "args_hash", "out_hash", "marks"} {
 		if !existing[col] {
 			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s TEXT NOT NULL DEFAULT '';", col)); err != nil {
 				noteFailure("schema migration", err)
@@ -195,8 +198,9 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		session_id, tool, host, duration_ms,
 		bytes_in, bytes_out, est_tokens_in, est_tokens_out,
 		success, exit_code, error_message, command_summary,
-		truncated, no_result, client, conversation, graph, graph_saved_kb
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		truncated, no_result, client, conversation, graph, graph_saved_kb,
+		args_hash, out_hash, marks
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := db.Exec(
 		query,
@@ -204,6 +208,7 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
 		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
 		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation, e.Graph, e.GraphSavedKB,
+		e.ArgsHash, e.OutHash, e.Marks,
 	)
 	return err
 }

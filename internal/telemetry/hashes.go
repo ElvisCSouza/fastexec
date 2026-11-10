@@ -1,0 +1,81 @@
+package telemetry
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"regexp"
+	"strings"
+)
+
+// Hashes and marks let the telemetry measure repetition and what the agent was told, without storing any content:
+// only 16-hex digests and short marker ids are kept.
+
+// ShortHash is the first 16 hex chars of sha256(s); "" for "".
+func ShortHash(s string) string {
+	if s == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:8])
+}
+
+// ArgsHash hashes the complete arguments of a call (command, argv, stdin input, file content...) in canonical form
+// (sorted keys), leaving out the fields injected by the proxy so the same call from two channels hashes the same.
+func ArgsHash(rawArgs []byte) string {
+	var m map[string]any
+	if err := json.Unmarshal(rawArgs, &m); err != nil || len(m) == 0 {
+		return ShortHash(string(rawArgs))
+	}
+	delete(m, "_caller")
+	delete(m, "_conversation")
+	b, err := json.Marshal(m) // encoding/json sorts map keys
+	if err != nil {
+		return ""
+	}
+	return ShortHash(string(b))
+}
+
+var (
+	markRe     = regexp.MustCompile(`\[FastExec(?: ([A-Za-z-]+(?: [A-Za-z-]+)?))?\]`)
+	markVolRe  = regexp.MustCompile(`'[^']*'|"[^"]*"|\S*[/\\]\S*|\b[0-9a-f]{6,}\b|\d+`)
+	maxMarks   = 6
+	markLineMx = 160
+)
+
+// Marks lists the FastExec markers present in a response as kind:template-id, e.g. "Hint:3f2a,Guard:9c01".
+// The id hashes the marker's line with quoted text and numbers removed, so the same message template always gets the
+// same id whatever file or count it mentions. adjusted adds "args" (parameter names were rewritten by argnorm).
+func Marks(out string, adjusted bool) string {
+	var marks []string
+	seen := map[string]bool{}
+	add := func(m string) {
+		if !seen[m] && len(marks) < maxMarks {
+			seen[m] = true
+			marks = append(marks, m)
+		}
+	}
+	if adjusted {
+		add("args")
+	}
+	if !strings.Contains(out, "[FastExec") {
+		return strings.Join(marks, ",")
+	}
+	for _, line := range strings.Split(out, "\n") {
+		loc := markRe.FindStringSubmatchIndex(line)
+		if loc == nil {
+			continue
+		}
+		kind := "FastExec"
+		if loc[2] >= 0 {
+			kind = strings.ReplaceAll(line[loc[2]:loc[3]], " ", "")
+		}
+		rest := line[loc[1]:]
+		if len(rest) > markLineMx {
+			rest = rest[:markLineMx]
+		}
+		tmpl := markVolRe.ReplaceAllString(rest, "")
+		add(kind + ":" + ShortHash(strings.TrimSpace(tmpl))[:4])
+	}
+	return strings.Join(marks, ",")
+}
