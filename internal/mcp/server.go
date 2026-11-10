@@ -126,6 +126,7 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) ToolCallResu
 
 func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
 	start := time.Now()
+	rawArgs, notes, nerr := normalizeCall(name, rawArgs) // argnorm.go: nenhuma chave some em silêncio
 	client, conversation := callerOf(rawArgs)
 	bytesIn := len(rawArgs)
 	if client != "" {
@@ -135,6 +136,25 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		bytesIn -= len(`,"_conversation":""`) + len(conversation)
 	}
 	host, summary := telemetry.SummarizeCall(name, rawArgs)
+	if nerr != nil {
+		telemetry.Record(telemetry.AuditEntry{
+			Tool:           name,
+			Host:           host,
+			DurationMs:     time.Since(start).Milliseconds(),
+			BytesIn:        bytesIn,
+			BytesOut:       len(nerr.Error()),
+			Success:        false,
+			ExitCode:       1,
+			ErrorMessage:   nerr.Error(),
+			CommandSummary: summary,
+			Client:         client,
+			Conversation:   conversation,
+		})
+		return ToolCallResult{
+			Content: []ToolContent{{Type: "text", Text: nerr.Error()}},
+			IsError: true,
+		}
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -216,7 +236,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	})
 
 	return ToolCallResult{
-		Content: []ToolContent{{Type: "text", Text: outText}},
+		Content: []ToolContent{{Type: "text", Text: withNotes(name, notes, outText)}},
 		IsError: !success,
 	}
 }

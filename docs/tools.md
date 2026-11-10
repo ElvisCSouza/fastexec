@@ -4,6 +4,20 @@ Every tool takes an optional `host`: `local`, a host from the config, `ssh:<alia
 `local` (a Linux path such as `/var/log/x` goes to the default host); `exec` and `job` default to the config's
 `default_host`. A path can also carry its host: `server:/etc/hosts`.
 
+## Parameter names
+
+Before a tool runs, its arguments are matched against the tool's own fields (`internal/mcp/argnorm.go`); no
+parameter is ever dropped in silence.
+
+| Sent | What happens |
+|---|---|
+| a known spelling: `StartLine`, `ByteOffset`, `file_path`, `range`, `cmd`, `op`, `target` on `exec`/`job` (= `host`) or on `read_file`/`write_file` (= `path`) | Read as the canonical name; the result ends with a line saying what was read as what |
+| metadata such as `description`, `reason`, `intent` | Ignored, and said so |
+| anything else | Refused with the list of valid names (and a close match); nothing runs |
+
+An alias never overrides a parameter that was also sent. `FASTEXEC_STRICT_ARGS=0` turns the refusal into a notice
+(the unknown key is dropped). `get_file`, `put_file` and module tools keep their own decoding.
+
 ## exec
 
 Runs a command and returns as soon as it exits.
@@ -62,8 +76,19 @@ Each one tells the model what it did and what to do next time.
 
 ## read_file
 
-Reads a file in-process: whole, by bytes (`offset`, `limit`) or by lines (`start_line`, `end_line`). Remote files
-come over the daemon, no shell involved.
+Reads a file in-process: whole, by bytes (`offset`, `limit`), by lines (`start_line`, `end_line`), by `ranges`, by
+`pattern` or by `symbol`. Remote files come over the daemon, no shell involved, and every selector works the same
+on every host.
+
+**Read cap.** Whatever the mode or host, one call returns at most 32 KB. The rest is not lost and not behind a
+trick: the footer carries the exact call that continues (`start_line=N`, or `offset=N` for byte reads). There is no
+"repeat the call to get everything". A single line longer than the cap is cut on a character boundary and the footer
+suggests `pattern` or `offset`. For a whole read of Markdown, YAML, JSON or HTML the footer also lists a short
+structure (headings, top-level keys, sections, with line numbers) so the next call can ask for a precise range.
+`FASTEXEC_NO_READ_CAP=1` disables the cap.
+
+Big source files asked whole (or with a very large range) answer with their outline first; repeating that exact call
+returns the text, still inside the cap.
 
 ## edit_file
 

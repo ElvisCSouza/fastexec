@@ -260,10 +260,10 @@ func isWindowsPath(p string) bool {
 
 // HandleReadFile is the model-facing read. On top of handleReadFileInner it
 // applies, in order: graph first for big source files (outline instead of text),
-// the size cap for other big reads, and the graph hint on the 3rd read of a
-// file. Repeating the exact same call returns the full text (no lost
-// functionality). Internal callers (edit_file, code_outline) use
-// handleReadFileInner and are never affected.
+// the size cap for every other read (read_cap.go: all modes, all hosts, paged
+// by start_line, no repeat escape), and the graph hint on the 3rd read of a
+// file. Internal callers (edit_file, code_outline) use handleReadFileInner and
+// are never affected.
 func HandleReadFile(args ReadFileArgs) (string, error) {
 	out, err := handleReadFileInner(args)
 	if err != nil {
@@ -272,31 +272,31 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 	noSlice := args.Offset == 0 && args.Limit == 0 && args.Ranges == "" && args.Pattern == "" && args.Symbol == ""
 	whole := noSlice && args.StartLine == 0 && args.EndLine == 0
 	lineRange := noSlice && !whole
-	// chaves do escape "repita para o texto completo" só com o pedido, nunca com a identidade (graph_first.go)
+	// done: o texto já passou pelo teto (ou é um outline, que tem teto próprio); o teto vale para TODO modo e host.
+	done := false
 	switch {
 	case whole:
 		if g, ok, note := graphFirstRead(args, out, 0, 0); ok {
-			out = g
+			out, done = g, true
 		} else if note != "" {
-			out = strings.TrimRight(out, "\r\n") + "\n\n" + note
-		} else {
-			out = capReadText(out, args.Path, "the whole file", "cap|"+strings.ToLower(args.Host+"|"+args.Path))
+			out, done = strings.TrimRight(capRead(out, args), "\r\n")+"\n\n"+note, true
 		}
 	case lineRange && (args.EndLine == 0 || args.EndLine-max(args.StartLine, 1)+1 > graphMinLines):
 		if full, ferr := handleReadFileInner(ReadFileArgs{Host: args.Host, Path: args.Path}); ferr == nil {
 			if g, ok, note := graphFirstRead(args, full, args.StartLine, args.EndLine); ok {
-				out = g
-				break
+				out, done = g, true
 			} else if note != "" {
-				out = strings.TrimRight(out, "\r\n") + "\n\n" + note
-				break
+				out, done = strings.TrimRight(capRead(out, args), "\r\n")+"\n\n"+note, true
 			}
 		}
-		label := fmt.Sprintf("lines %d-%d", max(args.StartLine, 1), args.EndLine)
-		out = capReadText(out, args.Path, label, fmt.Sprintf("cap|%s|%d-%d", strings.ToLower(args.Host+"|"+args.Path), args.StartLine, args.EndLine))
 	}
-	if noteRead(identity(args.Caller, args.Conv), args.Host, args.Path) == rereadHintAt {
-		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] This file was read several times recently. To locate code without re-reading: code_outline(path, symbol='name') gives the line; code_graph(action='callers') lists who calls it; read_file(pattern='regex', context=3) returns only matching lines."
+	if !done {
+		out = capRead(out, args)
+	}
+	// A hint only for the same read made again (same file AND same selection): reading a file in different
+	// ranges is what read_file is for and must not be called re-reading.
+	if noteRead(identity(args.Caller, args.Conv), args.Host, args.Path+"|"+readSignature(args)) == rereadHintAt {
+		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] This exact read was made 3 times; the text is the same unless the file changed. To locate code without re-reading: code_outline(path, symbol='name') gives the line; read_file(pattern='regex', context=3) returns only matching lines."
 	}
 	return out, err
 }
@@ -322,49 +322,15 @@ func handleReadFileInner(args ReadFileArgs) (string, error) {
 		if err != nil {
 			return "", notFoundWithSuggestions(filePath, err)
 		}
-		if args.Symbol != "" {
-			if sel, handled, serr := selectSymbol(filePath, string(data), args.Symbol); handled {
-				return sel, serr
-			}
-		}
-		if sel, handled, serr := selectLines(string(data), args); handled {
-			return sel, serr
-		}
-		if args.StartLine > 0 || args.EndLine > 0 {
-			lines := strings.Split(string(data), "\n")
-			start := args.StartLine
-			if start <= 0 {
-				start = 1
-			}
-			if start > len(lines) {
-				return "", nil
-			}
-			end := args.EndLine
-			if end <= 0 || end > len(lines) {
-				end = len(lines)
-			}
-			if start > end {
-				return "", nil
-			}
-			return strings.Join(lines[start-1:end], "\n"), nil
-		}
-		if args.Offset > 0 || args.Limit > 0 {
-			start := int(args.Offset)
-			if start > len(data) {
-				return "", nil
-			}
-			end := len(data)
-			if args.Limit > 0 && start+int(args.Limit) < end {
-				end = start + int(args.Limit)
-			}
-			return string(data[start:end]), nil
-		}
-		return string(data), nil
+		return selectFromText(filePath, string(data), args)
 	}
 
-	// Remoto via daemon: expande ~ no bash para $HOME do usuário remoto
+	// Remoto via daemon: expande ~ no bash para $HOME do usuário remoto. Só start_line/end_line puros usam sed (barato);
+	// qualquer outro parâmetro de seleção lê o arquivo e passa pelo mesmo seletor do local.
+	pureLines := (args.StartLine > 0 || args.EndLine > 0) && args.Ranges == "" && args.Pattern == "" &&
+		args.Symbol == "" && !args.Numbered && args.Offset == 0 && args.Limit == 0
 	var readCmd string
-	if args.StartLine > 0 || args.EndLine > 0 {
+	if pureLines {
 		start := args.StartLine
 		if start <= 0 {
 			start = 1
@@ -385,12 +351,54 @@ func handleReadFileInner(args ReadFileArgs) (string, error) {
 	if res.ExitCode != 0 {
 		return "", fmt.Errorf("could not read the remote file: %s", strings.TrimSpace(res.Stderr))
 	}
+	if pureLines {
+		return res.Stdout, nil
+	}
+	return selectFromText(filePath, res.Stdout, args)
+}
+
+// selectFromText applies symbol, ranges/pattern/numbered, start/end lines and byte offset/limit to the text of a
+// file. Local and remote reads share it, so a parameter is never honoured on one host and silently dropped on the
+// other (a remote ranges=1-80 once returned the whole 56k-token file).
+func selectFromText(filePath, data string, args ReadFileArgs) (string, error) {
 	if args.Symbol != "" {
-		if sel, handled, serr := selectSymbol(filePath, res.Stdout, args.Symbol); handled {
+		if sel, handled, serr := selectSymbol(filePath, data, args.Symbol); handled {
 			return sel, serr
 		}
 	}
-	return res.Stdout, nil
+	if sel, handled, serr := selectLines(data, args); handled {
+		return sel, serr
+	}
+	if args.StartLine > 0 || args.EndLine > 0 {
+		lines := strings.Split(data, "\n")
+		start := args.StartLine
+		if start <= 0 {
+			start = 1
+		}
+		if start > len(lines) {
+			return "", nil
+		}
+		end := args.EndLine
+		if end <= 0 || end > len(lines) {
+			end = len(lines)
+		}
+		if start > end {
+			return "", nil
+		}
+		return strings.Join(lines[start-1:end], "\n"), nil
+	}
+	if args.Offset > 0 || args.Limit > 0 {
+		start := int(args.Offset)
+		if start > len(data) {
+			return "", nil
+		}
+		end := len(data)
+		if args.Limit > 0 && start+int(args.Limit) < end {
+			end = start + int(args.Limit)
+		}
+		return data[start:end], nil
+	}
+	return data, nil
 }
 
 func HandleWriteFile(args WriteFileArgs) (string, error) {

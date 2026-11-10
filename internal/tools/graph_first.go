@@ -20,7 +20,7 @@ import (
 //     linear script without functions comes back as text.
 //
 // Nothing is lost: repeating the exact same call within graphRepeatWindow
-// returns the full text. edit_file and code_outline read through
+// returns the text, still bounded by the read cap (read_cap.go). edit_file and code_outline read through
 // handleReadFileInner and are never affected.
 //
 // Identity rule: anything that withholds content keys its escape by the request
@@ -111,7 +111,7 @@ func graphFirstRead(args ReadFileArgs, full string, from, to int) (out string, o
 
 	key := fmt.Sprintf("read|%s|%s|%d-%d", strings.ToLower(args.Host), strings.ToLower(args.Path), from, to)
 	if graphRepeat(key) {
-		return "", false, GraphMarkRepeat + ": full text returned because this exact read was repeated."
+		return "", false, GraphMarkRepeat + ": text returned (up to the read cap) because this exact read was repeated."
 	}
 
 	var b strings.Builder

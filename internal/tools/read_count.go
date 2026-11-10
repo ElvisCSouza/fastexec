@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,12 @@ var (
 	readCountMu sync.Mutex
 	readCounts  = map[string]int{}
 )
+
+// readSignature identifies the selection of a read (lines, ranges, pattern, symbol, bytes) so that two reads of the
+// same file in different places are not counted as the same read.
+func readSignature(a ReadFileArgs) string {
+	return fmt.Sprintf("%d-%d|%s|%s|%s|%d+%d|%d", a.StartLine, a.EndLine, a.Ranges, a.Pattern, a.Symbol, a.Offset, a.Limit, a.Context)
+}
 
 // noteRead counts a read of host:path in a channel and returns the new count.
 func noteRead(caller, host, path string) int {
