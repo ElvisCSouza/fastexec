@@ -52,6 +52,14 @@ func TestMarksTemplateIdStable(t *testing.T) {
 	}
 }
 
+func TestMarksBareMarkerNoPanic(t *testing.T) {
+	for _, out := range []string{"[FastExec]", "x\n[FastExec Guard]\n", "[FastExec Hint] 123 '...'", "[FastExec Hint] C:\\a\\b"} {
+		if got := Marks(out, false); !strings.Contains(got, ":0000") {
+			t.Fatalf("%q: want template id 0000, got %q", out, got)
+		}
+	}
+}
+
 func TestMarksDedupAndLimit(t *testing.T) {
 	var b strings.Builder
 	for i := 0; i < 20; i++ {

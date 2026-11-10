@@ -46,7 +46,12 @@ var (
 // Marks lists the FastExec markers present in a response as kind:template-id, e.g. "Hint:3f2a,Guard:9c01".
 // The id hashes the marker's line with quoted text and numbers removed, so the same message template always gets the
 // same id whatever file or count it mentions. adjusted adds "args" (parameter names were rewritten by argnorm).
-func Marks(out string, adjusted bool) string {
+func Marks(out string, adjusted bool) (res string) {
+	defer func() { // telemetry must never break a tool response
+		if recover() != nil {
+			res = "marks-error"
+		}
+	}()
 	var marks []string
 	seen := map[string]bool{}
 	add := func(m string) {
@@ -74,8 +79,11 @@ func Marks(out string, adjusted bool) string {
 		if len(rest) > markLineMx {
 			rest = rest[:markLineMx]
 		}
-		tmpl := markVolRe.ReplaceAllString(rest, "")
-		add(kind + ":" + ShortHash(strings.TrimSpace(tmpl))[:4])
+		id := "0000" // marker with nothing after it
+		if h := ShortHash(strings.TrimSpace(markVolRe.ReplaceAllString(rest, ""))); len(h) >= 4 {
+			id = h[:4]
+		}
+		add(kind + ":" + id)
 	}
 	return strings.Join(marks, ",")
 }
