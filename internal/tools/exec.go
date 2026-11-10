@@ -199,6 +199,13 @@ func HandleExec(args ExecArgs) (string, error) {
 				out = warning
 			}
 		}
+		if hint := checkResidentService(args.Cwd, label, args.Host); hint != "" {
+			if out != "" {
+				out = strings.TrimRight(out, "\r\n") + "\n\n" + hint
+			} else {
+				out = hint
+			}
+		}
 		if hint := detectNudge(label, args); hint != "" {
 			if out != "" {
 				out = strings.TrimRight(out, "\r\n") + "\n\n" + hint
