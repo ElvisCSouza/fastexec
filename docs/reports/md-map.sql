@@ -38,6 +38,11 @@ SELECT doc, COUNT(*) leituras, SUM(buscas>0) seguidas_de_busca, ROUND(100.0*SUM(
 FROM nx GROUP BY doc HAVING COUNT(*) >= 2 ORDER BY pct DESC, leituras DESC LIMIT 20;
 
 .print === 6. Citados mas nunca lidos (candidatos a link morto ou doc inutil); confira se o arquivo existe
-SELECT l.src AS citado_em, l.dst AS citado FROM doc_links l
+-- "ambiguo": um nome solto (`_hub.md`) e resolvido pela pasta do doc que o cita; se um .md com o mesmo nome em
+-- outra pasta foi lido, provavelmente e ele, e nao um link morto.
+SELECT l.src AS citado_em, l.dst AS citado,
+       CASE WHEN EXISTS (SELECT 1 FROM audit a WHERE a.doc <> '' AND lower(a.doc) LIKE '%/' || lower(replace(l.dst, rtrim(l.dst, replace(l.dst, '/', '')), '')))
+            THEN 'ambiguo' ELSE '' END obs
+FROM doc_links l
 WHERE NOT EXISTS (SELECT 1 FROM audit a WHERE a.doc <> '' AND lower(a.doc) = lower(l.dst))
-ORDER BY l.src, l.dst LIMIT 60;
+ORDER BY obs, l.src, l.dst LIMIT 60;
