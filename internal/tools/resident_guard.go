@@ -23,7 +23,10 @@ func checkResidentService(cwd, command, host string) string {
 
 	root := cwd
 	if root == "" {
-		if wd, err := os.Getwd(); err == nil {
+		// Tenta extrair diretório de comandos encadeados com "cd" ou "cd /d"
+		if cdMatch := regexp.MustCompile(`(?i)\bcd\s+(?:/d\s+)?([^\s&;]+)`).FindStringSubmatch(command); len(cdMatch) > 1 {
+			root = strings.Trim(cdMatch[1], `"'`)
+		} else if wd, err := os.Getwd(); err == nil {
 			root = wd
 		}
 	}
