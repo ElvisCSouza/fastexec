@@ -227,6 +227,9 @@ func HandleExec(args ExecArgs) (string, error) {
 	if graphNote != "" {
 		out = strings.TrimRight(out, "\r\n") + "\n\n" + graphNote
 	}
+	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
+		out = dedupExecOutput(args, label, out)
+	}
 	return out, ferr
 }
 

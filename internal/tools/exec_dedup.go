@@ -1,0 +1,66 @@
+package tools
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Exec output dedup. The command ALWAYS runs (it may have side effects, and its output may have changed); only the
+// repeated text is withheld. When the same command (same identity, host, cwd, input) returns byte-identical output of
+// meaningful size within execDedupTTL, the 2nd identical result is replaced by a short stub and the 3rd returns the
+// full text again, so the agent is never locked out of content it needs. A different output always passes through.
+
+const (
+	execDedupMinBytes = 3000
+	execDedupTTL      = 5 * time.Minute
+)
+
+type execSeen struct {
+	hash    string
+	at      time.Time
+	stubbed bool
+}
+
+var (
+	execDedupMu   sync.Mutex
+	execDedupSeen = map[string]*execSeen{}
+)
+
+func execDedupOff() bool { return os.Getenv("FASTEXEC_NO_EXEC_DEDUP") == "1" }
+
+// dedupExecOutput returns out unchanged, or a stub when out repeats the previous identical run (see above).
+func dedupExecOutput(args ExecArgs, label, out string) string {
+	if execDedupOff() || len(out) < execDedupMinBytes {
+		return out
+	}
+	sum := sha256.Sum256([]byte(out))
+	h := hex.EncodeToString(sum[:])
+	in := sha256.Sum256([]byte(args.Input))
+	key := strings.ToLower(identity(args.Caller, args.Conv)+"|"+args.Host+"|"+args.Cwd+"|"+label) + "|" + hex.EncodeToString(in[:4])
+	now := time.Now()
+
+	execDedupMu.Lock()
+	defer execDedupMu.Unlock()
+	if len(execDedupSeen) > 500 {
+		execDedupSeen = map[string]*execSeen{}
+	}
+	e := execDedupSeen[key]
+	if e == nil || e.hash != h || now.Sub(e.at) > execDedupTTL {
+		execDedupSeen[key] = &execSeen{hash: h, at: now}
+		return out
+	}
+	prev := now.Sub(e.at)
+	e.at = now
+	if e.stubbed { // 3rd identical run: give the full text again and start over
+		e.stubbed = false
+		return out
+	}
+	e.stubbed = true
+	return fmt.Sprintf("[FastExec] Identical output to the same command run %ds ago (%d lines, ~%d tokens, sha %s): not repeated, nothing changed. Use what you already have; repeat the call once more only if you need the full text again.",
+		int(prev.Seconds()), strings.Count(out, "\n")+1, len(out)/4, h[:8])
+}
