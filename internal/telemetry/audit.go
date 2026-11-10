@@ -30,13 +30,17 @@ type AuditEntry struct {
 	CommandSummary string
 	Truncated      bool
 	NoResult       bool
-	Client         string // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
-	Conversation   string // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
-	Graph          string // decisão do grafo: outline, repeat, search ("" = nenhuma)
-	GraphSavedKB   int    // tamanho do texto que o outline substituiu
-	ArgsHash       string // sha256 (16 hex) dos argumentos completos, sem campos internos: repetição real de comando/script/arquivo
-	OutHash        string // sha256 (16 hex) do texto devolvido: saída idêntica de verdade
-	Marks          string // marcas do FastExec na resposta ("Hint:ab12,Guard:cd34,args"): o que foi dito ao agente
+	Client         string   // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
+	Conversation   string   // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
+	Graph          string   // decisão do grafo: outline, repeat, search ("" = nenhuma)
+	GraphSavedKB   int      // tamanho do texto que o outline substituiu
+	ArgsHash       string   // sha256 (16 hex) dos argumentos completos, sem campos internos: repetição real de comando/script/arquivo
+	OutHash        string   // sha256 (16 hex) do texto devolvido: saída idêntica de verdade
+	Marks          string   // marcas do FastExec na resposta ("Hint:ab12,Guard:cd34,args"): o que foi dito ao agente
+	Doc            string   // .md lido nesta chamada (caminho normalizado)
+	DocFrom        string   // .md lido antes, pela mesma identidade, cujo texto cita Doc
+	DocHow         string   // link | dir | name | none | first
+	DocLinks       []string // .md citados no texto que o agente viu (vai para doc_links)
 }
 
 var (
@@ -162,7 +166,13 @@ func setupAuditSchema(db *sql.DB) {
 			noteFailure("schema migration", err)
 		}
 	}
-	for _, col := range []string{"client", "conversation", "graph", "args_hash", "out_hash", "marks"} {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS doc_links (
+		host TEXT NOT NULL, src TEXT NOT NULL, dst TEXT NOT NULL,
+		first_seen DATETIME DEFAULT CURRENT_TIMESTAMP, last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (host, src, dst));`); err != nil {
+		noteFailure("schema doc_links", err)
+	}
+	for _, col := range []string{"client", "conversation", "graph", "args_hash", "out_hash", "marks", "doc", "doc_from", "doc_how"} {
 		if !existing[col] {
 			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s TEXT NOT NULL DEFAULT '';", col)); err != nil {
 				noteFailure("schema migration", err)
@@ -199,8 +209,8 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		bytes_in, bytes_out, est_tokens_in, est_tokens_out,
 		success, exit_code, error_message, command_summary,
 		truncated, no_result, client, conversation, graph, graph_saved_kb,
-		args_hash, out_hash, marks
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		args_hash, out_hash, marks, doc, doc_from, doc_how
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := db.Exec(
 		query,
@@ -208,8 +218,16 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
 		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
 		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation, e.Graph, e.GraphSavedKB,
-		e.ArgsHash, e.OutHash, e.Marks,
+		e.ArgsHash, e.OutHash, e.Marks, e.Doc, e.DocFrom, e.DocHow,
 	)
+	if err == nil && e.Doc != "" {
+		for _, dst := range e.DocLinks {
+			if _, lerr := db.Exec(`INSERT INTO doc_links (host, src, dst) VALUES (?, ?, ?)
+				ON CONFLICT(host, src, dst) DO UPDATE SET last_seen = CURRENT_TIMESTAMP;`, e.Host, e.Doc, dst); lerr != nil {
+				return lerr
+			}
+		}
+	}
 	return err
 }
 

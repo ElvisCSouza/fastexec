@@ -219,7 +219,17 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		}
 	}
 
+	docID := "conv:" + conversation
+	if conversation == "" {
+		docID = "chan:" + client
+	}
+	doc, docFrom, docHow, docLinks := trackDoc(docID, name, host, rawArgs, outText, success)
+
 	telemetry.Record(telemetry.AuditEntry{
+		Doc:            doc,
+		DocFrom:        docFrom,
+		DocHow:         docHow,
+		DocLinks:       docLinks,
 		Tool:           name,
 		Host:           host,
 		DurationMs:     durationMs,
