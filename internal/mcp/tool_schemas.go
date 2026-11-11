@@ -21,7 +21,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "read_file",
-		Description: "Read a local or remote file, whole or a slice (byte offset/limit start_line/end_line, ranges 'a-b,c-d', or pattern+context). Reads are capped at 32 KB: the footer gives the call that continues; use code_outline first. Use it instead of cat, type or head through exec.",
+		Description: "Read a local or remote file, whole or a slice (byte offset/limit start_line/end_line, ranges 'a-b,c-d', or pattern+context). Reads are capped at 32 KB: the footer gives the call that continues; use code_outline first. Decodes Windows-1252 and UTF-16 text itself (no script needed). Use it instead of cat, type or head through exec.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{

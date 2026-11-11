@@ -17,11 +17,6 @@ import (
 	"homelab/fastexec/internal/tools"
 )
 
-// serverInstructions segue no initialize e o cliente a coloca no prompt do modelo (~35 tokens). Cada turno reenvia o
-// contexto inteiro (~7k tokens só de base), então chamadas independentes no mesmo turno são o maior ganho de tokens
-// que o servidor consegue sugerir. É orientação: o modelo decide, e só vale manter se o benchmark mostrar efeito.
-const serverInstructions = "Batch independent calls: when several tool calls do not need each other's output (reads, searches, outlines, graph lookups), send them together in one turn; every extra turn re-sends the whole context."
-
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      any             `json:"id,omitempty"`
@@ -324,7 +319,6 @@ func (s *Server) serve(r io.Reader) error {
 						"name":    "fastexec",
 						"version": "1.3.0",
 					},
-					"instructions": serverInstructions,
 				},
 			})
 
