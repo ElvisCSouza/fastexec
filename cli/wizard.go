@@ -361,6 +361,9 @@ func (w *wizard) Install() {
 	w.set("datadir", g, "Data folder", wOK, config.Home(), "", true)
 
 	// 3. registrar nos clientes
+	for _, p := range ensureDesktopConfigs(false) {
+		w.logf("info", "created an empty Claude Desktop config: %s", p)
+	}
 	entry := serverEntry{Command: w.exe, Args: []string{}}
 	for _, c := range clientFiles() {
 		id := "reg:" + c.Path

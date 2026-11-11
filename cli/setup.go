@@ -63,6 +63,9 @@ func cmdSetup(args []string) {
 			os.Exit(1)
 		}
 	}
+	for _, p := range ensureDesktopConfigs(dry) {
+		fmt.Printf("  Claude Desktop: %s (%s); it has no config file yet\n", verb("create an empty config and register", "created an empty config"), p)
+	}
 
 	changed, failed := []string{}, false
 	entry := serverEntry{Command: exe, Args: []string{}}

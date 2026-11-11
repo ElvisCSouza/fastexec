@@ -60,6 +60,44 @@ func clientFiles() []clientFile {
 	return c
 }
 
+// ensureDesktopConfigs cria um claude_desktop_config.json vazio ({}) quando a pasta de dados do Claude Desktop já
+// existe e o arquivo ainda não: num computador novo o app só grava esse arquivo quando alguém abre as configurações
+// de desenvolvedor, e sem ele o setup não acharia o cliente. Só o setup e o instalador chamam isto (o doctor e a
+// inspeção não alteram nada). Com dry=true só devolve o que seria criado. Devolve os arquivos criados.
+func ensureDesktopConfigs(dry bool) []string {
+	var dirs []string
+	switch runtime.GOOS {
+	case "windows":
+		local, roaming := os.Getenv("LOCALAPPDATA"), os.Getenv("APPDATA")
+		msix, _ := filepath.Glob(filepath.Join(local, "Claude-Data", "claude_*"))
+		sort.Strings(msix)
+		dirs = append(dirs, msix...)
+		if len(msix) == 0 && roaming != "" {
+			dirs = append(dirs, filepath.Join(roaming, "Claude"))
+		}
+	case "darwin":
+		dirs = []string{filepath.Join(homeDir(), "Library", "Application Support", "Claude")}
+	default:
+		dirs = []string{filepath.Join(homeDir(), ".config", "Claude")}
+	}
+	var created []string
+	for _, d := range dirs {
+		if st, err := os.Stat(d); err != nil || !st.IsDir() {
+			continue
+		}
+		p := filepath.Join(d, "claude_desktop_config.json")
+		if _, err := os.Stat(p); err == nil {
+			continue
+		}
+		if dry {
+			created = append(created, p)
+		} else if err := os.WriteFile(p, []byte("{}\n"), 0o644); err == nil {
+			created = append(created, p)
+		}
+	}
+	return created
+}
+
 // claudeCodeFile é o arquivo do escopo de usuário do Claude Code (lido pelo doctor; o setup usa a CLI).
 func claudeCodeFile() string { return filepath.Join(homeDir(), ".claude.json") }
 
