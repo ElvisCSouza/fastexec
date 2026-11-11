@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -83,6 +84,62 @@ func renderRangesWith(lines []string, rs []lineRange, numbered bool, format func
 	return sb.String()
 }
 
+const (
+	digestMinHits   = 60 // abaixo disso as linhas casadas vão por inteiro
+	digestMinRepeat = 3  // média de repetições por mensagem para valer o resumo (código casa linhas distintas: não resume)
+	digestMaxGroups = 20
+)
+
+var reDigits = regexp.MustCompile(`\d+`)
+
+// digestMatches: padrão que casa muitas linhas repetidas (log: o mesmo erro milhares de vezes) devolve o resumo por mensagem
+// distinta (dígitos ignorados: timestamps, ids): contagem, primeira e última linha e a primeira ocorrência inteira.
+// Sem perda de acesso: a primeira ocorrência vem completa e as linhas se leem com ranges ou com um padrão mais estreito.
+// ok=false (não resume) quando casa pouco ou as linhas são quase todas distintas.
+func digestMatches(lines []string, re *regexp.Regexp) (string, bool) {
+	type group struct {
+		count, first, last int
+		example            string
+	}
+	groups := map[string]*group{}
+	var order []string
+	hits := 0
+	for i, l := range lines {
+		if !re.MatchString(l) {
+			continue
+		}
+		hits++
+		key := reDigits.ReplaceAllString(l, "#")
+		if g, ok := groups[key]; ok {
+			g.count++
+			g.last = i + 1
+			continue
+		}
+		groups[key] = &group{count: 1, first: i + 1, last: i + 1, example: l}
+		order = append(order, key)
+	}
+	if hits < digestMinHits || hits < digestMinRepeat*len(groups) {
+		return "", false
+	}
+	sort.SliceStable(order, func(a, b int) bool { return groups[order[a]].count > groups[order[b]].count })
+	var b strings.Builder
+	fmt.Fprintf(&b, "[FastExec] %d lines match in %d distinct messages (digits ignored), most frequent first:\n", hits, len(groups))
+	for i, k := range order {
+		if i == digestMaxGroups {
+			fmt.Fprintf(&b, "... %d more messages\n", len(order)-digestMaxGroups)
+			break
+		}
+		g := groups[k]
+		ex := strings.TrimSpace(g.example)
+		if len(ex) > 240 {
+			ex = ex[:240] + "..."
+		}
+		fmt.Fprintf(&b, "%dx lines %d..%d | first: %s\n", g.count, g.first, g.last, ex)
+	}
+	b.WriteString("Read the lines with ranges='a-b' or a narrower pattern.\n")
+	return b.String(), true
+}
+
 // selectLines applies ranges/pattern/numbered. handled=false means the
 // caller should fall back to its default behaviour.
 func selectLines(data string, args ReadFileArgs) (string, bool, error) {
@@ -100,6 +157,9 @@ func selectLines(data string, args ReadFileArgs) (string, bool, error) {
 		ctx := args.Context
 		if ctx <= 0 {
 			ctx = 2
+		}
+		if d, ok := digestMatches(lines, re); ok {
+			return d, true, nil
 		}
 		var rs []lineRange
 		hits := 0

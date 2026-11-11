@@ -1,5 +1,5 @@
 {
-  "wire_bytes": 10824,
+  "wire_bytes": 10924,
   "result": {
     "tools": [
       {
@@ -75,7 +75,7 @@
             },
             "pattern": {
               "type": "string",
-              "description": "Regex (case-insensitive): return matching lines with context, numbered"
+              "description": "Regex (case-insensitive): return matching lines with context, numbered; if it matches many repeated lines (logs), returns counts per distinct message with first/last line"
             },
             "ranges": {
               "type": "string",

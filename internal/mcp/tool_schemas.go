@@ -32,7 +32,7 @@ var serverTools = []ToolSchema{
 				"start_line": {Type: "integer", Description: "First line (1-based)"},
 				"end_line":   {Type: "integer", Description: "Last line (inclusive)"},
 				"ranges":     {Type: "string", Description: "Several line ranges in one call, e.g. '10-40,90-120' (numbered)"},
-				"pattern":    {Type: "string", Description: "Regex (case-insensitive): return matching lines with context, numbered"},
+				"pattern":    {Type: "string", Description: "Regex (case-insensitive): return matching lines with context, numbered; if it matches many repeated lines (logs), returns counts per distinct message with first/last line"},
 				"context":    {Type: "integer", Description: "Lines around each pattern match (default 2)"},
 				"symbol":     {Type: "string", Description: "Read only the declaration and body of this symbol via AST (e.g. 'FunctionName' or 'ClassName') without reading the rest of the file"},
 				"numbered":   {Type: "boolean", Description: "Prefix lines with their number"},
