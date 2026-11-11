@@ -70,9 +70,34 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return outlineSource(src, lang, args.Symbol, max), nil
+		out := outlineSource(src, lang, args.Symbol, max)
+		if args.Symbol != "" && strings.HasPrefix(out, "(no declaration matching") {
+			out += outlineElsewhere(path, args.Symbol, max)
+		}
+		return out, nil
 	}
 	return outlineTree(path, args.Symbol, max)
+}
+
+// outlineElsewhere: o símbolo não está no arquivo pedido (o chute mais comum: o chamador, não o declarante). Procura-o
+// no repositório que contém o arquivo (ancestral com .git; sem repositório, a pasta do arquivo) e devolve onde está
+// declarado, poupando uma chamada de descoberta. Vazio se não achar.
+func outlineElsewhere(file, symbol string, max int) string {
+	root := filepath.Dir(file)
+	for d := root; ; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			root = d
+			break
+		}
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	found, err := outlineTree(root, symbol, max)
+	if err != nil || strings.HasPrefix(found, "(no declaration") {
+		return ""
+	}
+	return "\n[FastExec] Not declared in this file; declared elsewhere in the repo (paths relative to " + root + "):\n" + found
 }
 
 func unsupportedErr(path string) error {
