@@ -301,7 +301,41 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 	return out, err
 }
 
-func handleReadFileInner(args ReadFileArgs) (string, error) {
+// handleReadFileInner lê para o modelo: arquivo que não é UTF-8 (Windows-1252, UTF-16) sai decodificado, com um aviso.
+func handleReadFileInner(args ReadFileArgs) (string, error) { return readFileText(args, true) }
+
+// legacyNote avisa que o texto mostrado foi decodificado de outra codificação.
+func legacyNote(enc string) string {
+	return "[FastExec] File encoded as " + enc + ", shown as UTF-8 (edit_file keeps the original encoding).\n"
+}
+
+// readForEdit lê o arquivo para o edit_file: texto decodificado e a codificação de origem ("" = UTF-8 ou host remoto),
+// para regravar na mesma codificação.
+func readForEdit(host, path string) (string, string, error) {
+	raw, err := readFileText(ReadFileArgs{Host: host, Path: path}, false)
+	if err != nil {
+		return "", "", err
+	}
+	if t, terr := ResolveTargetHost(host, path); terr != nil || !t.IsLocal {
+		return raw, "", nil
+	}
+	text, enc := decodeLegacyText(raw)
+	return text, enc, nil
+}
+
+// encodeForWrite devolve o conteúdo na codificação de origem; recusa (sem gravar) se um caractere não cabe nela.
+func encodeForWrite(content, enc string) (string, error) {
+	if enc == "" {
+		return content, nil
+	}
+	out, ok := encodeLike(content, enc)
+	if !ok {
+		return "", fmt.Errorf("the edit has a character that does not exist in %s; nothing was written", enc)
+	}
+	return out, nil
+}
+
+func readFileText(args ReadFileArgs, decode bool) (string, error) {
 	if args.Path == "" {
 		return "", fmt.Errorf("parameter 'path' is required")
 	}
@@ -322,7 +356,18 @@ func handleReadFileInner(args ReadFileArgs) (string, error) {
 		if err != nil {
 			return "", notFoundWithSuggestions(filePath, err)
 		}
-		return selectFromText(filePath, string(data), args)
+		text, note := string(data), ""
+		if decode {
+			var enc string
+			if text, enc = decodeLegacyText(text); enc != "" {
+				note = legacyNote(enc)
+			}
+		}
+		out, serr := selectFromText(filePath, text, args)
+		if serr != nil {
+			return out, serr
+		}
+		return note + out, nil
 	}
 
 	// Remoto via daemon: expande ~ no bash para $HOME do usuário remoto. Só start_line/end_line puros usam sed (barato);
@@ -354,7 +399,18 @@ func handleReadFileInner(args ReadFileArgs) (string, error) {
 	if pureLines {
 		return res.Stdout, nil
 	}
-	return selectFromText(filePath, res.Stdout, args)
+	text, note := res.Stdout, ""
+	if decode {
+		var enc string
+		if text, enc = decodeLegacyText(text); enc != "" {
+			note = legacyNote(enc)
+		}
+	}
+	out, serr := selectFromText(filePath, text, args)
+	if serr != nil {
+		return out, serr
+	}
+	return note + out, nil
 }
 
 // selectFromText applies symbol, ranges/pattern/numbered, start/end lines and byte offset/limit to the text of a
@@ -614,15 +670,15 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 		if args.Replacement == "" {
 			return "", fmt.Errorf("parameter 'replacement' is required when 'symbol' is specified")
 		}
-		content, err := handleReadFileInner(ReadFileArgs{
-			Host: host,
-			Path: args.Path,
-		})
+		content, enc, err := readForEdit(host, args.Path)
 		if err != nil {
 			return "", fmt.Errorf("could not read '%s' to edit it: %w", args.Path, err)
 		}
 		newContent, note, err := editSymbol(args.Path, content, args.Symbol, args.Replacement)
 		if err != nil {
+			return "", err
+		}
+		if newContent, err = encodeForWrite(newContent, enc); err != nil {
 			return "", err
 		}
 		_, err = HandleWriteFile(WriteFileArgs{
@@ -646,10 +702,7 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 		return "", fmt.Errorf("parameter 'target', 'symbol' (or 'edits') is required")
 	}
 
-	content, err := handleReadFileInner(ReadFileArgs{
-		Host: host,
-		Path: args.Path,
-	})
+	content, enc, err := readForEdit(host, args.Path)
 	if err != nil {
 		return "", fmt.Errorf("could not read '%s' to edit it: %w", args.Path, err)
 	}
@@ -691,6 +744,9 @@ func HandleEditFile(args EditFileArgs) (string, error) {
 		newBytes += len(r)
 	}
 
+	if newContent, err = encodeForWrite(newContent, enc); err != nil {
+		return "", err
+	}
 	_, err = HandleWriteFile(WriteFileArgs{
 		Host:      host,
 		Path:      args.Path,
