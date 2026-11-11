@@ -307,6 +307,32 @@ var reCallSearch = regexp.MustCompile(`[A-Za-z_]\w{2,}\\?\(`)
 
 const callSearchHint = "[FastExec FastHint] For call sites use tool 'code_graph' (action 'callers'): graph lookup, no file reading."
 
+// Busca ampla: texto buscado recursivamente que devolve muitas linhas costuma ser busca por conceito ("fee|taxa").
+// O code_outline com pasta + symbol (substring do nome) lista só as declarações com a palavra, numa chamada.
+var reRecursiveSearch = regexp.MustCompile(`(?i)-recurse\b|\bgrep\s+-[a-z]*r|\bgrep\s+--recursive|\brg\s|git\s+grep|findstr\s+(?:/\w+\s+)*/s\b`)
+
+const broadSearchMinLines = 10
+
+const broadSearchHint = "[FastExec FastHint] Searching by concept? code_outline(path=<repo or folder>, symbol='<word>') lists every declaration whose name contains the word, with line numbers, in one call; then read_file(path, start_line, end_line)."
+
+var reSearchProgram = regexp.MustCompile(`(?i)\bselect-string\b|\bsls\b|\bgrep\b|\brg\b|\bfindstr\b`)
+
+// isBroadSearch: busca de texto recursiva (não é busca de declaração nem de chamada, que têm dica própria). Vale mesmo
+// com limite do próprio agente (Select-Object -First 40): a busca continua ampla, só a saída foi cortada.
+func isBroadSearch(label string) bool {
+	return reSearchProgram.MatchString(label) && reRecursiveSearch.MatchString(label) && !reDeclSearch.MatchString(label) && !reCallSearch.MatchString(label)
+}
+
+func nonEmptyLines(s string) int {
+	n := 0
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			n++
+		}
+	}
+	return n
+}
+
 // Edição de arquivo por script (ler, substituir, gravar): o edit_file faz o mesmo numa chamada, sem script, mantendo
 // a quebra de linha do arquivo e atualizando o grafo de código.
 var (
