@@ -167,7 +167,7 @@ func writeJSON(rw http.ResponseWriter, v any) {
 
 // cmdSetupUI roda o assistente até o usuário fechar (botão Close) ou o processo ser interrompido.
 func cmdSetupUI(args []string) {
-	open := true
+	open := os.Getenv("FASTEXEC_NO_BROWSER") == ""
 	for _, a := range args {
 		switch a {
 		case "--no-browser":
@@ -179,6 +179,7 @@ func cmdSetupUI(args []string) {
 		}
 	}
 	w := newWizard()
+	w.suggestInstallDir()
 	s, ln, err := newWizardServer(w)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot start the installer page:", err)

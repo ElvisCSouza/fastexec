@@ -395,3 +395,155 @@ func TestWebRunRejectsGet(t *testing.T) {
 	}
 	_ = httptest.NewRecorder
 }
+
+// TestInstallerEndToEnd roda o instalador como o usuário o recebe: o mesmo binário com nome fastexec-setup, sem
+// argumentos, numa pasta Downloads. Dirige a página pela API HTTP: instalar, conferir tudo verde, desfazer.
+func TestInstallerEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs the real binary")
+	}
+	built := realExe(t) // antes do sandbox: o PATH isolado não tem o go
+	home := sandbox(t)
+	t.Setenv("FASTEXEC_NO_BROWSER", "1")
+	writeFile(t, cursorFile(home), `{"theme":"dark","mcpServers":{"other":{"command":"x","args":[]}}}`)
+
+	setupName := "fastexec-setup"
+	if runtime.GOOS == "windows" {
+		setupName += ".exe"
+	}
+	setup := filepath.Join(home, "Downloads", setupName)
+	data, err := os.ReadFile(built)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(setup), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setup, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(setup) // sem argumentos: o nome faz abrir o assistente
+	cmd.Env = os.Environ()
+	out, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil || !strings.Contains(line, "http://127.0.0.1:") {
+		t.Fatalf("installer did not print its address: %q %v", line, err)
+	}
+	url := strings.TrimSpace(line[strings.Index(line, "http://"):])
+	base := url[:strings.Index(url, "/?t=")]
+	tok := url[strings.Index(url, "?t=")+3:]
+
+	call := func(method, path string, v any) {
+		body := strings.NewReader("")
+		if v != nil {
+			b, _ := json.Marshal(v)
+			body = strings.NewReader(string(b))
+		}
+		req, _ := http.NewRequest(method, base+path, body)
+		req.Header.Set("X-Token", tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s %s: %d", method, path, resp.StatusCode)
+		}
+	}
+	state := func() wState {
+		req, _ := http.NewRequest("GET", base+"/api/state", nil)
+		req.Header.Set("X-Token", tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var st wState
+		if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	waitIdle := func(phase string) wState {
+		deadline := time.Now().Add(90 * time.Second)
+		for time.Now().Before(deadline) {
+			st := state()
+			if !st.Busy && (phase == "" || st.Phase == phase) {
+				return st
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Fatal("timed out waiting for", phase)
+		return wState{}
+	}
+
+	st := waitIdle("inspect")
+	dest := filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "FastExec", installedName())
+	if runtime.GOOS != "windows" {
+		dest = filepath.Join(home, ".local", "bin", installedName())
+	}
+	if st.Opts.InstallDir == "" {
+		t.Fatal("installer did not suggest an install folder")
+	}
+	t.Cleanup(func() { _ = exec.Command(dest, "daemon", "stop").Run() })
+
+	call("POST", "/api/opts", wOptions{Exclusive: false, InstallDir: filepath.Dir(dest)})
+	call("POST", "/api/run/install", nil)
+	st = waitIdle("verify")
+	if !st.Ready {
+		for _, it := range st.Items {
+			t.Logf("%-8s %-5v %s: %s", it.Status, it.Required, it.Title, it.Detail)
+		}
+		t.Fatal("installer did not reach Ready")
+	}
+	if !fileExists(dest) {
+		t.Fatalf("executable not installed at %s", dest)
+	}
+	cfg := readStr(t, cursorFile(home))
+	if !strings.Contains(cfg, strings.ReplaceAll(dest, `\`, `\\`)) && !strings.Contains(cfg, dest) {
+		t.Fatalf("client does not point to %s: %s", dest, cfg)
+	}
+	if strings.Contains(strings.ToLower(cfg), "setup") {
+		t.Fatal("the installer itself was registered as the server")
+	}
+	if !strings.Contains(cfg, `"other"`) || !strings.Contains(cfg, `"theme"`) {
+		t.Fatal("existing entries lost")
+	}
+
+	call("POST", "/api/run/undo", nil)
+	waitIdle("undo")
+	if strings.Contains(readStr(t, cursorFile(home)), `"fastexec"`) {
+		t.Fatal("undo left FastExec registered")
+	}
+	call("POST", "/api/quit", nil)
+}
+
+func TestLooksLikeSetup(t *testing.T) {
+	for p, want := range map[string]bool{
+		`C:\x\fastexec-setup.exe`: true, `/a/FastExec-Setup`: true, `C:\x\fastexec.exe`: false, `/a/fastexec`: false,
+	} {
+		if got := looksLikeSetup(p); got != want {
+			t.Errorf("looksLikeSetup(%q)=%v", p, got)
+		}
+	}
+}
+
+func TestInstallRefusesToRegisterTheInstaller(t *testing.T) {
+	home := sandbox(t)
+	writeFile(t, cursorFile(home), `{"mcpServers":{}}`)
+	w := newWizard()
+	w.exe = filepath.Join(home, "fastexec-setup.exe")
+	w.opts = wOptions{} // sem pasta de instalação
+	w.Install()
+	if it := item(w, "copy"); it == nil || it.Status != wFail {
+		t.Fatalf("expected a failed copy item: %+v", it)
+	}
+	if strings.Contains(readStr(t, cursorFile(home)), `"fastexec"`) {
+		t.Fatal("installer name was registered")
+	}
+}

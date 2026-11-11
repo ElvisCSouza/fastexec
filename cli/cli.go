@@ -61,6 +61,12 @@ func Main() {
 	logger.Init()
 
 	args := os.Args[1:]
+	// O mesmo binário, chamado com nome de instalador (fastexec-setup.exe) e sem argumentos (duplo clique), abre o
+	// assistente em vez de servir MCP. Um cliente MCP sempre inicia "fastexec", então nada muda para eles.
+	if len(args) == 0 && looksLikeSetup(daemon.Self().Exe) {
+		cmdSetupUI(nil)
+		return
+	}
 	if len(args) == 0 || args[0] == "mcp" {
 		// executável trocado desde que o daemon subiu: troca o daemon, senão as tools rodam o código antigo
 		if replaced, err := daemon.EnsureCurrent(); replaced || err != nil {

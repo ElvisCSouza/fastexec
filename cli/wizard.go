@@ -102,6 +102,37 @@ func newWizard() *wizard {
 	return w
 }
 
+// suggestInstallDir: rodando como instalador ou de uma pasta passageira, já sugere uma pasta permanente.
+func (w *wizard) suggestInstallDir() {
+	if looksLikeSetup(w.exe) || unstablePath(w.exe) != "" {
+		w.opts.InstallDir = defaultInstallDir()
+	}
+}
+
+// looksLikeSetup: o executável tem nome de instalador (fastexec-setup.exe). Esse nome nunca deve ser registrado
+// nos clientes, porque sem argumentos ele abre o assistente em vez de servir MCP.
+func looksLikeSetup(exe string) bool {
+	return strings.Contains(strings.ToLower(filepath.Base(exe)), "setup")
+}
+
+// installedName é o nome do executável depois de instalado.
+func installedName() string {
+	if runtime.GOOS == "windows" {
+		return "fastexec.exe"
+	}
+	return "fastexec"
+}
+
+// defaultInstallDir: pasta permanente por usuário, sem precisar de administrador.
+func defaultInstallDir() string {
+	if runtime.GOOS == "windows" {
+		if l := os.Getenv("LOCALAPPDATA"); l != "" {
+			return filepath.Join(l, "Programs", "FastExec")
+		}
+	}
+	return filepath.Join(homeDir(), ".local", "bin")
+}
+
 // --- estado e eventos ---
 
 func (w *wizard) subscribe() (chan struct{}, func()) {
@@ -298,8 +329,12 @@ func (w *wizard) Install() {
 	w.mu.Lock()
 	dir := strings.TrimSpace(w.opts.InstallDir)
 	w.mu.Unlock()
+	if dir == "" && looksLikeSetup(w.exe) {
+		w.set("copy", g, "Install location", wFail, "the installer cannot be registered as the server", "Choose an install folder: FastExec is copied there as "+installedName()+".", true)
+		return
+	}
 	if dir != "" && w.exe != "" {
-		dest := filepath.Join(dir, filepath.Base(w.exe))
+		dest := filepath.Join(dir, installedName())
 		if samePath(dest, w.exe) {
 			w.set("copy", g, "Install location", wOK, dest+" (already there)", "", true)
 		} else if err := copyExe(w.exe, dest); err != nil {
