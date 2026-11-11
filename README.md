@@ -246,17 +246,128 @@ to do about each problem.
 
 ## Remote machines (optional)
 
-By default FastExec works on the local machine only. To reach other machines, list them in `~/.fastexec/config.json`
-(`fastexec config init` writes a sample) and run the small `server-exec` daemon on them.
+By default FastExec works on the local machine only. To run commands on other machines (a server, a Raspberry Pi, a
+VM, a router), you run a small daemon called `server-exec` on each of them and list them in FastExec's config.
+A command then costs one round trip on the network (about 2-4 ms on a LAN) plus the time to start the process.
+
+There is nothing to install on the machine you work from beyond FastExec itself.
+
+### 1. Get `server-exec` for the remote machine
+
+Download the file that matches the remote machine from the [latest release](../../releases/latest) and check it
+against `SHA256SUMS`:
+
+| File | For |
+|---|---|
+| `server-exec-linux-amd64` | Linux servers, VMs, WSL |
+| `server-exec-linux-arm64` | Raspberry Pi 4/5, ARM64 routers (OpenWrt) |
+| `server-exec-linux-armv7` | 32-bit ARM (older routers, TV boxes) |
+
+Each is a single static file of a few hundred KB, with no dependencies. On Linux:
+
+```sh
+# on the remote machine
+curl -LO https://github.com/ElvisCSouza/fastexec/releases/latest/download/server-exec-linux-amd64
+curl -LO https://github.com/ElvisCSouza/fastexec/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+sudo install -m 755 server-exec-linux-amd64 /usr/local/bin/server-exec
+```
+
+### 2. Create a token
+
+On the machine you work from:
+
+```
+fastexec token
+```
+
+It prints a random 32-byte token. Save it on the remote machine in a file only the daemon's user can read:
+
+```sh
+# on the remote machine
+mkdir -p ~/.config/server-exec
+echo 'PASTE_THE_TOKEN_HERE' > ~/.config/server-exec/token
+chmod 600 ~/.config/server-exec/token
+```
+
+### 3. Start the daemon
+
+```sh
+server-exec --token-file ~/.config/server-exec/token
+```
+
+It listens on TCP port 9142 on all interfaces. Options: `--port N`, `--bind ADDR` (for example a VPN or LAN
+address, or `127.0.0.1`), `--token-file PATH`. The token is never accepted on the command line, so it does not show
+up in the process list. Commands run as the user who started the daemon, with that user's permissions.
+
+To keep it running across reboots on a systemd machine, create `/etc/systemd/system/server-exec.service`:
+
+```ini
+[Unit]
+Description=FastExec remote daemon
+After=network-online.target
+
+[Service]
+User=me
+WorkingDirectory=/home/me
+ExecStart=/usr/local/bin/server-exec --token-file /home/me/.config/server-exec/token
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+then `sudo systemctl daemon-reload && sudo systemctl enable --now server-exec`.
+
+### 4. Add the host to FastExec
+
+On the machine you work from, run `fastexec config init` (writes a sample to `~/.fastexec/config.json`) and edit it:
 
 ```json
 {
-  "default_host": "server",
+  "default_host": "local",
   "hosts": {
-    "server": { "addr": "192.0.2.10", "cwd": "/home/me/projects" }
+    "server": { "addr": "192.0.2.10", "token": "PASTE_THE_TOKEN_HERE", "cwd": "/home/me/projects", "aliases": ["srv"] },
+    "pi":     { "addr": "192.0.2.20:9142", "token": "PASTE_THE_TOKEN_HERE" },
+    "work":   { "ssh": "work-vm", "hidden": true }
   }
 }
 ```
+
+| Key | Meaning |
+|---|---|
+| `addr` | `ip` or `ip:port` of a `server-exec` daemon (port 9142 if omitted). |
+| `token` | The token the daemon requires. Use a different one per machine if you like. |
+| `cwd` | Default working directory on that host. |
+| `aliases` | Other names for the same host. |
+| `ssh` | Alternative to `addr`: an alias from your `~/.ssh/config`. Needs no daemon, but is slower. |
+| `hidden` | Keep the host out of the tool descriptions (saves tokens). It still works by name. |
+| `default_host` | Host used when a call names none. |
+
+Each host needs exactly one of `addr` or `ssh`. A host can also be reached without a config entry: `ssh:<alias>`,
+an IP, or `ip:port`.
+
+### 5. Check the connection
+
+```
+fastexec doctor
+```
+
+It reports each remote host: reachable or not, and whether the token was accepted. Then ask your assistant to run
+something on it ("run `uname -a` on server"). Restart your AI client after editing the config.
+
+| Message | Meaning |
+|---|---|
+| `... refused the token (wrong token)` | The token in the config differs from the daemon's. |
+| `... requires a token: set 'token' for this host` | The daemon has a token, the config does not. |
+| connection refused / timed out | The daemon is not running, the port is blocked by a firewall, or the address is wrong. |
+
+### Security
+
+**Anyone who can reach the port can run commands as the daemon's user.** Use at least one of: a token, `--bind` to a
+private interface (loopback or VPN), or a firewall rule limited to your own machines. The daemon warns at start when
+it runs without a token on a non-loopback address. Traffic is **not encrypted**: across untrusted networks, put it
+inside a VPN (WireGuard, Tailscale) or an SSH tunnel.
 
 ## Privacy
 
