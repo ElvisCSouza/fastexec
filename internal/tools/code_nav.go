@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -114,9 +115,18 @@ func expandHome(p string) string {
 }
 
 func scanFile(path string, lang *codescan.Lang) ([]codescan.Decl, error) {
+	return scanFileFor(path, lang, "")
+}
+
+// scanFileFor: com symbol, o arquivo que não contém o texto (sem diferenciar maiúsculas) nem é analisado: filterDecls
+// só aceitaria declarações cujo nome o contém, então o resultado é o mesmo, sem o custo do scanner (CPU da árvore).
+func scanFileFor(path string, lang *codescan.Lang, symbol string) ([]codescan.Decl, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
+	}
+	if symbol != "" && !bytes.Contains(bytes.ToLower(src), []byte(strings.ToLower(symbol))) {
+		return nil, nil
 	}
 	decls, _ := codescan.Scan(src, lang)
 	return decls, nil
@@ -244,7 +254,7 @@ func outlineTree(root, symbol string, max int) (string, error) {
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				decls, err := scanFile(files[i], codescan.LangFor(files[i]))
+				decls, err := scanFileFor(files[i], codescan.LangFor(files[i]), symbol)
 				if err != nil {
 					continue
 				}
