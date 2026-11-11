@@ -179,9 +179,8 @@ func windowLongLine(l string, re *regexp.Regexp) string {
 	if len(locs) == 0 {
 		return runeSafe(l, 0, winBefore+winAfter) + fmt.Sprintf(" [FastExec: line is %d bytes, head shown; offset/limit reads the rest]", len(l))
 	}
-	from := max(locs[0][0]-winBefore, 0)
-	to := min(locs[0][1]+winAfter, len(l))
-	note := fmt.Sprintf(" [FastExec: line is %d bytes; bytes %d-%d shown around the match at byte %d", len(l), from, to, locs[0][0])
+	from, to, kind := matchWindow(l, locs[0][0], locs[0][1])
+	note := fmt.Sprintf(" [FastExec: line is %d bytes; bytes %d-%d shown (%s) around the match at byte %d", len(l), from, to, kind, locs[0][0])
 	if len(locs) > 1 {
 		offs := make([]string, 0, len(locs)-1)
 		for _, m := range locs[1:] {
@@ -203,6 +202,75 @@ func windowLongLine(l string, re *regexp.Regexp) string {
 		post = "…"
 	}
 	return pre + runeSafe(l, from, to) + post + note
+}
+
+// maxRecordBytes is the largest enclosing {...} record returned whole around a match.
+const maxRecordBytes = 4096
+
+// matchWindow picks the bytes to show around a match at [ms,me): the outermost balanced {...} record that contains it
+// and fits maxRecordBytes (so a hit inside a minified JSON record comes back as the whole record, never half of it),
+// else a fixed window. kind says which one was used.
+func matchWindow(l string, ms, me int) (from, to int, kind string) {
+	from, to, kind = max(ms-winBefore, 0), min(me+winAfter, len(l)), "fixed window"
+	bestFrom, bestTo := -1, -1
+	depth := 0
+scan:
+	for i := ms - 1; i >= 0 && ms-i <= maxRecordBytes; i-- {
+		switch l[i] {
+		case '}', ']':
+			depth++
+		case '{', '[':
+			if depth > 0 {
+				depth--
+				continue
+			}
+			end := closeOf(l, i, maxRecordBytes)
+			switch {
+			case end < me: // too big (or unbalanced): nothing wider can be returned
+				break scan
+			case l[i] == '{':
+				bestFrom, bestTo = i, end
+			}
+		}
+	}
+	switch {
+	case bestFrom < 0:
+		return
+	case bestTo-bestFrom < winBefore+winAfter && !(bestFrom > 0 && (l[bestFrom-1] == ',' || l[bestFrom-1] == '[')):
+		// (an object that follows ',' or '[' is an array element, i.e. a whole record, and is returned exactly)
+		// only an object nested inside a record bigger than maxRecordBytes fit: keep it and add the fixed window
+		return min(bestFrom, from), max(bestTo, to), "inner object plus fixed window"
+	}
+	return bestFrom, bestTo, "enclosing record"
+}
+
+// closeOf returns the end (exclusive) of the balanced {...} or [...] starting at l[open], or -1 when it is longer
+// than limit bytes or unbalanced. Braces inside JSON strings are skipped.
+func closeOf(l string, open, limit int) int {
+	depth, inStr := 0, false
+	for i := open; i < len(l) && i-open <= limit; i++ {
+		c := l[i]
+		if inStr {
+			switch c {
+			case '\\':
+				i++
+			case '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth--; depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return -1
 }
 
 // runeSafe returns l[from:to] moved inward to rune boundaries.
