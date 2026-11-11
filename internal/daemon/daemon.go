@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"homelab/fastexec/internal/logger"
@@ -156,6 +157,19 @@ func writeResp(conn net.Conn, resp DaemonResponse) {
 	_, _ = conn.Write(append(data, '\n'))
 }
 
+// callDeadline: prazo da chamada proxy -> daemon. 55 s serve ao Claude Desktop (corta aos 60 s); o Claude Code espera
+// chamadas de até 10 min (exec/job), então o prazo cobre o teto mais folga.
+func callDeadline(args json.RawMessage) time.Duration {
+	var a struct {
+		Caller string `json:"_caller"`
+	}
+	_ = json.Unmarshal(args, &a)
+	if strings.HasPrefix(a.Caller, "claude-code") {
+		return 11 * time.Minute
+	}
+	return 55 * time.Second
+}
+
 // CallTool despacha uma tool para o daemon local (com auto-spawn transparente).
 // Se o daemon não estiver acessível e não conseguir subir, retorna erro para fallback.
 func CallTool(name string, args json.RawMessage) (*mcp.ToolCallResult, error) {
@@ -176,20 +190,21 @@ func CallTool(name string, args json.RawMessage) (*mcp.ToolCallResult, error) {
 		Params:  params,
 	}
 	reqBytes, _ := json.Marshal(req)
-	_ = conn.SetDeadline(time.Now().Add(55 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(callDeadline(args)))
 	if _, err := conn.Write(append(reqBytes, '\n')); err != nil {
 		return nil, err
 	}
 
+	// A partir daqui a chamada pode ter rodado: erro não autoriza refazer a chamada no proxy (mcp.AfterSendError).
 	reader := bufio.NewReader(conn)
 	line, err := reader.ReadBytes('\n')
 	if err != nil {
-		return nil, err
+		return nil, &mcp.AfterSendError{Err: err}
 	}
 
 	var resp DaemonResponse
 	if err := json.Unmarshal(line, &resp); err != nil {
-		return nil, err
+		return nil, &mcp.AfterSendError{Err: err}
 	}
 	if resp.Error != nil {
 		return nil, fmt.Errorf("daemon rpc error: %s", resp.Error.Message)

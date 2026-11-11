@@ -3,6 +3,7 @@ package mcp
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -115,10 +116,22 @@ func (s *Server) writeNotification(method string, params any) {
 	_ = s.writer.Flush()
 }
 
+// AfterSendError: a chamada já foi escrita no daemon e a resposta não voltou (prazo, conexão): ela pode ter rodado.
+// Refazê-la neste processo duplicaria o efeito (job iniciado duas vezes, arquivo gravado duas vezes).
+type AfterSendError struct{ Err error }
+
+func (e *AfterSendError) Error() string { return e.Err.Error() }
+func (e *AfterSendError) Unwrap() error { return e.Err }
+
 func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) ToolCallResult {
 	if s.Forwarder != nil {
-		if res, err := s.Forwarder(name, rawArgs); err == nil {
+		res, err := s.Forwarder(name, rawArgs)
+		if err == nil {
 			return res
+		}
+		var sent *AfterSendError
+		if errors.As(err, &sent) {
+			return ToolCallResult{IsError: true, Content: []ToolContent{{Type: "text", Text: "[FastExec] The call reached the daemon but no reply came back (" + err.Error() + "). It may have run: check its effect (job status, file contents) before repeating it."}}}
 		}
 	}
 	return DispatchTool(name, rawArgs)
