@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -195,7 +196,44 @@ func cmdSetupUI(args []string) {
 	_ = srv.Close()
 }
 
+// appBrowser procura um Edge/Chrome/Chromium para abrir a página em janela própria (--app: sem abas nem barra de
+// endereço). Vazio quando não acha nenhum.
+func appBrowser() string {
+	var candidates []string
+	switch runtime.GOOS {
+	case "windows":
+		for _, base := range []string{os.Getenv("ProgramFiles(x86)"), os.Getenv("ProgramFiles"), os.Getenv("LOCALAPPDATA")} {
+			if base == "" {
+				continue
+			}
+			candidates = append(candidates,
+				filepath.Join(base, "Microsoft", "Edge", "Application", "msedge.exe"),
+				filepath.Join(base, "Google", "Chrome", "Application", "chrome.exe"))
+		}
+	case "darwin":
+		candidates = []string{"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"}
+	default:
+		for _, n := range []string{"google-chrome", "chromium", "chromium-browser", "microsoft-edge"} {
+			if p, err := exec.LookPath(n); err == nil {
+				candidates = append(candidates, p)
+			}
+		}
+	}
+	for _, c := range candidates {
+		if fileExists(c) {
+			return c
+		}
+	}
+	return ""
+}
+
 func openBrowser(url string) {
+	if b := appBrowser(); b != "" {
+		if err := exec.Command(b, "--app="+url, "--window-size=1000,900").Start(); err == nil {
+			return
+		}
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":

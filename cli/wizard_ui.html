@@ -51,7 +51,7 @@ ul.checks{list-style:none;margin:0;padding:0}
 
 <div class="card" id="opts">
 <h2>Options</h2>
-<label class="opt"><input type="checkbox" id="excl" checked><span><b>FastExec-only mode</b> (recommended)<small>Denies Claude Code's built-in Bash, Read, Edit, Write, Glob and Grep so every command and file operation goes through FastExec. Fewer tokens, fewer quoting and encoding errors. You can undo it at any time.</small></span></label>
+<label class="opt"><input type="checkbox" id="excl" checked><span><b>FastExec-only mode</b> (recommended)<small>Denies Claude Code's built-in shell and file tools (Bash, PowerShell, Read, Edit, Write, Glob, Grep, NotebookEdit) and the Claude Desktop terminal panel, so every command and file operation goes through FastExec. This covers Claude Code and the Code tab of Claude Desktop. Fewer tokens, fewer quoting and encoding errors. You can undo it at any time.</small></span></label>
 <div class="opt" style="display:block"><b>Install folder</b> <small style="display:inline">(optional: copy the program there so the clients keep a permanent path; empty = run from where it is)</small>
 <input type="text" id="dir" placeholder="e.g. C:\Users\you\AppData\Local\Programs\FastExec"></div>
 <div id="clients"></div>
@@ -78,7 +78,7 @@ $("excl").onchange=sendOpts;$("dir").onchange=sendOpts;
 $("go").onclick=async()=>{await sendOpts();post("/api/run/install")};
 $("again").onclick=()=>post("/api/run/inspect");
 $("undo").onclick=()=>{if(confirm("Remove FastExec from your AI clients and allow the built-in tools again?"))post("/api/run/undo")};
-$("quit").onclick=async()=>{await post("/api/quit");document.body.innerHTML="<main><h1>You can close this tab.</h1></main>"};
+$("quit").onclick=async()=>{await post("/api/quit");window.close();document.body.innerHTML="<main><h1>You can close this window.</h1></main>"};
 function render(s){
   S=s;$("ver").textContent=s.version+"  -  "+s.exe;
   if(!optsLoaded){$("excl").checked=s.opts.exclusive;$("dir").value=s.opts.installDir||"";optsLoaded=true}

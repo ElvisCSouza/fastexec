@@ -78,7 +78,9 @@ type wClient struct {
 }
 
 // nativeTools são as ferramentas do Claude Code que o modo exclusivo nega: o que o FastExec cobre.
-var nativeTools = []string{"Bash", "Read", "Edit", "Write", "Glob", "Grep"}
+// Inclui o servidor embutido `mcp__terminal` das sessões Code do Claude Desktop (run_in_terminal etc.): sem negá-lo o
+// modelo contorna o bloqueio do Bash pelo terminal do painel.
+var nativeTools = []string{"Bash", "PowerShell", "Monitor", "Read", "Edit", "Write", "Glob", "Grep", "NotebookEdit", "mcp__terminal"}
 
 type wizard struct {
 	mu    sync.Mutex
