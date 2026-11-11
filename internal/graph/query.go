@@ -48,9 +48,15 @@ func Callers(root, symbol string, max int) (string, error) {
 		return "", err
 	}
 	name := lastName(symbol)
-	rows, err := d.Query(`SELECT source_file, source_line, relation_type FROM code_edges
-		WHERE repo_root = ? AND target_symbol = ? AND relation_type IN ('calls','references')
-		ORDER BY source_file, source_line`, repoKey(root), name)
+	// the innermost symbol that contains the call site is the caller: naming it saves the agent a read per line
+	rows, err := d.Query(`SELECT e.source_file, e.source_line, e.relation_type,
+			COALESCE((SELECT s.name FROM code_symbols s
+				WHERE s.repo_root = e.repo_root AND s.file_path = e.source_file
+					AND s.start_line <= e.source_line AND s.end_line >= e.source_line
+				ORDER BY s.end_line - s.start_line LIMIT 1), '')
+		FROM code_edges e
+		WHERE e.repo_root = ? AND e.target_symbol = ? AND e.relation_type IN ('calls','references')
+		ORDER BY e.source_file, e.source_line`, repoKey(root), name)
 	if err != nil {
 		return "", err
 	}
@@ -59,15 +65,18 @@ func Callers(root, symbol string, max int) (string, error) {
 	files := map[string]bool{}
 	total := 0
 	for rows.Next() {
-		var f, rel string
+		var f, rel, in string
 		var line int
-		if err := rows.Scan(&f, &line, &rel); err != nil {
+		if err := rows.Scan(&f, &line, &rel, &in); err != nil {
 			return "", err
 		}
 		total++
 		files[f] = true
 		if total <= max {
-			fmt.Fprintf(&b, "- %s:%d (%s)\n", f, line, rel)
+			if in != "" {
+				in = " in " + in
+			}
+			fmt.Fprintf(&b, "- %s:%d%s (%s)\n", f, line, in, rel)
 		}
 	}
 	if total == 0 {

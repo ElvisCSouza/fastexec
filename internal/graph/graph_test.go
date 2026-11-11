@@ -100,12 +100,12 @@ func TestCallersExatos(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "=== callers of 'helper' ===\n- app/app.go:8 (calls)\n- app/other.go:4 (calls)\nTotal: 2 references in 2 files."
+	want := "=== callers of 'helper' ===\n- app/app.go:8 in Run (calls)\n- app/other.go:4 in Other (calls)\nTotal: 2 references in 2 files."
 	if body(got) != want {
 		t.Errorf("callers helper:\n%s\nquer:\n%s", got, want)
 	}
 	got, _ = Callers(root, "store.NewEntry", 0)
-	if body(got) != "=== callers of 'NewEntry' ===\n- app/app.go:6 (calls)\nTotal: 1 references in 1 files." {
+	if body(got) != "=== callers of 'NewEntry' ===\n- app/app.go:6 in Run (calls)\nTotal: 1 references in 1 files." {
 		t.Errorf("callers NewEntry:\n%s", got)
 	}
 	got, err = Callers(root, "fmt", 0)
@@ -224,7 +224,7 @@ func TestIsolamentoEntreRepos(t *testing.T) {
 		t.Errorf("repo A viu símbolo do repo B:\n%s", got)
 	}
 	got, _ = Callers(b, "helper", 0)
-	if body(got) != "=== callers of 'helper' ===\n- x.go:3 (calls)\nTotal: 1 references in 1 files." {
+	if body(got) != "=== callers of 'helper' ===\n- x.go:3 in y (calls)\nTotal: 1 references in 1 files." {
 		t.Errorf("repo B:\n%s", got)
 	}
 }
@@ -302,7 +302,7 @@ func TestCleanRemoveSoORepositorioPedido(t *testing.T) {
 		t.Errorf("depois do Clean(a) só o repo b deveria restar: %v", repos)
 	}
 	got, _ := Callers(b, "helper", 0)
-	if !strings.Contains(got, "- x.go:3 (calls)") {
+	if !strings.Contains(got, "- x.go:3 in y (calls)") {
 		t.Errorf("repo b afetado pelo Clean(a):\n%s", got)
 	}
 
