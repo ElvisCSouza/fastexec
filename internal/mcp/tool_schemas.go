@@ -6,7 +6,7 @@ package mcp
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Run a command on a host and return its output as soon as the process exits ({exec_default}). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, file_ops to manage them, code_outline/code_graph to locate code (not recursive grep/Select-String over a repo), and the 'job' tool for anything over {job_over}. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
+		Description: "Run a command on a host and return its output as soon as the process exits ({exec_default}). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, code_outline/code_graph to locate code (not recursive grep/Select-String over a repo), and the 'job' tool for anything over {job_over}. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -101,20 +101,6 @@ var serverTools = []ToolSchema{
 		},
 	},
 	{
-		Name:        "file_ops",
-		Description: "File system operations without a shell: copy, move, delete, mkdir, list. Use it instead of ls, dir, rm or mkdir through exec.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]PropertyDef{
-				"host":   {Type: "string", Description: "'local' (default) or a configured host"},
-				"action": {Type: "string", Description: "'copy', 'move', 'delete', 'mkdir' or 'list'"},
-				"path":   {Type: "string", Description: "Source file or directory"},
-				"target": {Type: "string", Description: "Destination (required for copy and move)"},
-			},
-			Required: []string{"action", "path"},
-		},
-	},
-	{
 		Name:        "job",
 		Description: "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over {job_over}): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait. For a command that ends (build, test, script) start with await=true: it returns the output if the job finishes within {await_s}.",
 		InputSchema: InputSchema{
@@ -134,7 +120,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "tool_manage",
-		Description: "On-demand tool modules ('sql', 'hosts', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
+		Description: "On-demand tool modules ('files' = file_ops copy/move/delete/mkdir/list, 'handoff' = session memory, 'sql', 'hosts', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -145,21 +131,6 @@ var serverTools = []ToolSchema{
 				"params": {Type: "string", Description: "JSON arguments for 'call'"},
 			},
 			Required: []string{"action"},
-		},
-	},
-	{
-		Name:        "handoff",
-		Description: "Session handoff and long-term memory built from real telemetry (no LLM): 'latest' returns the last project briefing (~300 tokens) for a cold start; 'save' records the session (files touched, failures to avoid, next steps) in Markdown; 'search' finds past decisions; 'list' lists handoffs.",
-		InputSchema: InputSchema{
-			Type: "object",
-			Properties: map[string]PropertyDef{
-				"action":  {Type: "string", Description: "'latest' (default), 'save', 'search' or 'list'"},
-				"topic":   {Type: "string", Description: "Session topic for 'save', e.g. 'auth-refactor'"},
-				"notes":   {Type: "string", Description: "Session summary for 'save'"},
-				"pending": {Type: "string", Description: "Pending items or next steps for 'save'"},
-				"query":   {Type: "string", Description: "Search term for 'search'"},
-				"limit":   {Type: "integer", Description: "Max results for search/list (default 5)"},
-			},
 		},
 	},
 }

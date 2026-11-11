@@ -272,7 +272,7 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 		}
 		errMsg = shapeOrCap(errMsg)
 		if res.Local && isWindowsCmdletMismatch(command, errMsg) {
-			errMsg += "\n[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use 'file_ops'."
+			errMsg += "\n[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use read_file / edit_file."
 		}
 		if isBenignExitCode1(command, stdout, stderr) {
 			return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), nil
@@ -753,7 +753,7 @@ func tryRemediateList(args ExecArgs) (string, bool, error) {
 		cmdLabel = strings.Join(args.Argv, " ")
 	}
 
-	out := fmt.Sprintf("[FastExec Auto-Remediation] '%s' was run as the native 'file_ops' tool (action='list', no process).\nNext time call 'file_ops' with action='list' directly to save time and tokens.\n---\n%s", cmdLabel, formatted)
+	out := fmt.Sprintf("[FastExec Auto-Remediation] '%s' was listed natively (no process, compact output).\n---\n%s", cmdLabel, formatted)
 	return out, true, nil
 }
 
@@ -918,7 +918,7 @@ func detectNudge(label string, args ExecArgs) string {
 
 	switch exe {
 	case "ls", "dir":
-		return "[FastExec Hint] To list files and directories prefer the native 'file_ops' tool (action='list')."
+		return ""
 	}
 	return ""
 }

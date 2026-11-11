@@ -196,8 +196,8 @@ func TestDetectNudge(t *testing.T) {
 		args     ExecArgs
 		contains string
 	}{
-		{label: "ls -la", args: ExecArgs{Command: "ls -la"}, contains: "file_ops"},
-		{label: "dir /s", args: ExecArgs{Command: "dir /s"}, contains: "file_ops"},
+		{label: "ls -la", args: ExecArgs{Command: "ls -la"}, contains: ""}, // file_ops saiu do schema: sem nudge
+		{label: "dir /s", args: ExecArgs{Command: "dir /s"}, contains: ""},
 		{label: "docker ps -a", args: ExecArgs{Command: "docker ps -a"}, contains: ""},
 		{label: "sqlite3 my.db", args: ExecArgs{Command: "sqlite3 my.db"}, contains: "sql"},
 		{label: "ls | grep foo", args: ExecArgs{Command: "ls | grep foo"}, contains: ""},

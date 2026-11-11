@@ -53,9 +53,9 @@ exit: 3
 ### cmdlet_mismatch_hint
 comando: Get-ChildItem C:\
 exit: 1
---- saída (281 bytes)
+--- saída (292 bytes)
 [exit 1] Get-ChildItem : o termo 'Get-ChildItem' não é reconhecido como nome de cmdlet
-[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use 'file_ops'.
+[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use read_file / edit_file.
 --- erro: command failed with exit code 1
 
 ### cmdlet_mismatch_remote_no_hint

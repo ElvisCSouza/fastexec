@@ -220,6 +220,70 @@ func init() {
 			},
 		},
 	})
+
+	RegisterModule(&ModuleDef{
+		Name:        "files",
+		Description: "File system operations without a shell: copy, move, delete, mkdir, list",
+		Tools: map[string]DynamicToolDef{
+			"file_ops": {
+				Name:        "file_ops",
+				Description: "File system operations without a shell: copy, move, delete, mkdir, list.",
+				Schema: map[string]any{
+					"name":        "file_ops",
+					"description": "File system operations without a shell: copy, move, delete, mkdir, list.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"host":   map[string]any{"type": "string", "description": "'local' (default) or a configured host"},
+							"action": map[string]any{"type": "string", "description": "'copy', 'move', 'delete', 'mkdir' or 'list'"},
+							"path":   map[string]any{"type": "string", "description": "Source file or directory"},
+							"target": map[string]any{"type": "string", "description": "Destination (required for copy and move)"},
+						},
+						"required": []string{"action", "path"},
+					},
+				},
+				Handler: func(rawArgs json.RawMessage) (string, error) {
+					var args FileOpsArgs
+					if err := json.Unmarshal(rawArgs, &args); err != nil {
+						return "", fmt.Errorf("invalid parameters for file_ops: %w", err)
+					}
+					return HandleFileOps(args)
+				},
+			},
+		},
+	})
+	RegisterModule(&ModuleDef{
+		Name:        "handoff",
+		Description: "Session handoff and long-term memory built from real telemetry (no LLM)",
+		Tools: map[string]DynamicToolDef{
+			"handoff": {
+				Name:        "handoff",
+				Description: "Session handoff and long-term memory (no LLM): 'latest' returns the last project briefing for a cold start; 'save' records the session; 'search' finds past decisions; 'list' lists handoffs.",
+				Schema: map[string]any{
+					"name":        "handoff",
+					"description": "Session handoff and long-term memory (no LLM): 'latest' returns the last project briefing for a cold start; 'save' records the session; 'search' finds past decisions; 'list' lists handoffs.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"action":  map[string]any{"type": "string", "description": "'latest' (default), 'save', 'search' or 'list'"},
+							"topic":   map[string]any{"type": "string", "description": "Session topic for 'save', e.g. 'auth-refactor'"},
+							"notes":   map[string]any{"type": "string", "description": "Session summary for 'save'"},
+							"pending": map[string]any{"type": "string", "description": "Pending items or next steps for 'save'"},
+							"query":   map[string]any{"type": "string", "description": "Search term for 'search'"},
+							"limit":   map[string]any{"type": "integer", "description": "Max results for search/list (default 5)"},
+						},
+					},
+				},
+				Handler: func(rawArgs json.RawMessage) (string, error) {
+					var args HandoffArgs
+					if err := json.Unmarshal(rawArgs, &args); err != nil {
+						return "", fmt.Errorf("invalid parameters for handoff: %w", err)
+					}
+					return HandleHandoff(args)
+				},
+			},
+		},
+	})
 }
 
 // RegisterModule registra um módulo de ferramentas especializadas no catálogo dinâmico.
