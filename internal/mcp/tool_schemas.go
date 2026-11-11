@@ -6,7 +6,7 @@ package mcp
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Run a command on a host and return its output as soon as the process exits (default limit 45 s). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, file_ops to manage them, code_outline/code_graph to locate code, and the 'job' tool for anything over ~30 s. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
+		Description: "Run a command on a host and return its output as soon as the process exits (default limit 45 s). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, file_ops to manage them, code_outline/code_graph to locate code (not recursive grep/Select-String over a repo), and the 'job' tool for anything over ~30 s. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -42,7 +42,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "code_outline",
-		Description: "List a source file's declarations (funcs, types, classes, methods, routes) as 'L<line>: <signature>', or find where a symbol is declared across a directory (skips .git, node_modules, dist, vendor...). Use before read_file or grep to locate code. Go, C/C++, TS/JS, Python, shell, PowerShell.",
+		Description: "List a source file's declarations (funcs, types, classes, methods, routes) as 'L<line>: <signature>', or find where a symbol is declared across a whole repo: path=repo root, symbol='fee' matches every declaration whose name contains it, in one call (skips .git, node_modules, dist, vendor...). Use it instead of recursive grep/Select-String to locate code, then read_file the lines. Go, C/C++, TS/JS, Python, shell, PowerShell.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
