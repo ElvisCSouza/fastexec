@@ -333,6 +333,26 @@ func nonEmptyLines(s string) int {
 	return n
 }
 
+// Agregação de arquivo grande por script (Get-Content | group, cat | sort | uniq -c): o read_file com pattern já devolve
+// a contagem por mensagem distinta, numa chamada e sem ler o arquivo para o contexto.
+var (
+	reAggRead = regexp.MustCompile(`(?i)\bGet-Content\b|\bgc\s|\bcat\s|\btype\s|\bSelect-String\b|\bgrep\b`)
+	reAggDo   = regexp.MustCompile(`(?i)\bGroup-Object\b|\|\s*group\b|\bsort\b.*\buniq\b|\buniq\s+-c\b|\bMeasure-Object\b|\|\s*measure\b`)
+)
+
+const aggregateHint = "[FastExec FastHint] To count or summarize lines of a file, read_file(path, pattern='regex') returns counts per distinct message with first/last line, in one call."
+
+func isFileAggregate(label string) bool {
+	return reAggRead.MatchString(label) && reAggDo.MatchString(label)
+}
+
+// Python ausente (no Windows o alias da Microsoft Store responde 9009): o agente perde um turno tentando de novo.
+const pythonMissingHint = "[FastExec FastHint] Python is not installed on this host: use pwsh (argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input') or the file tools (read_file pattern/ranges, code_outline, edit_file)."
+
+func isPythonMissing(stdout string) bool {
+	return strings.Contains(stdout, "Python was not found") || strings.Contains(stdout, "python: command not found") || strings.Contains(stdout, "python3: command not found")
+}
+
 // Edição de arquivo por script (ler, substituir, gravar): o edit_file faz o mesmo numa chamada, sem script, mantendo
 // a quebra de linha do arquivo e atualizando o grafo de código.
 var (

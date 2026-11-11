@@ -182,6 +182,10 @@ func HandleExec(args ExecArgs) (string, error) {
 			out = strings.TrimRight(out, "\r\n") + "\n" + lineSliceHint
 		case isBroadSearch(label) && nonEmptyLines(res.Stdout) >= broadSearchMinLines:
 			out = strings.TrimRight(out, "\r\n") + "\n" + broadSearchHint
+		case isPythonMissing(res.Stdout + res.Stderr):
+			out = strings.TrimRight(out, "\r\n") + "\n" + pythonMissingHint
+		case isFileAggregate(label):
+			out = strings.TrimRight(out, "\r\n") + "\n" + aggregateHint
 		}
 	}
 	if res.ExitCode != 0 && !res.TimedOut {
