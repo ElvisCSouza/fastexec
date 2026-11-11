@@ -1,0 +1,183 @@
+package telemetry
+
+import (
+	"database/sql"
+	"fmt"
+	"strings"
+	"time"
+)
+
+// Relatório de economia para a janela de métricas. Tudo vem do banco local; nada sai da máquina.
+//
+// O que é medido: tamanhos (bytes) antes e depois de cada etapa do FastExec. O que é estimativa:
+// tokens = bytes ÷ 3,5 (o mesmo cálculo do `fastexec stats`), custo = tokens × preço de entrada e
+// tempo/idas ao modelo evitadas (cada retentativa evitada vale uma ida ao modelo).
+
+const (
+	BytesPerToken     = 3.5
+	DefaultUSDPerMTok = 3.0
+)
+
+type CatTotal struct {
+	Cat    string `json:"cat"`
+	Bytes  int64  `json:"bytes"`
+	Tokens int64  `json:"tokens"`
+	Events int64  `json:"events"`
+	Exact  bool   `json:"exact"` // false: parte do valor é estimativa (proxy documentado)
+}
+
+type SavingEvent struct {
+	ID         int64    `json:"id"`
+	Time       string   `json:"time"`
+	Tool       string   `json:"tool"`
+	Target     string   `json:"target"`
+	SentBytes  int64    `json:"sent_bytes"`
+	SavedBytes int64    `json:"saved_bytes"`
+	Cats       []string `json:"cats"`
+	Trips      int64    `json:"trips"`
+}
+
+type SavingsReport struct {
+	Period          string        `json:"period"`
+	Calls           int64         `json:"calls"`
+	FailedCalls     int64         `json:"failed_calls"`
+	ActiveMs        int64         `json:"active_ms"`
+	SentTokens      int64         `json:"sent_tokens"`
+	SavedTokens     int64         `json:"saved_tokens"`
+	WithoutTokens   int64         `json:"without_tokens"`
+	Percent         float64       `json:"percent"`
+	CostSavedUSD    float64       `json:"cost_saved_usd"`
+	CostWithoutUSD  float64       `json:"cost_without_usd"`
+	CostWithUSD     float64       `json:"cost_with_usd"`
+	TripsAvoided    int64         `json:"trips_avoided"`
+	SavedMs         int64         `json:"saved_ms"`
+	FailuresAvoided int64         `json:"failures_avoided"`
+	Cats            []CatTotal    `json:"cats"`
+	Series          []int64       `json:"series"` // tokens economizados por intervalo (mais antigo primeiro)
+	SeriesStart     string        `json:"series_start"`
+	SeriesEnd       string        `json:"series_end"`
+	Recent          []SavingEvent `json:"recent"`
+	LastID          int64         `json:"last_id"`
+	Generated       string        `json:"generated"`
+}
+
+func periodClauses(period string) (auditWhere, savingWhere, bucket string, n int, start, end string) {
+	switch period {
+	case "week":
+		w := "timestamp >= datetime('now','-7 days')"
+		return w, w, "CAST(julianday(date('now','localtime')) - julianday(date(timestamp,'localtime')) AS INTEGER)", 7, "6 days ago", "today"
+	case "all":
+		return "1=1", "1=1", "MIN(11, CAST((julianday(date('now','localtime')) - julianday(date(timestamp,'localtime'))) / 7 AS INTEGER))", 12, "12 weeks ago", "this week"
+	default:
+		w := "date(timestamp,'localtime') = date('now','localtime')"
+		return w, w, "23 - CAST(strftime('%H', timestamp,'localtime') AS INTEGER)", 24, "00:00", "now"
+	}
+}
+
+func tokens(bytes int64) int64 { return int64(float64(bytes) / BytesPerToken) }
+
+// BuildSavingsReport lê o banco e monta o relatório do período ("today", "week" ou "all").
+func BuildSavingsReport(period string) (SavingsReport, error) {
+	db, err := GetDB()
+	if err != nil {
+		return SavingsReport{}, err
+	}
+	return buildSavingsReport(db, period)
+}
+
+func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
+	if period != "week" && period != "all" {
+		period = "today"
+	}
+	aw, sw, bucket, n, start, end := periodClauses(period)
+	r := SavingsReport{Period: period, SeriesStart: start, SeriesEnd: end, Generated: time.Now().Format("15:04:05"), Cats: []CatTotal{}, Recent: []SavingEvent{}}
+
+	var sentTok sql.NullInt64
+	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(duration_ms),0), SUM(est_tokens_out) FROM audit WHERE `+aw).Scan(&r.Calls, &r.FailedCalls, &r.ActiveMs, &sentTok); err != nil {
+		return r, err
+	}
+	r.SentTokens = sentTok.Int64
+
+	rows, err := db.Query(`SELECT cat, COALESCE(SUM(bytes),0), COUNT(*), COALESCE(MIN(exact),1), COALESCE(SUM(trips),0), COALESCE(SUM(ms),0)
+		FROM saving WHERE ` + sw + ` GROUP BY cat ORDER BY SUM(bytes) DESC`)
+	if err != nil {
+		return r, err
+	}
+	for rows.Next() {
+		var c CatTotal
+		var exact, trips, ms int64
+		if err := rows.Scan(&c.Cat, &c.Bytes, &c.Events, &exact, &trips, &ms); err != nil {
+			rows.Close()
+			return r, err
+		}
+		c.Exact = exact == 1
+		c.Tokens = tokens(c.Bytes)
+		r.SavedTokens += c.Tokens
+		r.TripsAvoided += trips
+		r.SavedMs += ms
+		if c.Cat == CatRetry || c.Cat == CatTimeout {
+			r.FailuresAvoided += c.Events
+		}
+		r.Cats = append(r.Cats, c)
+	}
+	rows.Close()
+
+	r.WithoutTokens = r.SentTokens + r.SavedTokens
+	if r.WithoutTokens > 0 {
+		r.Percent = float64(r.SavedTokens) / float64(r.WithoutTokens) * 100
+	}
+	usd := func(t int64) float64 { return float64(t) * DefaultUSDPerMTok / 1e6 }
+	r.CostSavedUSD, r.CostWithoutUSD, r.CostWithUSD = usd(r.SavedTokens), usd(r.WithoutTokens), usd(r.SentTokens)
+
+	// série: tokens economizados por intervalo
+	r.Series = make([]int64, n)
+	srows, err := db.Query(`SELECT ` + bucket + ` AS b, COALESCE(SUM(bytes),0) FROM saving WHERE ` + sw + ` GROUP BY b`)
+	if err == nil {
+		for srows.Next() {
+			var b, by int64
+			if srows.Scan(&b, &by) == nil && b >= 0 && int(b) < n {
+				r.Series[n-1-int(b)] += tokens(by)
+			}
+		}
+		srows.Close()
+	}
+
+	// atividade recente: uma linha por chamada
+	erows, err := db.Query(`SELECT MAX(s.id), strftime('%H:%M:%S', MIN(s.timestamp),'localtime'), COALESCE(a.tool,'tools/list'),
+		COALESCE(a.command_summary,''), COALESCE(a.bytes_out,0), SUM(s.bytes), group_concat(s.cat), SUM(s.trips)
+		FROM saving s LEFT JOIN audit a ON a.id = s.audit_id
+		GROUP BY CASE WHEN s.audit_id = 0 THEN -s.id ELSE s.audit_id END
+		ORDER BY MAX(s.id) DESC LIMIT 40`)
+	if err == nil {
+		for erows.Next() {
+			var e SavingEvent
+			var cats string
+			if erows.Scan(&e.ID, &e.Time, &e.Tool, &e.Target, &e.SentBytes, &e.SavedBytes, &cats, &e.Trips) == nil {
+				e.Cats = strings.Split(cats, ",")
+				if len(e.Target) > 90 {
+					e.Target = e.Target[:90] + "…"
+				}
+				r.Recent = append(r.Recent, e)
+			}
+		}
+		erows.Close()
+	}
+	_ = db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM saving`).Scan(&r.LastID)
+	return r, nil
+}
+
+// LastSavingID devolve o maior id da tabela saving (a janela usa para saber se há novidade).
+func LastSavingID() int64 {
+	db, err := GetDB()
+	if err != nil {
+		return 0
+	}
+	var id int64
+	_ = db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM saving`).Scan(&id)
+	return id
+}
+
+func (r SavingsReport) String() string {
+	return fmt.Sprintf("%s: %d calls, %d tokens saved (%.0f%%), %d round trips avoided", r.Period, r.Calls, r.SavedTokens, r.Percent, r.TripsAvoided)
+}

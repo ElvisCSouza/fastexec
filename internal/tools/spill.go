@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"homelab/fastexec/internal/config"
+	"homelab/fastexec/internal/telemetry"
 )
 
 // Native output shaper for exec ("our RTK").
@@ -62,6 +63,12 @@ func cleanSpill(dir string) {
 // shapeOrCap shapes big exec output; anything it cannot save falls back to
 // the plain capOutput so no information is dropped silently.
 func shapeOrCap(s string) string {
+	out := shapeOrCapInner(s)
+	telemetry.NoteSaving(telemetry.CatCut, len(s), len(out))
+	return out
+}
+
+func shapeOrCapInner(s string) string {
 	if os.Getenv("FASTEXEC_NO_SHAPE") != "" || len(s) <= execSoftCap() {
 		return capOutput(s)
 	}

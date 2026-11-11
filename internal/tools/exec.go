@@ -10,8 +10,15 @@ import (
 	"time"
 
 	"homelab/fastexec/internal/config"
+	"homelab/fastexec/internal/telemetry"
 	"homelab/fastexec/internal/transport"
 )
+
+// avoidedRetry anota uma chamada que o FastExec respondeu ou corrigiu sozinho: o agente não precisou
+// errar, ler o erro e reenviar. Os bytes são um proxy: o comando reenviado e o texto devolvido.
+func avoidedRetry(label, out string) {
+	telemetry.NoteAvoided(telemetry.CatRetry, 2*len(label)+len(out), 0)
+}
 
 // MaxClientTimeoutMs é o teto do timeout_ms do exec: o Claude Desktop corta a chamada do dispositivo aos
 // 60 s; com 50 s o FastExec responde (com a saída parcial) 10 s antes de o transporte ser cortado.
@@ -63,6 +70,7 @@ func HandleExec(args ExecArgs) (string, error) {
 
 	// Auto-remediação de sleep puro <= 15s com aviso pedagógico
 	if out, handled, err := tryRemediateSleep(cmdToCheck, args); handled {
+		avoidedRetry(label, out)
 		return out, err
 	}
 
@@ -80,6 +88,7 @@ func HandleExec(args ExecArgs) (string, error) {
 	var cdHint string
 	if hasCmd {
 		if out, handled, hint := tryRemediateCd(&args); handled {
+			avoidedRetry(label, out)
 			return out, nil
 		} else {
 			cdHint = hint
@@ -94,6 +103,7 @@ func HandleExec(args ExecArgs) (string, error) {
 			if cdHint != "" {
 				out = cdHint + "\n---\n" + out
 			}
+			avoidedRetry(label, out)
 			return out, nil
 		} else {
 			graphNote = note
@@ -105,6 +115,7 @@ func HandleExec(args ExecArgs) (string, error) {
 		if cdHint != "" && out != "" {
 			out = cdHint + "\n---\n" + out
 		}
+		avoidedRetry(label, out)
 		return out, err
 	}
 
@@ -113,6 +124,7 @@ func HandleExec(args ExecArgs) (string, error) {
 		if cdHint != "" {
 			out = cdHint + "\n---\n" + out
 		}
+		avoidedRetry(label, out)
 		return out, nil
 	}
 
@@ -121,6 +133,7 @@ func HandleExec(args ExecArgs) (string, error) {
 		if cdHint != "" && out != "" {
 			out = cdHint + "\n---\n" + out
 		}
+		avoidedRetry(label, out)
 		return out, err
 	}
 
@@ -251,6 +264,7 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 	needle := searchNeedle(command) // termo buscado: linha gigante cortada mostra a ocorrência
 	stdout := cleanOutputFor(res.Stdout, needle)
 	stderr := cleanOutputFor(res.Stderr, needle)
+	telemetry.NoteSaving(telemetry.CatClean, len(res.Stdout)+len(res.Stderr), len(stdout)+len(stderr))
 
 	if res.TimedOut {
 		return formatTimeout(res.Duration, stdout, stderr)
@@ -333,6 +347,7 @@ func stderrErrors(stderr string) string {
 // formatTimeout devolve ao agente um desfecho inequívoco: estourou o prazo, a árvore foi encerrada e o que foi emitido
 // até o corte. Assim ele nunca precisa adivinhar se o comando rodou.
 func formatTimeout(elapsedMs int64, stdout, stderr string) (string, error) {
+	telemetry.NoteAvoided(telemetry.CatTimeout, len(stdout)+len(stderr), 0)
 	head := fmt.Sprintf("[timeout after %.1fs; process tree killed]", float64(elapsedMs)/1000)
 	partial := stdout
 	if stderr != "" {

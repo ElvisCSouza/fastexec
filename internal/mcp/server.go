@@ -173,6 +173,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 
 	defer func() {
 		if r := recover(); r != nil {
+			telemetry.EndCall()
 			logger.Error("PANIC caught in tool %s: %v\nStack: %s", name, r, string(debug.Stack()))
 			result = ToolCallResult{
 				Content: []ToolContent{{Type: "text", Text: fmt.Sprintf("[FATAL ERROR INTERCEPTED] Panic in tool %s: %v", name, r)}},
@@ -195,12 +196,14 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	var outText string
 	var err error
 
+	telemetry.BeginCall()
 	if h, ok := toolHandlers[name]; ok {
 		outText, err = h(rawArgs)
 	} else {
 		if dynamicHandler := tools.GetDynamicHandler(name); dynamicHandler != nil {
 			outText, err = dynamicHandler(rawArgs)
 		} else {
+			telemetry.EndCall()
 			errMsg := fmt.Sprintf("Tool '%s' not found", name)
 			telemetry.Record(telemetry.AuditEntry{
 				Tool:           name,
@@ -220,6 +223,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		}
 	}
 
+	savings := telemetry.EndCall()
 	durationMs := time.Since(start).Milliseconds()
 	bytesOut := len(outText)
 	success := (err == nil)
@@ -261,6 +265,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		Marks:          telemetry.Marks(outText, len(notes) > 0),
 		Truncated:      name == "exec" && tools.IsTruncated(outText),
 		NoResult:       name == "exec" && tools.IsNoResult(outText),
+		Savings:        savings,
 	})
 
 	return ToolCallResult{
@@ -333,6 +338,9 @@ func (s *Server) serve(r io.Reader) error {
 			})
 
 		case "tools/list":
+			if n := tools.InactiveSchemaBytes(); n > 0 && config.Get().TelemetryOn() {
+				go telemetry.RecordSaving(telemetry.Saving{Cat: telemetry.CatSchema, Bytes: n, Exact: true})
+			}
 			s.writeResponse(JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,

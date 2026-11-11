@@ -265,6 +265,14 @@ func isWindowsPath(p string) bool {
 // file. Internal callers (edit_file, code_outline) use handleReadFileInner and
 // are never affected.
 func HandleReadFile(args ReadFileArgs) (string, error) {
+	out, err := handleReadFile(args)
+	if err == nil {
+		noteReadSaving(args.Host, args.Path, out)
+	}
+	return out, err
+}
+
+func handleReadFile(args ReadFileArgs) (string, error) {
 	out, err := handleReadFileInner(args)
 	if err != nil {
 		return out, err
@@ -657,6 +665,14 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 }
 
 func HandleEditFile(args EditFileArgs) (string, error) {
+	out, err := handleEditFile(args)
+	if err == nil {
+		noteEditSaving(args)
+	}
+	return out, err
+}
+
+func handleEditFile(args EditFileArgs) (string, error) {
 	if args.Path == "" {
 		return "", fmt.Errorf("parameter 'path' is required")
 	}

@@ -41,6 +41,7 @@ type AuditEntry struct {
 	DocFrom        string   // .md lido antes, pela mesma identidade, cujo texto cita Doc
 	DocHow         string   // link | dir | name | none | first
 	DocLinks       []string // .md citados no texto que o agente viu (vai para doc_links)
+	Savings        []Saving // economias desta chamada (tabela saving)
 }
 
 var (
@@ -166,6 +167,19 @@ func setupAuditSchema(db *sql.DB) {
 			noteFailure("schema migration", err)
 		}
 	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS saving (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+		audit_id INTEGER NOT NULL DEFAULT 0,
+		cat TEXT NOT NULL,
+		bytes INTEGER NOT NULL DEFAULT 0,
+		trips INTEGER NOT NULL DEFAULT 0,
+		ms INTEGER NOT NULL DEFAULT 0,
+		exact INTEGER NOT NULL DEFAULT 0);
+		CREATE INDEX IF NOT EXISTS idx_saving_ts ON saving(timestamp);
+		CREATE INDEX IF NOT EXISTS idx_saving_cat ON saving(cat);`); err != nil {
+		noteFailure("schema saving", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS doc_links (
 		host TEXT NOT NULL, src TEXT NOT NULL, dst TEXT NOT NULL,
 		first_seen DATETIME DEFAULT CURRENT_TIMESTAMP, last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -212,7 +226,7 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		args_hash, out_hash, marks, doc, doc_from, doc_how
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
-	_, err := db.Exec(
+	res, err := db.Exec(
 		query,
 		e.SessionID, e.Tool, e.Host, e.DurationMs,
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
@@ -220,6 +234,12 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation, e.Graph, e.GraphSavedKB,
 		e.ArgsHash, e.OutHash, e.Marks, e.Doc, e.DocFrom, e.DocHow,
 	)
+	if err == nil && len(e.Savings) > 0 {
+		id, _ := res.LastInsertId()
+		if serr := writeSavings(db, id, e.Savings); serr != nil {
+			return serr
+		}
+	}
 	if err == nil && e.Doc != "" {
 		for _, dst := range e.DocLinks {
 			if _, lerr := db.Exec(`INSERT INTO doc_links (host, src, dst) VALUES (?, ?, ?)
@@ -229,6 +249,16 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		}
 	}
 	return err
+}
+
+func writeSavings(db *sql.DB, auditID int64, items []Saving) error {
+	for _, s := range items {
+		if _, err := db.Exec(`INSERT INTO saving (audit_id, cat, bytes, trips, ms, exact) VALUES (?, ?, ?, ?, ?, ?);`,
+			auditID, s.Cat, s.Bytes, s.Trips, s.Ms, boolInt(s.Exact)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func boolInt(b bool) int {

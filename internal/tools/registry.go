@@ -313,6 +313,27 @@ func GetDynamicHandler(name string) func(rawArgs json.RawMessage) (string, error
 	return nil
 }
 
+// InactiveSchemaBytes é o tamanho dos esquemas dos módulos que NÃO estão ativos: o que o agente teria de
+// carregar em toda listagem se todas as ferramentas fossem sempre expostas.
+func InactiveSchemaBytes() int {
+	globalRegistry.mu.RLock()
+	defer globalRegistry.mu.RUnlock()
+	total := 0
+	for modName, mod := range globalRegistry.modules {
+		if globalRegistry.activeModules[modName] {
+			continue
+		}
+		for _, t := range mod.Tools {
+			if t.Schema != nil {
+				if b, err := json.Marshal(t.Schema); err == nil {
+					total += len(b)
+				}
+			}
+		}
+	}
+	return total
+}
+
 // GetActiveDynamicSchemas retorna os schemas das ferramentas dos módulos atualmente ativos.
 func GetActiveDynamicSchemas() []any {
 	globalRegistry.mu.RLock()

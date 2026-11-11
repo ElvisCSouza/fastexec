@@ -37,6 +37,8 @@ var commands = map[string]func(subArgs []string){
 	"token":         cmdToken,
 	"doctor":        cmdDoctor,
 	"setup":         cmdSetup,
+	"monitor":       cmdMonitor,
+	"tray":          cmdTray,
 }
 
 // cmdDaemonRun atende: daemon-run.

@@ -2,7 +2,7 @@ $ fastexec help
 exit: 1
 --- stdout
 Unknown command: 'help'
-Commands: setup, doctor, mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, daemon, token, version, hello
+Commands: setup, doctor, mcp, exec, get, put, sql, job, ping, stats, monitor, tray, handoff, graph, config, daemon, token, version, hello
 --- stderr
 
 
@@ -10,7 +10,7 @@ $ fastexec frobnicate
 exit: 1
 --- stdout
 Unknown command: 'frobnicate'
-Commands: setup, doctor, mcp, exec, get, put, sql, job, ping, stats, handoff, graph, config, daemon, token, version, hello
+Commands: setup, doctor, mcp, exec, get, put, sql, job, ping, stats, monitor, tray, handoff, graph, config, daemon, token, version, hello
 --- stderr
 
 

@@ -18,7 +18,7 @@ import (
 )
 
 // builtinOrder é a ordem dos comandos na mensagem de uso (aliases e internos como daemon-run ficam de fora).
-var builtinOrder = []string{"setup", "doctor", "mcp", "exec", "get", "put", "sql", "job", "ping", "stats", "handoff", "graph", "config", "daemon", "token", "version"}
+var builtinOrder = []string{"setup", "doctor", "mcp", "exec", "get", "put", "sql", "job", "ping", "stats", "monitor", "tray", "handoff", "graph", "config", "daemon", "token", "version"}
 
 // Version é gravada no build (-ldflags "-X homelab/fastexec/cli.Version=..."); 'dev' em build local sem ela.
 var Version = "dev"

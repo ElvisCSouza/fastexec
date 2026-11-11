@@ -229,9 +229,11 @@ func appBrowser() string {
 	return ""
 }
 
-func openBrowser(url string) {
+func openBrowser(url string) { openBrowserSize(url, 1000, 900) }
+
+func openBrowserSize(url string, w, h int) {
 	if b := appBrowser(); b != "" {
-		if err := exec.Command(b, "--app="+url, "--window-size=1000,900").Start(); err == nil {
+		if err := exec.Command(b, "--app="+url, fmt.Sprintf("--window-size=%d,%d", w, h)).Start(); err == nil {
 			return
 		}
 	}
