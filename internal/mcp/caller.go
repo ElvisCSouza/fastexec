@@ -116,3 +116,9 @@ func callerOf(args json.RawMessage) (caller, conversation string) {
 	_ = json.Unmarshal(args, &c)
 	return c.Caller, c.Conversation
 }
+
+func (s *Server) clientNameSafe() string {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	return s.clientName
+}

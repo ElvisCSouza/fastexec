@@ -323,7 +323,7 @@ func (s *Server) serve(r io.Reader) error {
 			s.writeResponse(JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result:  map[string]any{"tools": toolsList()},
+				Result:  map[string]any{"tools": toolsList(s.clientNameSafe())},
 			})
 
 		case "tools/call":

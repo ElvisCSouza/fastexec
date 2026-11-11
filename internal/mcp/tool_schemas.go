@@ -6,7 +6,7 @@ package mcp
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Run a command on a host and return its output as soon as the process exits (default limit 45 s). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, file_ops to manage them, code_outline/code_graph to locate code (not recursive grep/Select-String over a repo), and the 'job' tool for anything over ~30 s. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
+		Description: "Run a command on a host and return its output as soon as the process exits ({exec_default}). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['node','-'], ['python','-'] or ['pwsh','-NoProfile','-Command','-'] with the script in 'input'. Prefer read_file to read files, file_ops to manage them, code_outline/code_graph to locate code (not recursive grep/Select-String over a repo), and the 'job' tool for anything over {job_over}. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -15,7 +15,7 @@ var serverTools = []ToolSchema{
 				"argv":       {Type: "array", Description: "No-shell alternative: [program, arg1, ...]; no metacharacter is interpreted. Give argv OR command", Items: &PropertyDef{Type: "string"}},
 				"cwd":        {Type: "string", Description: "Working directory (relative paths resolve from the host default, e.g. 'app/config')"},
 				"input":      {Type: "string", Description: "Content sent to the process stdin"},
-				"timeout_ms": {Type: "integer", Description: "Limit in ms (default 45000, max 50000 to stay under the client's 60 s cut); longer work goes to 'job'"},
+				"timeout_ms": {Type: "integer", Description: "{exec_timeout_arg}"},
 			},
 		},
 	},
@@ -116,7 +116,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "job",
-		Description: "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait. For a command that ends (build, test, script) start with await=true: it returns the output if the job finishes within 40 s.",
+		Description: "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over {job_over}): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait. For a command that ends (build, test, script) start with await=true: it returns the output if the job finishes within {await_s}.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -127,7 +127,7 @@ var serverTools = []ToolSchema{
 				"cwd":     {Type: "string", Description: "Working directory for 'start'"},
 				"job_id":  {Type: "string", Description: "Job id for wait/status/tail/stop"},
 				"lines":   {Type: "integer", Description: "Lines for 'tail' (default 30)"},
-				"await":   {Type: "boolean", Description: "'start' only: wait up to 40 s for the job to finish and return its output"},
+				"await":   {Type: "boolean", Description: "'start' only: wait up to {await_s} for the job to finish and return its output"},
 			},
 			Required: []string{"action"},
 		},

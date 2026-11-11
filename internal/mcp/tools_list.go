@@ -22,7 +22,7 @@ func jsonInner(s string) string {
 }
 
 // toolsList monta o array 'tools' do tools/list: nativas + módulos ativos, com {hosts} preenchido.
-func toolsList() json.RawMessage {
+func toolsList(clientName string) json.RawMessage {
 	all := make([]any, 0, len(serverTools))
 	for _, st := range serverTools {
 		all = append(all, st)
@@ -30,9 +30,14 @@ func toolsList() json.RawMessage {
 	all = append(all, tools.GetActiveDynamicSchemas()...)
 	raw, _ := json.Marshal(all)
 	cfg := config.Get()
+	tt := tools.TimeoutTextsFor(clientName) // prazos por cliente: Desktop corta aos 60 s, Claude Code espera
 	r := strings.NewReplacer(
 		hostsCdPlaceholder, jsonInner(cfg.HostChoices(true)),
 		hostsPlaceholder, jsonInner(cfg.HostChoices(false)),
+		"{exec_default}", tt.ExecDefault,
+		"{exec_timeout_arg}", jsonInner(tt.ExecTimeoutArg),
+		"{job_over}", tt.JobOver,
+		"{await_s}", tt.AwaitSeconds,
 	)
 	return json.RawMessage(r.Replace(string(raw)))
 }

@@ -124,13 +124,13 @@ func HandleExec(args ExecArgs) (string, error) {
 		return out, err
 	}
 
-	timeout := transport.DefaultTimeout
+	timeout, ceiling := execTimeouts(args.Caller, transport.DefaultTimeout)
 	if args.TimeoutMs > 0 {
 		timeout = time.Duration(args.TimeoutMs) * time.Millisecond
 	}
 	clampedFrom := time.Duration(0)
-	if timeout > maxClientTimeout {
-		clampedFrom, timeout = timeout, maxClientTimeout
+	if timeout > ceiling {
+		clampedFrom, timeout = timeout, ceiling
 	}
 
 	// Guard de sistema: varredura recursiva de raiz ampla (C:\, C:\Users, /, /home) não executa.
@@ -197,7 +197,7 @@ func HandleExec(args ExecArgs) (string, error) {
 		out += fmt.Sprintf("\nThe requested timeout_ms (%d) was capped at %d ms, the ceiling before the MCP client cuts the call.", clampedFrom.Milliseconds(), timeout.Milliseconds())
 	}
 	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
-		if res.Duration > execDurationWarningMs {
+		if res.Duration > execDurationWarningMs && !longTimeoutClient(args.Caller) {
 			warning := fmt.Sprintf("[FastExec Warning] This command took %.1fs synchronously. Commands over ~30 s risk the MCP client's hard 60 s timeout; use the 'job' tool (action 'start') instead.", float64(res.Duration)/1000)
 			if out != "" {
 				out = strings.TrimRight(out, "\r\n") + "\n\n" + warning

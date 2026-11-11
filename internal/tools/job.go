@@ -19,7 +19,8 @@ type JobArgs struct {
 	Cwd     string   `json:"cwd,omitempty"`
 	JobID   string   `json:"job_id,omitempty"`
 	Lines   int      `json:"lines,omitempty"`
-	Await   bool     `json:"await,omitempty"` // start: espera até startAwaitMax o fim do job e devolve a saída (comando finito)
+	Caller  string   `json:"_caller,omitempty"` // canal MCP (injetado pelo proxy)
+	Await   bool     `json:"await,omitempty"`   // start: espera até startAwaitMax o fim do job e devolve a saída (comando finito)
 }
 
 // startAwaitMax: quanto o 'start' com await espera o job terminar (abaixo do teto de 45 s do wait).
