@@ -1,5 +1,5 @@
 {
-  "wire_bytes": 10924,
+  "wire_bytes": 11165,
   "result": {
     "tools": [
       {
@@ -260,7 +260,7 @@
       },
       {
         "name": "job",
-        "description": "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait.",
+        "description": "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait. For a command that ends (build, test, script) start with await=true: it returns the output if the job finishes within 40 s.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -275,6 +275,10 @@
                 "type": "string",
                 "description": ""
               }
+            },
+            "await": {
+              "type": "boolean",
+              "description": "'start' only: wait up to 40 s for the job to finish and return its output"
             },
             "command": {
               "type": "string",

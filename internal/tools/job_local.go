@@ -47,6 +47,18 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if args.Await {
+			// Comando finito (build, teste, script): o mesmo turno devolve a saída se terminar no prazo, poupando start+wait.
+			j, finished, werr := transport.LocalJobWait(m.ID, startAwaitMax)
+			if werr == nil {
+				tail, _ := transport.TailLocalJob(m.ID, 30)
+				tail = capOutput(cleanOutput(tail))
+				if finished {
+					return waitReport(j.Meta.ID, "local|"+j.Meta.ID, tail, true, fmt.Sprint(j.State)), nil
+				}
+				return fmt.Sprintf("[job %s still running after %s; job(host='local', action='wait', job_id='%s') continues]\n%s", m.ID, human(startAwaitMax), m.ID, tail), nil
+			}
+		}
 		note := ""
 		if m.State != "RUNNING" {
 			note = "\n(the process already exited; see the output with tail)"

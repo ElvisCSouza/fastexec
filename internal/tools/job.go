@@ -19,7 +19,11 @@ type JobArgs struct {
 	Cwd     string   `json:"cwd,omitempty"`
 	JobID   string   `json:"job_id,omitempty"`
 	Lines   int      `json:"lines,omitempty"`
+	Await   bool     `json:"await,omitempty"` // start: espera até startAwaitMax o fim do job e devolve a saída (comando finito)
 }
+
+// startAwaitMax: quanto o 'start' com await espera o job terminar (abaixo do teto de 45 s do wait).
+var startAwaitMax = 40 * time.Second
 
 // jobWaitMax mantém o `wait` (local e Linux) abaixo do teto de 60 s do Claude Desktop: passou disso, responde que o job
 // segue ativo em vez de deixar o transporte JSON-RPC cair. Variável só para os testes encurtarem.

@@ -116,7 +116,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "job",
-		Description: "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait.",
+		Description: "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait. For a command that ends (build, test, script) start with await=true: it returns the output if the job finishes within 40 s.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -127,6 +127,7 @@ var serverTools = []ToolSchema{
 				"cwd":     {Type: "string", Description: "Working directory for 'start'"},
 				"job_id":  {Type: "string", Description: "Job id for wait/status/tail/stop"},
 				"lines":   {Type: "integer", Description: "Lines for 'tail' (default 30)"},
+				"await":   {Type: "boolean", Description: "'start' only: wait up to 40 s for the job to finish and return its output"},
 			},
 			Required: []string{"action"},
 		},
