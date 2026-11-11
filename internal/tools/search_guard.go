@@ -190,11 +190,26 @@ func isTextSearch(label string) bool {
 			found = true
 		case searchPrograms[prog], prog == "git" && len(tokens) > 1 && tokens[1] == "grep":
 			found = true
-		case found && limitPrograms[prog]:
+		case found && limitPrograms[prog] && limitsOutput(prog, tokens):
 			return false
 		}
 	}
 	return found
+}
+
+// limitsOutput: o trecho realmente limita a saída? Select-Object só limita com -First/-Last/-Index; sem isso
+// (-ExpandProperty Path, -Property ...) ele só projeta colunas e a busca continua ilimitada.
+func limitsOutput(prog string, tokens []string) bool {
+	if prog != "select-object" && prog != "select" {
+		return true
+	}
+	for _, t := range tokens[1:] {
+		lt := strings.ToLower(t)
+		if strings.HasPrefix(lt, "-first") || strings.HasPrefix(lt, "-last") || strings.HasPrefix(lt, "-index") {
+			return true
+		}
+	}
+	return false
 }
 
 // pwshInlineSearch: "pwsh [-NoProfile] -Command <script>" cujo script é busca (Select-String, findstr...).

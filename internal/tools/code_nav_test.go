@@ -267,6 +267,11 @@ func TestIsTextSearchAndTruncate(t *testing.T) {
 		"grep -rn foo . | wc -l":    false,
 		"ls -la":                    false,
 		"echo grep":                 false,
+		// PowerShell: Select-Object só limita com -First/-Last/-Index (regressão do T6-B: listagem de 10 KB sem corte)
+		`powershell -c "Get-ChildItem -Recurse -Filter *.cs . | Select-String -Pattern 'fee' -List | Select-Object -ExpandProperty Path"`: true,
+		`powershell -c "Get-ChildItem -Recurse . | Select-String -Pattern 'fee' | Select-Object -First 30"`:                               false,
+		`pwsh -c "Select-String -Path *.cs -Pattern fee | select -Last 5"`:                                                                false,
+		`pwsh -c "Select-String -Path *.cs -Pattern fee | Select-Object Path,Line"`:                                                       true,
 	}
 	for c, want := range cases {
 		if got := isTextSearch(c); got != want {
