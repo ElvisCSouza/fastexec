@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FastExec Installer</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#14181f;--mut:#5b6573;--line:#e2e6ec;--ok:#1a8f4c;--warn:#b7791f;--fail:#c0392b;--run:#2563eb;--acc:#14181f;--accfg:#fff;--logbg:#0f141b;--logfg:#cdd6e2}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#161b22;--fg:#e8edf4;--mut:#93a0b2;--line:#262d38;--ok:#3fb979;--warn:#e0a63a;--fail:#ef6b5b;--run:#6ea0ff;--acc:#e8edf4;--accfg:#0e1116;--logbg:#090c10}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,Segoe UI,sans-serif}
+main{max-width:920px;margin:0 auto;padding:24px 16px 48px}
+h1{font-size:22px;margin:0 0 2px}.sub{color:var(--mut);margin:0 0 20px}
+.banner{border-radius:12px;padding:16px 18px;margin-bottom:16px;border:1px solid var(--line);background:var(--card);display:flex;gap:14px;align-items:center}
+.banner .dot{width:14px;height:14px;border-radius:50%;background:var(--mut);flex:none}
+.banner.ready{border-color:var(--ok)}.banner.ready .dot{background:var(--ok)}
+.banner.fail{border-color:var(--fail)}.banner.fail .dot{background:var(--fail)}
+.banner.busy .dot{background:var(--run);animation:p 1s infinite}@keyframes p{50%{opacity:.3}}
+.banner b{display:block;font-size:17px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:16px}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 8px}
+.opt{display:flex;gap:10px;align-items:flex-start;padding:6px 0}.opt input[type=checkbox]{margin-top:5px}
+.opt small{display:block;color:var(--mut)}
+input[type=text]{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+button{font:inherit;padding:9px 16px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.primary{background:var(--acc);color:var(--accfg);border-color:var(--acc);font-weight:600}
+button:disabled{opacity:.45;cursor:default}
+ul.checks{list-style:none;margin:0;padding:0}
+.checks li{display:grid;grid-template-columns:22px 1fr;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line)}
+.checks li:first-child{border-top:0}
+.ic{width:18px;height:18px;border-radius:50%;margin-top:3px;border:2px solid var(--line);position:relative}
+.s-ok .ic{background:var(--ok);border-color:var(--ok)}.s-ok .ic:after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}
+.s-warn .ic{background:var(--warn);border-color:var(--warn)}.s-warn .ic:after{content:"!";position:absolute;inset:0;color:#fff;font:700 12px/14px system-ui;text-align:center}
+.s-fail .ic{background:var(--fail);border-color:var(--fail)}.s-fail .ic:after{content:"\00d7";position:absolute;inset:0;color:#fff;font:700 15px/14px system-ui;text-align:center}
+.s-running .ic{border-color:var(--run);border-top-color:transparent;animation:r .8s linear infinite}@keyframes r{to{transform:rotate(360deg)}}
+.s-skip .ic{border-style:dashed}
+.t{font-weight:600}.t em{font-style:normal;font-weight:400;color:var(--mut);font-size:12px;margin-left:6px}
+.d{grid-column:2;color:var(--mut);font-size:13px;word-break:break-all}
+.f{grid-column:2;font-size:13px;color:var(--warn)}.s-fail .f{color:var(--fail)}
+#log{background:var(--logbg);color:var(--logfg);border-radius:10px;padding:10px 12px;font:12.5px/1.5 ui-monospace,Consolas,monospace;max-height:260px;overflow:auto;white-space:pre-wrap}
+#log .warn{color:#e0a63a}#log .error{color:#ef6b5b}#log .tm{opacity:.5}
+.grp{font-weight:700;margin:14px 0 2px;font-size:14px}
+</style>
+</head>
+<body>
+<main>
+<h1>FastExec Installer</h1>
+<p class="sub" id="ver">&nbsp;</p>
+
+<div id="banner" class="banner"><span class="dot"></span><div><b id="bt">Starting...</b><span id="bd"></span></div></div>
+
+<div class="card" id="opts">
+<h2>Options</h2>
+<label class="opt"><input type="checkbox" id="excl" checked><span><b>FastExec-only mode</b> (recommended)<small>Denies Claude Code's built-in Bash, Read, Edit, Write, Glob and Grep so every command and file operation goes through FastExec. Fewer tokens, fewer quoting and encoding errors. You can undo it at any time.</small></span></label>
+<div class="opt" style="display:block"><b>Install folder</b> <small style="display:inline">(optional: copy the program there so the clients keep a permanent path; empty = run from where it is)</small>
+<input type="text" id="dir" placeholder="e.g. C:\Users\you\AppData\Local\Programs\FastExec"></div>
+<div id="clients"></div>
+<div class="row">
+<button class="primary" id="go">Install</button>
+<button id="again">Run checks again</button>
+<button id="undo">Undo</button>
+<button id="quit">Close</button>
+</div>
+</div>
+
+<div class="card"><h2>Checks</h2><div id="list"></div></div>
+<div class="card"><h2>Log</h2><div id="log"></div></div>
+</main>
+<script>
+const T="__TOKEN__";
+const $=id=>document.getElementById(id);
+let S=null, skip=new Set(), optsLoaded=false;
+const H={"X-Token":T,"Content-Type":"application/json"};
+const post=(p,b)=>fetch(p,{method:"POST",headers:H,body:b?JSON.stringify(b):undefined});
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function sendOpts(){post("/api/opts",{exclusive:$("excl").checked,installDir:$("dir").value.trim(),skip:[...skip]})}
+$("excl").onchange=sendOpts;$("dir").onchange=sendOpts;
+$("go").onclick=async()=>{await sendOpts();post("/api/run/install")};
+$("again").onclick=()=>post("/api/run/inspect");
+$("undo").onclick=()=>{if(confirm("Remove FastExec from your AI clients and allow the built-in tools again?"))post("/api/run/undo")};
+$("quit").onclick=async()=>{await post("/api/quit");document.body.innerHTML="<main><h1>You can close this tab.</h1></main>"};
+function render(s){
+  S=s;$("ver").textContent=s.version+"  -  "+s.exe;
+  if(!optsLoaded){$("excl").checked=s.opts.exclusive;$("dir").value=s.opts.installDir||"";optsLoaded=true}
+  $("clients").innerHTML=s.clients.map(c=>`<label class="opt"><input type="checkbox" data-p="${esc(c.path)}" ${skip.has(c.path)?"":"checked"}><span>${esc(c.name)}<small>${esc(c.path)}</small></span></label>`).join("");
+  $("clients").querySelectorAll("input").forEach(i=>i.onchange=()=>{i.checked?skip.delete(i.dataset.p):skip.add(i.dataset.p);sendOpts()});
+  const fails=s.items.filter(i=>i.status==="fail"&&i.required).length, req=s.items.filter(i=>i.required);
+  const b=$("banner");b.className="banner";
+  if(s.busy){b.classList.add("busy");$("bt").textContent={inspect:"Inspecting...",install:"Installing...",verify:"Verifying...",undo:"Undoing..."}[s.phase]||"Working...";$("bd").textContent=""}
+  else if(s.ready){b.classList.add("ready");$("bt").textContent="FastExec is ready";$("bd").textContent="Restart your AI clients (Claude Desktop, Claude Code, ...) so they load it."}
+  else if(fails){b.classList.add("fail");$("bt").textContent="Something needs attention";$("bd").textContent="Fix the red items below, then run the checks again."}
+  else{$("bt").textContent=s.phase==="undo"?"FastExec was removed from your clients":"Ready to install";$("bd").textContent=s.phase==="undo"?"":"Choose your options and press Install. Nothing is changed until then."}
+  ["go","again","undo","quit"].forEach(i=>$(i).disabled=s.busy&&i!=="quit");
+  const groups=[...new Set(s.items.map(i=>i.group))];
+  $("list").innerHTML=groups.map(g=>`<div class="grp">${esc(g)}</div><ul class="checks">`+s.items.filter(i=>i.group===g).map(i=>
+    `<li class="s-${i.status}"><span class="ic"></span><span class="t">${esc(i.title)}${i.required?"<em>required</em>":""}</span><span class="d">${esc(i.detail)}</span>${i.fix?`<span class="f">${esc(i.fix)}</span>`:""}</li>`).join("")+"</ul>").join("")||"<p class='sub'>Waiting for the first inspection...</p>";
+  const lg=$("log"),atEnd=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-8;
+  lg.innerHTML=s.log.map(l=>`<div class="${l.level}"><span class="tm">${l.time}</span> ${esc(l.text)}</div>`).join("");
+  if(atEnd)lg.scrollTop=lg.scrollHeight;
+}
+function connect(){
+  const es=new EventSource("/api/events?t="+T);
+  es.onmessage=e=>render(JSON.parse(e.data));
+  es.onerror=()=>{es.close();setTimeout(connect,1500)};
+}
+connect();
+fetch("/api/state",{headers:H}).then(r=>r.json()).then(render);
+</script>
+</body>
+</html>

@@ -25,6 +25,12 @@ const setupUsage = `Usage: fastexec setup [--dry-run] [--deny-bash]
   --deny-bash  also deny Claude Code's built-in Bash tool, so shell commands go through FastExec`
 
 func cmdSetup(args []string) {
+	for _, a := range args {
+		if a == "--ui" {
+			cmdSetupUI(args)
+			return
+		}
+	}
 	dry, denyBash := false, false
 	for _, a := range args {
 		switch a {
