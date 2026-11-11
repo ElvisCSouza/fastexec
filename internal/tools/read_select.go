@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // readWholeCap is the largest whole-file read returned in one call.
@@ -57,6 +58,11 @@ func splitLines(data string) []string {
 }
 
 func renderRanges(lines []string, rs []lineRange, numbered bool) string {
+	return renderRangesWith(lines, rs, numbered, nil)
+}
+
+// renderRangesWith is renderRanges with an optional per-line formatter (used by pattern mode to window giant lines).
+func renderRangesWith(lines []string, rs []lineRange, numbered bool, format func(string) string) string {
 	var sb strings.Builder
 	for i, r := range rs {
 		if i > 0 {
@@ -66,7 +72,11 @@ func renderRanges(lines []string, rs []lineRange, numbered bool) string {
 			if numbered {
 				fmt.Fprintf(&sb, "%d\t", n)
 			}
-			sb.WriteString(strings.TrimSuffix(lines[n-1], "\r"))
+			l := strings.TrimSuffix(lines[n-1], "\r")
+			if format != nil {
+				l = format(l)
+			}
+			sb.WriteString(l)
 			sb.WriteByte('\n')
 		}
 	}
@@ -118,7 +128,7 @@ func selectLines(data string, args ReadFileArgs) (string, bool, error) {
 		if hits == 0 {
 			return fmt.Sprintf("no line matches %q (%d lines in file)", args.Pattern, total), true, nil
 		}
-		out := renderRanges(lines, rs, true)
+		out := renderRangesWith(lines, rs, true, func(l string) string { return windowLongLine(l, re) })
 		if hits > maxPatternHits {
 			out += fmt.Sprintf("[FastExec] Stopped at %d matches; narrow the pattern or use ranges.\n", maxPatternHits)
 		}
@@ -151,6 +161,64 @@ func selectLines(data string, args ReadFileArgs) (string, bool, error) {
 }
 
 // capWholeFile is the whole-file cap without the repeat escape (kept for callers and tests).
+// Lines longer than longLineBytes (minified JSON/HTML, one-line logs) are not returned whole in pattern mode: a
+// matching line is shown as a window around its first match, any other line as its head. The note says how long the
+// line is and where the other matches are, so the reader can continue with offset/limit.
+const (
+	longLineBytes = 2000
+	winBefore     = 300
+	winAfter      = 700
+	maxOtherHits  = 8
+)
+
+func windowLongLine(l string, re *regexp.Regexp) string {
+	if len(l) <= longLineBytes {
+		return l
+	}
+	locs := re.FindAllStringIndex(l, maxOtherHits+1)
+	if len(locs) == 0 {
+		return runeSafe(l, 0, winBefore+winAfter) + fmt.Sprintf(" [FastExec: line is %d bytes, head shown; offset/limit reads the rest]", len(l))
+	}
+	from := max(locs[0][0]-winBefore, 0)
+	to := min(locs[0][1]+winAfter, len(l))
+	note := fmt.Sprintf(" [FastExec: line is %d bytes; bytes %d-%d shown around the match at byte %d", len(l), from, to, locs[0][0])
+	if len(locs) > 1 {
+		offs := make([]string, 0, len(locs)-1)
+		for _, m := range locs[1:] {
+			offs = append(offs, strconv.Itoa(m[0]))
+		}
+		more := ""
+		if len(locs) > maxOtherHits {
+			offs = offs[:maxOtherHits-1]
+			more = ", ..."
+		}
+		note += "; other matches at bytes " + strings.Join(offs, ", ") + more
+	}
+	note += "; offset/limit reads more]"
+	pre, post := "", ""
+	if from > 0 {
+		pre = "…"
+	}
+	if to < len(l) {
+		post = "…"
+	}
+	return pre + runeSafe(l, from, to) + post + note
+}
+
+// runeSafe returns l[from:to] moved inward to rune boundaries.
+func runeSafe(l string, from, to int) string {
+	for from < len(l) && !utf8.RuneStart(l[from]) {
+		from++
+	}
+	for to > from && to < len(l) && !utf8.RuneStart(l[to]) {
+		to--
+	}
+	if to > len(l) {
+		to = len(l)
+	}
+	return l[from:to]
+}
+
 func capWholeFile(data string, path string) string {
 	if len(data) <= readWholeCap || os.Getenv("FASTEXEC_NO_READ_CAP") != "" {
 		return data
