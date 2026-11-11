@@ -107,6 +107,7 @@ td:first-child,th:first-child{text-align:left;font-weight:600}
     </div>
     <div class="card" style="flex:1 1 360px;min-width:0" id="detail"></div>
   </div>
+  <div class="small" id="since"></div>
   <div class="small">Sizes are measured. Tokens are estimated as bytes ÷ 3.5, like <span class="mono">fastexec stats</span>. "Without" is what the plain tool would have returned. Items marked estimate use a stated proxy. Nothing leaves this computer.</div>
 </div>
 <script>
@@ -142,6 +143,7 @@ function render(){
  const max=Math.max(1,...r.series);
  $("bars").replaceChildren(...r.series.map(v=>el("div",{style:"height:"+Math.max(2,Math.round(v/max*64))+"px"})));
  $("callsTxt").textContent=fmt(r.calls)+" calls handled";
+ $("since").textContent=r.since?"Measuring since "+r.since+". Earlier calls did not record their original size, so they are not counted.":"";
 
  // counterfactual chart
  const W=560,H=170,p=4,n=r.series.length,sum=r.series.reduce((a,b)=>a+b,0)||1;

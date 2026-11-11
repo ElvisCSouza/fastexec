@@ -180,6 +180,11 @@ func setupAuditSchema(db *sql.DB) {
 		CREATE INDEX IF NOT EXISTS idx_saving_cat ON saving(cat);`); err != nil {
 		noteFailure("schema saving", err)
 	}
+	// Chamadas anteriores a este marco não guardaram o tamanho original: ficam fora do relatório de economia.
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		INSERT OR IGNORE INTO meta (key, value) VALUES ('savings_since', CURRENT_TIMESTAMP);`); err != nil {
+		noteFailure("schema meta", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS doc_links (
 		host TEXT NOT NULL, src TEXT NOT NULL, dst TEXT NOT NULL,
 		first_seen DATETIME DEFAULT CURRENT_TIMESTAMP, last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,

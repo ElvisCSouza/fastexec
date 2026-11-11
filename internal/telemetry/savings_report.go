@@ -58,6 +58,7 @@ type SavingsReport struct {
 	SeriesEnd       string        `json:"series_end"`
 	Recent          []SavingEvent `json:"recent"`
 	LastID          int64         `json:"last_id"`
+	Since           string        `json:"since"` // quando a medição começou (hora local); antes disso não há tamanho original
 	Generated       string        `json:"generated"`
 }
 
@@ -90,6 +91,11 @@ func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
 		period = "today"
 	}
 	aw, sw, bucket, n, start, end := periodClauses(period)
+	var since string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='savings_since'`).Scan(&since); err == nil && since != "" {
+		aw += " AND timestamp >= '" + since + "'"
+		sw += " AND timestamp >= '" + since + "'"
+	}
 	r := SavingsReport{Period: period, SeriesStart: start, SeriesEnd: end, Generated: time.Now().Format("15:04:05"), Cats: []CatTotal{}, Recent: []SavingEvent{}}
 
 	var sentTok sql.NullInt64
@@ -164,6 +170,7 @@ func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
 		erows.Close()
 	}
 	_ = db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM saving`).Scan(&r.LastID)
+	_ = db.QueryRow(`SELECT strftime('%Y-%m-%d %H:%M', value, 'localtime') FROM meta WHERE key='savings_since'`).Scan(&r.Since)
 	return r, nil
 }
 
