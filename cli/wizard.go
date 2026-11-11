@@ -526,7 +526,8 @@ func (w *wizard) Verify() {
 		}
 		if ccOK {
 			registered++
-			w.set("v-regcc", g, "Claude Code points to this build", wOK, cc, "", false)
+			_ = cc
+			w.set("v-regcc", g, "Claude Code points to this build", wOK, claudeCodeFile(), "", false)
 		} else {
 			w.set("v-regcc", g, "Claude Code points to this build", wFail, "FastExec is not registered here", "Run the Install step again.", false)
 		}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"homelab/fastexec/internal/config"
 )
 
 // Markdown read map. For every successful read of a .md file (read_file, or exec 'cat x.md' on a single file) the
@@ -155,10 +157,7 @@ func trackDoc(identity, tool, host string, rawArgs json.RawMessage, out string, 
 		return "", "", "", nil
 	}
 	if host == "" {
-		host = "local"
-		if tool == "exec" {
-			host = "noteserver"
-		}
+		host = config.Get().Default() // the host the tools themselves use when the call names none
 	}
 	doc = normDocPath(target)
 	if doc == "" {
