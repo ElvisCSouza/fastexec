@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -39,6 +40,18 @@ func ready(root string) (*sql.DB, Stats, error) {
 }
 
 // Callers lista onde o símbolo é chamado ou referenciado.
+var goReceiverRe = regexp.MustCompile(`^func\s*\(\s*(?:\w+\s+)?\*?\s*([A-Za-z_]\w*)(?:\[[^\]]*\])?\s*\)`)
+
+// callerLabel turns the "name<US>signature" of an enclosing symbol into the name shown to the agent: Go methods
+// carry their receiver type (Type.method), so same-named methods of different types stay distinguishable.
+func callerLabel(nameAndSig string) string {
+	name, sig, _ := strings.Cut(nameAndSig, "\x1f")
+	if m := goReceiverRe.FindStringSubmatch(sig); m != nil {
+		return m[1] + "." + name
+	}
+	return name
+}
+
 func Callers(root, symbol string, max int) (string, error) {
 	if max <= 0 {
 		max = DefaultMax
@@ -50,7 +63,7 @@ func Callers(root, symbol string, max int) (string, error) {
 	name := lastName(symbol)
 	// the innermost symbol that contains the call site is the caller: naming it saves the agent a read per line
 	rows, err := d.Query(`SELECT e.source_file, e.source_line, e.relation_type,
-			COALESCE((SELECT s.name FROM code_symbols s
+			COALESCE((SELECT s.name || char(31) || s.signature FROM code_symbols s
 				WHERE s.repo_root = e.repo_root AND s.file_path = e.source_file
 					AND s.start_line <= e.source_line AND s.end_line >= e.source_line
 				ORDER BY s.end_line - s.start_line LIMIT 1), '')
@@ -74,7 +87,7 @@ func Callers(root, symbol string, max int) (string, error) {
 		files[f] = true
 		if total <= max {
 			if in != "" {
-				in = " in " + in
+				in = " in " + callerLabel(in)
 			}
 			fmt.Fprintf(&b, "- %s:%d%s (%s)\n", f, line, in, rel)
 		}
