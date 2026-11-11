@@ -15,10 +15,25 @@ import (
 
 const (
 	Port           = 9146
-	Addr           = "127.0.0.1:9146"
+	defaultAddr    = "127.0.0.1:9146"
 	DialTimeout    = 50 * time.Millisecond
 	StartupTimeout = 500 * time.Millisecond
 )
+
+// Addr is where the local daemon listens. FASTEXEC_DAEMON_ADDR (loopback only) runs a second, isolated daemon next to
+// the usual one: benchmarks and tests use it so their CPU, memory and telemetry never mix with real work.
+var Addr = resolveAddr(os.Getenv("FASTEXEC_DAEMON_ADDR"))
+
+func resolveAddr(v string) string {
+	if v == "" {
+		return defaultAddr
+	}
+	host, _, err := net.SplitHostPort(v)
+	if err != nil || (host != "127.0.0.1" && host != "localhost" && host != "::1") {
+		return defaultAddr
+	}
+	return v
+}
 
 type DaemonRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
