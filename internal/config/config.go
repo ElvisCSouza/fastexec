@@ -39,6 +39,11 @@ type Config struct {
 	DataDir     string          `json:"data_dir,omitempty"`
 	HandoffDir  string          `json:"handoff_dir,omitempty"`
 	Telemetry   *bool           `json:"telemetry,omitempty"`
+	// DotnetSDK é a pasta de um .NET SDK que o FastExec deve usar para os
+	// servidores .NET (C#). Existe para o SDK portátil: uma pasta própria, fora
+	// do PATH da máquina, que o processo do daemon não tem como adivinhar. Quem
+	// lê é o internal/lsp, na ordem env > config > PATH > pastas conhecidas.
+	DotnetSDK string `json:"dotnet_sdk,omitempty"`
 
 	path string // arquivo lido ("" se não existe)
 	err  error  // erro de leitura ou validação: o FastExec segue com os padrões e o `fastexec config` mostra
@@ -130,6 +135,7 @@ func (c *Config) normalized(path string) *Config {
 	}
 	n.DataDir = resolvePath(n.DataDir, base)
 	n.HandoffDir = resolvePath(n.HandoffDir, base)
+	n.DotnetSDK = resolvePath(n.DotnetSDK, base)
 	if verr := n.validate(); verr != nil && n.err == nil {
 		n.err = verr
 	}
@@ -244,6 +250,11 @@ func (c *Config) Handoff() string {
 	_ = os.MkdirAll(d, 0o755)
 	return d
 }
+
+// DotnetSDKPath é a pasta de SDK .NET do arquivo de configuração ("" quando não
+// há). Sem criar nada: um caminho que não existe é justamente o que o
+// `lsp doctor` precisa poder reportar.
+func (c *Config) DotnetSDKPath() string { return strings.TrimSpace(c.DotnetSDK) }
 
 // Lookup acha um host pelo nome ou alias (sem diferenciar maiúsculas). canonical é o nome da entrada.
 func (c *Config) Lookup(name string) (canonical string, h Host, ok bool) {

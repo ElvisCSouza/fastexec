@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"homelab/fastexec/internal/config"
 )
 
 // stubSDK answers the SDK probe for one test. The stub is what makes "there is
@@ -555,5 +557,204 @@ func TestInstalledSDKListIsCapped(t *testing.T) {
 	}
 	if got := installedSDKs(sdk); len(got) != 6 {
 		t.Fatalf("fixture built %d SDKs, want 6", len(got))
+	}
+}
+
+// --- the doctor's C# checks: the launch's own list, without starting anything ---
+
+// TestCSharpReadinessIsSilentForAProjectThatWouldLoad: the doctor must be able to
+// say "ready" — a check that always finds something is a check nobody reads.
+func TestCSharpReadinessIsSilentForAProjectThatWouldLoad(t *testing.T) {
+	sdk := sdkTree(t, "8.0.428")
+	stubSDK(t, sdk, false)
+	root := t.TempDir()
+	csproj(t, root, "demo.csproj")
+	restored(t, root)
+
+	if problems := CSharpReadiness(root); len(problems) != 0 {
+		t.Errorf("CSharpReadiness = %q, want none for a restored project with no pin", problems)
+	}
+}
+
+// TestCSharpReadinessSaysWhatTheLaunchWouldRefuse: every line the doctor prints
+// for C# is the line the launch would have refused with, in the same order. This
+// is what keeps the two from drifting: a user who reads "restore needed" in the
+// doctor sees exactly what the model would have been told.
+func TestCSharpReadinessSaysWhatTheLaunchWouldRefuse(t *testing.T) {
+	tests := []struct {
+		name     string
+		sdk      string
+		pin      string
+		restored bool
+		want     []string
+	}{
+		{
+			name:     "the pin the machine cannot satisfy",
+			sdk:      "8.0.428",
+			pin:      "7.0.102",
+			restored: true,
+			want:     []string{"global.json pins SDK 7.0.102; installed: 8.0.428 (set rollForward or install 7.0.102)"},
+		},
+		{
+			name: "the restore that never ran",
+			sdk:  "8.0.428",
+			want: []string{"restore needed: run dotnet restore (demo.csproj)"},
+		},
+		{
+			// Both problems, in launch order: the SDK first, then the pin that
+			// cannot be met without one. Fixing the pin alone would not help.
+			name: "no SDK at all plus a pin",
+			pin:  "7.0.102",
+			want: []string{
+				"no .NET SDK found",
+				"global.json pins SDK 7.0.102; installed: none (install 7.0.102)",
+				"restore needed: run dotnet restore (demo.csproj)",
+			},
+		},
+		{
+			name:     "a pin this machine can meet stays quiet",
+			sdk:      "8.0.428",
+			pin:      "8.0.400",
+			restored: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			sdkRoot := ""
+			if tc.sdk != "" {
+				sdkRoot = sdkTree(t, tc.sdk)
+			}
+			stubSDK(t, sdkRoot, false)
+			csproj(t, root, "demo.csproj")
+			if tc.pin != "" {
+				globalJSON(t, root, tc.pin, "")
+			}
+			if tc.restored {
+				restored(t, root)
+			}
+
+			problems := CSharpReadiness(root)
+			if len(problems) != len(tc.want) {
+				t.Fatalf("CSharpReadiness = %q, want %d line(s): %q", problems, len(tc.want), tc.want)
+			}
+			for i, want := range tc.want {
+				if !strings.Contains(problems[i], want) {
+					t.Errorf("line %d = %q, want it to contain %q", i, problems[i], want)
+				}
+			}
+			// The doctor and the launch are one list: the first problem the
+			// doctor prints is the one the launch refuses with.
+			if len(tc.want) > 0 {
+				if _, _, launch := csharpCustomize(root); launch != problems[0] {
+					t.Errorf("launch problem = %q, doctor line = %q; they must be the same sentence", launch, problems[0])
+				}
+			}
+		})
+	}
+}
+
+// TestNoSDKProblemNamesTheConfiguredFolderThatIsNotAnSDK: the most confusing
+// state is a config that points at a folder which is not an SDK — the user
+// believes one is configured, and the tool must say which folder it looked at.
+func TestNoSDKProblemNamesTheConfiguredFolderThatIsNotAnSDK(t *testing.T) {
+	bogus := filepath.Join(t.TempDir(), "not-an-sdk")
+	restore := config.Set(&config.Config{DotnetSDK: bogus})
+	t.Cleanup(restore)
+	root := t.TempDir()
+	csproj(t, root, "demo.csproj")
+
+	problems := csharpProblems(root, "")
+	if len(problems) == 0 || !strings.Contains(problems[0], "no .NET SDK found") {
+		t.Fatalf("problems = %q, want the missing SDK first", problems)
+	}
+	for _, want := range []string{bogus, "fastexec config set dotnet_sdk"} {
+		if !strings.Contains(problems[0], want) {
+			t.Errorf("line = %q, want it to name %q", problems[0], want)
+		}
+	}
+}
+
+// sdkInstall is sdkTree plus the host executable: what hasSDK looks for when the
+// lookup decides on its own, rather than being told by a stub. The file is never
+// run, so an empty one is enough.
+func sdkInstall(t *testing.T, versions ...string) string {
+	t.Helper()
+	root := sdkTree(t, versions...)
+	if err := os.WriteFile(dotnetExe(root), nil, 0o755); err != nil {
+		t.Fatalf("sdkInstall: %v", err)
+	}
+	return root
+}
+
+// TestFindDotnetSDKOrder: env > config > PATH/known folders. Each step is a
+// different promise — "for this command", "for every command", "whatever the
+// machine has" — and a portable SDK is invisible to the machine, so the config
+// one has to win over the folders FastExec guesses at.
+func TestFindDotnetSDKOrder(t *testing.T) {
+	t.Setenv("FASTEXEC_DOTNET_SDK", "")
+	t.Setenv("DOTNET_ROOT", "")
+	envSDK := sdkInstall(t, "8.0.100")
+	configSDK := sdkInstall(t, "8.0.404")
+	rootSDK := sdkInstall(t, "9.0.100")
+
+	t.Run("the environment beats the config", func(t *testing.T) {
+		t.Setenv("FASTEXEC_DOTNET_SDK", envSDK)
+		restore := config.Set(&config.Config{DotnetSDK: configSDK})
+		t.Cleanup(restore)
+		got, portable := findDotnetSDK()
+		if got != envSDK || !portable {
+			t.Errorf("findDotnetSDK = (%q, %v), want the environment's %q as portable", got, portable, envSDK)
+		}
+	})
+
+	t.Run("DOTNET_ROOT beats the config", func(t *testing.T) {
+		t.Setenv("DOTNET_ROOT", rootSDK)
+		restore := config.Set(&config.Config{DotnetSDK: configSDK})
+		t.Cleanup(restore)
+		got, portable := findDotnetSDK()
+		if got != rootSDK || portable {
+			t.Errorf("findDotnetSDK = (%q, %v), want DOTNET_ROOT %q", got, portable, rootSDK)
+		}
+	})
+
+	t.Run("the config beats PATH and the known folders", func(t *testing.T) {
+		restore := config.Set(&config.Config{DotnetSDK: configSDK})
+		t.Cleanup(restore)
+		got, portable := findDotnetSDK()
+		if got != configSDK || !portable {
+			t.Errorf("findDotnetSDK = (%q, %v), want the config's %q as portable", got, portable, configSDK)
+		}
+	})
+
+	t.Run("a configured folder that is not an SDK is skipped", func(t *testing.T) {
+		bogus := filepath.Join(t.TempDir(), "not-an-sdk")
+		restore := config.Set(&config.Config{DotnetSDK: bogus})
+		t.Cleanup(restore)
+		if got, _ := findDotnetSDK(); got == bogus {
+			t.Error("a folder with no SDK was accepted just because it was configured")
+		}
+	})
+}
+
+// TestLoadAction: the note the model sees for a C# project that did not load
+// carries the action, and no other language pays for a generic sentence.
+func TestLoadAction(t *testing.T) {
+	stubSDK(t, sdkTree(t, "8.0.428"), false)
+	root := t.TempDir()
+	csproj(t, root, "demo.csproj")
+
+	if act := LoadAction("csharp", root); !strings.HasPrefix(act, "restore needed: run dotnet restore (") {
+		t.Errorf("LoadAction = %q, want the restore command", act)
+	}
+	restored(t, root)
+	if act := LoadAction("csharp", root); !strings.Contains(act, "fastexec lsp doctor") {
+		t.Errorf("LoadAction = %q, want the doctor named when nothing is wrong on disk", act)
+	}
+	if act := LoadAction("go", root); act != "" {
+		t.Errorf("LoadAction(go) = %q, want nothing", act)
+	}
+	if act := LoadAction("csharp", ""); act != "" {
+		t.Errorf("LoadAction with no root = %q, want nothing", act)
 	}
 }

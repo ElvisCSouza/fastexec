@@ -11,6 +11,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -20,7 +21,7 @@ import (
 
 const lspUsage = `Usage: fastexec lsp <command>
 
-  doctor                    what is installed, what is missing, and what a server would cost
+  doctor [caminho]          what is installed, what is missing, and whether a project would load
   install [linguagem,...]   download and install the pinned language servers (asks first)
   update                    reinstall the servers whose pinned version changed
   remove <servidor>         delete a server that FastExec installed
@@ -31,7 +32,10 @@ install/update flags:
   --yes          answer yes to every confirmation; required when there is no terminal
   --dry-run      show the plan and download nothing
 
-Language names accept short spellings: go, cs/c#, ts/js, py, rs, cpp.`
+Language names accept short spellings: go, cs/c#, ts/js, py, rs, cpp.
+
+doctor reads a C# repository (the folder passed, or the current one) and prints,
+without starting any server, whether the C# server would load it.`
 
 func cmdLsp(subArgs []string) {
 	if len(subArgs) == 0 {
@@ -126,7 +130,16 @@ func lspPlan(roots []string, langs []string) ([]lsp.Item, lsp.Selection, error) 
 // lspDoctor runs the diagnostic. It exits 0 even when servers are missing:
 // a missing optional server is not a broken installation, and failing here
 // would make `lsp doctor` unusable in a script that only wants the listing.
-func lspDoctor(_ []string) {
+//
+// The optional argument is a repository folder (default: the current one). For a
+// C# repository the doctor also answers the question a version string cannot:
+// would the server actually load this project? — using the launch's own checks.
+func lspDoctor(args []string) {
+	root, explicit, err := lspDoctorRoot(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if lsp.Disabled() {
 		fmt.Println("LSP is disabled by FASTEXEC_LSP: every call falls back to the graph by name.")
 		fmt.Println("The listing below is what is installed, not what is being used.")
@@ -164,9 +177,77 @@ func lspDoctor(_ []string) {
 		found, len(entries))
 	fmt.Println("Optional languages (Markdown, JSON, YAML, Shell, PowerShell) answer by name already: a missing server there is not a degradation.")
 
+	printCSharpProject(os.Stdout, root, explicit)
+
 	printInstalled()
 	fmt.Println("Nothing is downloaded without asking: `fastexec lsp install` shows the pinned version,")
 	fmt.Println("the size, the origin and the licence of each server before you confirm it.")
+}
+
+// lspDoctorRoot resolves the folder the doctor checks. A folder is accepted; the
+// current directory is the default, and is silent when it is not a C# project,
+// because most people run `lsp doctor` for the server listing alone.
+func lspDoctorRoot(args []string) (dir string, explicit bool, err error) {
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			return "", false, fmt.Errorf("unknown flag %q for `lsp doctor`\n\n%s", a, lspUsage)
+		}
+	}
+	if len(args) > 1 {
+		return "", false, fmt.Errorf("`lsp doctor` takes at most one folder\n\n%s", lspUsage)
+	}
+	if len(args) == 1 {
+		fi, serr := os.Stat(args[0])
+		if serr != nil {
+			return "", true, serr
+		}
+		if !fi.IsDir() {
+			return "", true, fmt.Errorf("%s is not a folder", args[0])
+		}
+		return args[0], true, nil
+	}
+	cwd, cerr := os.Getwd()
+	if cerr != nil {
+		return "", false, nil
+	}
+	return cwd, false, nil
+}
+
+// printCSharpProject prints what a C# launch would decide about one repository.
+//
+// It starts nothing and changes nothing: it reads the SDK folder, the global.json
+// above the root and the obj/project.assets.json of the projects the server would
+// load, and prints the same sentences the launch would refuse with. That
+// sameness is the point — a user who reads "restore needed" here gets exactly
+// what the model would have been told, and a repository the doctor calls ready is
+// one the server really loads.
+//
+// The checks are the launch's (lsp.CSharpReadiness), not a second opinion kept in
+// the CLI, so the two cannot drift apart.
+//
+// w is where the section goes: the doctor prints it among the rest of its report,
+// and a test asks for the same section in a buffer.
+func printCSharpProject(w io.Writer, root string, explicit bool) {
+	lang, ok := lsp.LanguageByID("csharp")
+	if !ok || root == "" {
+		return
+	}
+	resolved := lsp.RootFor(lang, root)
+	if !lsp.HasMarker(lang, resolved) {
+		if explicit {
+			fmt.Fprintf(w, "\nC# project (%s)\n  no C# project here (no .csproj or .sln; nothing to load)\n", root)
+		}
+		return
+	}
+	fmt.Fprintf(w, "\nC# project (%s)\n", resolved)
+	problems := lsp.CSharpReadiness(resolved)
+	if len(problems) == 0 {
+		fmt.Fprintln(w, "  C#: project ready")
+		return
+	}
+	for _, p := range problems {
+		fmt.Fprintf(w, "  %s\n", p)
+	}
 }
 
 // printPinned shows, for a language whose server is missing, what `lsp install`

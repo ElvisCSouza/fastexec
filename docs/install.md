@@ -64,6 +64,7 @@ fastexec lsp install --root ~/work --dry-run
 fastexec lsp update               # reinstall the servers whose pinned version changed
 fastexec lsp remove gopls
 fastexec lsp doctor               # what is installed, what the prerequisites are, licences
+fastexec lsp doctor ~/work/app    # ...and whether a C# project there would load
 ```
 
 - **Detection.** `setup` and `lsp install` scan the repositories FastExec already knows plus any `--root` you give,
@@ -71,6 +72,21 @@ fastexec lsp doctor               # what is installed, what the prerequisites ar
 - **Prerequisites are checked first**, and explained in one line: C# needs the .NET SDK; TypeScript/JavaScript and
   Python need Node and npm (pyright comes from npm); Go needs the Go toolchain. If one is missing FastExec prints the
   command that installs it and continues without that language. It never installs an SDK by itself.
+
+  A portable .NET SDK — one unpacked in a folder of its own, not on PATH — is found through `FASTEXEC_DOTNET_SDK`,
+  then `DOTNET_ROOT`, then the folder kept in the config, then PATH, then the folders FastExec looks for by default.
+  To keep it for every later run, including the daemon's, write it to the config:
+
+  ```
+  fastexec config set dotnet_sdk W:\Data\dotnet-sdk\sdk   # "-" clears it
+  fastexec config show                                   # also reports whether that folder really holds an SDK
+  ```
+
+- **`lsp doctor` checks a C# repository without starting anything.** Run it with no argument for the server listing,
+  or with a folder (or from inside a repository) to see whether the C# server would load that project: the same
+  checks the launch makes — the SDK, the `global.json` pin, and the restore. Each problem comes as one line with the
+  command that fixes it, and a repository that would load prints `C#: project ready`. Nothing is downloaded, no
+  server is started, and no `global.json` is ever edited.
 - **Pinned and verified.** Each server has an exact version (never "latest"); downloads come from the origins listed
   in the README and the checksum or integrity check offered by that origin is used. Servers live in
   `<data_dir>/lsp/<server>/`, they are not added to PATH, and no administrator rights are needed.

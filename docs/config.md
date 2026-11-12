@@ -16,7 +16,8 @@ Desktop from the Microsoft Store gives each child process a private copy of `App
 one client are invisible to the others.
 
 `fastexec config` shows the effective configuration; `fastexec config example` prints a sample;
-`fastexec config init` writes the sample if there is no file yet.
+`fastexec config init` writes the sample if there is no file yet; `fastexec config set <key> <value>` writes one
+setting into the file and leaves everything else — including keys written by hand — untouched.
 
 ## File
 
@@ -32,7 +33,8 @@ one client are invisible to the others.
   },
   "data_dir": "~/fastexec-data",
   "handoff_dir": "~/notes/handoffs",
-  "telemetry": true
+  "telemetry": true,
+  "dotnet_sdk": "W:/Data/dotnet-sdk/sdk"
 }
 ```
 
@@ -49,6 +51,7 @@ one client are invisible to the others.
 | `data_dir` | Base folder for `telemetry/`, `jobs/`, `sessions/`, `logs/` and `handoff/`. Default: the FastExec folder. |
 | `handoff_dir` | Folder for handoff notes. Default `<data_dir>/handoff`. |
 | `telemetry` | `false` stops recording tool calls. Default `true`. |
+| `dotnet_sdk` | Folder of a .NET SDK for the C# server, for a portable SDK that is not on PATH. Only read as a fallback: `FASTEXEC_DOTNET_SDK` and `DOTNET_ROOT` win over it. See [install.md](install.md). |
 
 Each remote host needs exactly one of `addr` or `ssh`. Relative paths in the file resolve from the file's folder;
 `~` expands to your profile. Unknown keys are errors.

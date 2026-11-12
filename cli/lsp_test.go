@@ -226,10 +226,21 @@ func TestConfirmationAsksOneByOne(t *testing.T) {
 func runLSP(t *testing.T, args ...string) (string, int, string) {
 	t.Helper()
 	home := t.TempDir()
+	out, code := runLSPHome(t, home, nil, args...)
+	return out, code, home
+}
+
+// runLSPHome é o mesmo, com uma pasta escolhida por quem chama: dois comandos
+// seguidos só enxergam o mesmo config se o FASTEXEC_HOME for o mesmo. extra é
+// aplicado por último, então ganha de qualquer variável do ambiente de quem roda
+// o teste (uma máquina com FASTEXEC_DOTNET_SDK não pode mudar o resultado).
+func runLSPHome(t *testing.T, home string, extra []string, args ...string) (string, int) {
+	t.Helper()
 	cmd := exec.Command(os.Args[0], append([]string{cliChildArg}, args...)...)
 	cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "FASTEXEC_HOME="+home,
 		"FASTEXEC_CONFIG=", "FASTEXEC_DEFAULT_HOST=", "FASTEXEC_DATA_DIR=", "FASTEXEC_TELEMETRY=",
-		"FASTEXEC_NO_TRAY=1")
+		"FASTEXEC_DOTNET_SDK=", "DOTNET_ROOT=", "FASTEXEC_NO_TRAY=1")
+	cmd.Env = append(cmd.Env, extra...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	code := 0
@@ -240,7 +251,7 @@ func runLSP(t *testing.T, args ...string) (string, int, string) {
 		}
 		code = ee.ExitCode()
 	}
-	return out.String(), code, home
+	return out.String(), code
 }
 
 // installedInHome lista o que o comando gravou em <home>/lsp. Vazio é o

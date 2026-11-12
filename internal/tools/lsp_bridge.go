@@ -152,11 +152,15 @@ func stepExact(ctx context.Context, c *lsp.Client, abs, name string, d graph.Def
 }
 
 // reasonErrFrom é o reasonErr com o servidor à mão: a nota de "não carregou" ganha a causa que o próprio
-// servidor escreveu no stderr.
+// servidor escreveu no stderr e a ação concreta daquela linguagem.
 //
 // Sem isso o usuário recebe o sintoma e nenhuma pista, e a pista existe: o servidor a imprimiu antes de
 // desistir. Só a última linha que parece causa entra, e só neste ramo — nas outras degradações o FastExec
 // já sabe dizer o motivo, e a fala do servidor ali só gastaria token.
+//
+// A ação vem do internal/lsp (LoadAction), que refaz na hora as checagens do lançamento: para C# isso é
+// "restore needed: run dotnet restore (App.csproj)" ou o global.json que não bate, em vez de um "veja o
+// projeto" que não diz o que fazer. As checagens só leem o disco, então a nota continua barata.
 func reasonErrFrom(c *lsp.Client, err error) error {
 	out := reasonErr(err)
 	if c == nil || !errors.Is(err, lsp.ErrLoading) {
@@ -168,10 +172,19 @@ func reasonErrFrom(c *lsp.Client, err error) error {
 	if errors.As(err, &le) {
 		return out
 	}
-	if cause := lsp.StderrCause(c.Stderr()); cause != "" {
-		return lsp.Unavailable("project did not load: %s", cause)
+	cause := lsp.StderrCause(c.Stderr())
+	act := lsp.LoadAction(c.LanguageID(), c.Root())
+	if cause == "" && act == "" {
+		return out
 	}
-	return out
+	note := "project did not load"
+	if cause != "" {
+		note += ": " + cause
+	}
+	if act != "" {
+		note += "; " + act
+	}
+	return lsp.Unavailable("%s", note)
 }
 
 // reasonErr reduz o erro do servidor à frase curta que cabe na nota de degradação.

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"homelab/fastexec/internal/config"
 )
 
 // C# is the one language in the table whose server cannot run on its own: it is
@@ -41,34 +43,124 @@ import (
 //     projects, so it is passed explicitly when there is one.
 func csharpCustomize(root string) (args, env []string, problem string) {
 	sdk, portable := dotnetSDK()
-	if sdk == "" {
-		return nil, nil, "no .NET SDK found (install one, or set FASTEXEC_DOTNET_SDK to its folder)"
+	if problems := csharpProblems(root, sdk); len(problems) > 0 {
+		if sdk == "" {
+			return nil, nil, problems[0]
+		}
+		return nil, csharpEnv(sdk, portable), problems[0]
 	}
-	// The server is a .NET apphost: it finds its runtime through DOTNET_ROOT,
-	// and MSBuildLocator refuses to start without it. Setting it for the child
-	// only — never for FastExec's own process — is what makes a portable SDK
-	// usable without touching the machine.
-	env = append(env, "DOTNET_ROOT="+sdk)
-	if portable {
-		env = append(env, "PATH="+sdk+string(os.PathListSeparator)+os.Getenv("PATH"))
-	}
-
-	// Checked before the restore, and reported instead of it: a pinned SDK that
-	// is not here breaks the launch itself, and the user who reads "restore
-	// needed" runs restore, watches it succeed, and gets the same empty answers.
-	// The pin belongs to the repository, so FastExec names it and never edits it.
-	if problem := pinnedSDKProblem(root, sdk); problem != "" {
-		return nil, env, problem
-	}
-
-	if project, ok := unrestored(root); ok {
-		return nil, env, "restore needed: run dotnet restore (" + project + ")"
-	}
+	env = csharpEnv(sdk, portable)
 
 	if sln := firstMatch(root, "*.sln"); sln != "" {
 		args = append(args, "--solution", sln)
 	}
 	return args, env, ""
+}
+
+// csharpEnv is what a .NET server needs from its parent to find a runtime that
+// the machine does not have on PATH. The server is an apphost: it finds its
+// runtime through DOTNET_ROOT, and MSBuildLocator refuses to start without it.
+// Setting it for the child only — never for FastExec's own process — is what
+// makes a portable SDK usable without touching the machine.
+func csharpEnv(sdk string, portable bool) []string {
+	if sdk == "" {
+		return nil
+	}
+	env := []string{"DOTNET_ROOT=" + sdk}
+	if portable {
+		env = append(env, "PATH="+sdk+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	return env
+}
+
+// CSharpReadiness reports every reason a csharp-ls launched at root would fail
+// to load the project, in the order the launch checks them, each one phrased as
+// the action that fixes it. Empty means the project would load.
+//
+// It is the launch's own check list, not a second opinion: `lsp doctor` calls
+// this and csharpCustomize calls this, so a repository the doctor calls ready is
+// a repository the server really starts on. The difference is what each one does
+// with the answer — the launch refuses to start, the doctor prints.
+//
+// Nothing here starts a server or runs dotnet: it reads the disk (SDK folder,
+// global.json, obj/project.assets.json), which is what makes the doctor free.
+func CSharpReadiness(root string) []string {
+	sdk, _ := dotnetSDK()
+	return csharpProblems(root, sdk)
+}
+
+// LoadAction is the short, concrete action to append to a "project did not
+// load" note for a language whose load can be checked without starting anything.
+// Empty for every other language: FastExec has nothing specific to say about
+// them, and a generic suggestion in a degradation note is noise the model pays
+// for.
+//
+// The C# case is the one this exists for. csharp-ls can start, pass its checks
+// and still answer nothing about a project: the restore can go stale (a new
+// PackageReference, a deleted obj/) or a global.json can appear after the launch.
+// Re-running the launch's own checks at the moment of the degradation is what
+// turns "project did not load" into the line the user has to fix — and the answer
+// is free, because those checks only read the disk.
+func LoadAction(langID, root string) string {
+	if langID != "csharp" || strings.TrimSpace(root) == "" {
+		return ""
+	}
+	if problems := CSharpReadiness(root); len(problems) > 0 {
+		return problems[0]
+	}
+	// Nothing wrong on disk: the load failure is inside the build (a compile
+	// error, a package that needs the network), and the doctor is where the user
+	// sees the same list the server works from.
+	return "check the project load with `fastexec lsp doctor " + root + "`"
+}
+
+// csharpProblems is the check list itself, in launch order:
+//
+//  1. A .NET SDK on the machine. Without one csharp-ls starts and answers
+//     nothing, which is worse than not starting.
+//  2. A global.json pinning an SDK this machine does not have. The resolver
+//     refuses before MSBuild sees the project, so reporting "restore needed"
+//     sends the user to fix the wrong thing.
+//  3. The projects the server would load, unrestored. A project without
+//     obj/project.assets.json answers empty lists until `dotnet restore` runs.
+func csharpProblems(root, sdk string) []string {
+	var out []string
+	if sdk == "" {
+		out = append(out, noSDKProblem())
+	}
+	// Checked before the restore, and reported instead of it: a pinned SDK that
+	// is not here breaks the launch itself, and the user who reads "restore
+	// needed" runs restore, watches it succeed, and gets the same empty answers.
+	// The pin belongs to the repository, so FastExec names it and never edits it.
+	if problem := pinnedSDKProblem(root, sdk); problem != "" {
+		out = append(out, problem)
+	}
+	if project, ok := unrestored(root); ok {
+		out = append(out, "restore needed: run dotnet restore ("+project+")")
+	}
+	return out
+}
+
+// noSDKProblem names the way out, and — when the config already points at a
+// folder that is not an SDK — says so: that folder is the most likely reason the
+// user believes an SDK is configured and the tool still finds none.
+func noSDKProblem() string {
+	if d := configDotnetSDK(); d != "" {
+		return "no .NET SDK found; dotnet_sdk in the config points at " + d +
+			", which has no SDK (fix it: fastexec config set dotnet_sdk <folder>)"
+	}
+	return "no .NET SDK found (install one, or set FASTEXEC_DOTNET_SDK to its folder;" +
+		" a folder can be kept in the config with `fastexec config set dotnet_sdk <folder>`)"
+}
+
+// configDotnetSDK is the SDK folder kept in the config file, or "". Only the
+// file is read here: the environment already had its turn before this.
+func configDotnetSDK() string {
+	c := config.Get()
+	if c == nil {
+		return ""
+	}
+	return expandPath(c.DotnetSDKPath())
 }
 
 // unrestored reports the first project under root that has no restore output.
@@ -177,6 +269,12 @@ func pinnedSDK(root string) (version, roll string) {
 // is already the sdk directory, which is how a portable SDK is sometimes
 // pointed at through FASTEXEC_DOTNET_SDK.
 func installedSDKs(sdkRoot string) []string {
+	if strings.TrimSpace(sdkRoot) == "" {
+		// No root means "no SDK", not "look for an sdk/ folder next to the
+		// working directory": filepath.Join("", "sdk") is a relative path, and
+		// reading it would make the answer depend on where FastExec was started.
+		return nil
+	}
 	dir := filepath.Join(sdkRoot, "sdk")
 	if filepath.Base(filepath.Clean(sdkRoot)) == "sdk" {
 		dir = sdkRoot
@@ -356,6 +454,14 @@ func depth(root, path string) int {
 // dotnetSDK finds a .NET SDK and reports whether it is a portable one that has
 // to be pointed at through DOTNET_ROOT and PATH.
 //
+// The order is env > config > PATH > known folders, so an explicit environment
+// for one command beats the folder kept for every command, which beats what the
+// machine happens to have installed:
+//
+//  1. FASTEXEC_DOTNET_SDK, 2. DOTNET_ROOT, 3. the config file's dotnet_sdk,
+//  4. a `dotnet` on PATH that really carries an SDK, 5. the known portable
+//     folders.
+//
 // The result is computed once: a machine's SDK layout does not change while
 // FastExec runs, and probing it starts a `dotnet` process. It is a variable so a
 // test can describe a machine without an SDK — the one case that has to degrade,
@@ -371,13 +477,21 @@ func findDotnetSDK() (string, bool) {
 	if d := expandPath(os.Getenv("DOTNET_ROOT")); d != "" && hasSDK(d) {
 		return d, false
 	}
-	// 3. `dotnet` on PATH, but only when it really carries an SDK. The
+	// 3. The SDK folder kept in the config file (`fastexec config set dotnet_sdk
+	//    <folder>`). This is where a portable SDK belongs on a machine whose
+	//    daemon does not inherit the environment the user tested with: the file
+	//    is read from disk, so it survives a restart of the daemon and does not
+	//    depend on how the daemon was started.
+	if d := configDotnetSDK(); d != "" && hasSDK(d) {
+		return d, true
+	}
+	// 4. `dotnet` on PATH, but only when it really carries an SDK. The
 	//    Windows-wide install of the runtime alone prints nothing for
 	//    --list-sdks and still exits 0, so the output is the discriminator.
 	if exe, err := exec.LookPath("dotnet"); err == nil && dotnetHasSDK(exe) {
 		return filepath.Dir(exe), false
 	}
-	// 4. A portable SDK unpacked in a directory of its own.
+	// 5. A portable SDK unpacked in a directory of its own.
 	for _, d := range portableSDKDirs() {
 		if hasSDK(d) {
 			return d, true
@@ -421,6 +535,13 @@ func hasSDK(dir string) bool {
 	}
 	return false
 }
+
+// HasDotnetSDK reports whether a folder is a .NET install root that carries an
+// SDK — the host executable plus at least one version directory under sdk/.
+// `fastexec config set dotnet_sdk` uses it to warn about a folder that is not
+// one yet; the check is the same one the launch makes, so the warning cannot
+// disagree with the launch.
+func HasDotnetSDK(dir string) bool { return hasSDK(expandPath(dir)) }
 
 // dotnetExe is the host executable inside a .NET install root.
 func dotnetExe(dir string) string {

@@ -137,3 +137,36 @@ func TestDisplayCwd(t *testing.T) {
 		}
 	}
 }
+
+// TestDotnetSDKIsAFileSetting: the whole point of the config field is that it
+// survives how the daemon was started, so the file has to be the way in. A key
+// the loader does not know is a hard error (DisallowUnknownFields), so a typo
+// here would leave the C# server looking for an SDK on the machine instead of in
+// the folder the user named.
+func TestDotnetSDKIsAFileSetting(t *testing.T) {
+	clearEnv(t)
+	dir := writeConfig(t, `{"dotnet_sdk": "sdk-portable"}`)
+	c := Load()
+	if c.Err() != nil {
+		t.Fatalf("dotnet_sdk rejected by the loader: %v", c.Err())
+	}
+	// Relative to the config file, like every other folder in it: the file can
+	// be moved with the folder it points at.
+	if want := filepath.Join(dir, "sdk-portable"); c.DotnetSDKPath() != want {
+		t.Fatalf("DotnetSDKPath = %q, want %q", c.DotnetSDKPath(), want)
+	}
+}
+
+// TestNoDotnetSDKIsSilenceNotAnError: most machines never set it, and the empty
+// value must not read as a configured folder that is missing.
+func TestNoDotnetSDKIsSilenceNotAnError(t *testing.T) {
+	clearEnv(t)
+	writeConfig(t, `{"default_host": "local"}`)
+	if c := Load(); c.DotnetSDKPath() != "" || c.Err() != nil {
+		t.Fatalf("DotnetSDKPath = %q err = %v, want empty and no error", c.DotnetSDKPath(), c.Err())
+	}
+	clearEnv(t)
+	if c := Load(); c.DotnetSDKPath() != "" {
+		t.Fatalf("DotnetSDKPath = %q with no config file, want empty", c.DotnetSDKPath())
+	}
+}
