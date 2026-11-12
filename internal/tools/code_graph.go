@@ -60,9 +60,10 @@ func runCodeGraph(root string, args CodeGraphArgs) (string, error) {
 		}
 		// Exato quando o servidor de linguagem responde (distingue dois métodos de mesmo nome em tipos
 		// diferentes); por nome quando não há servidor, com uma linha dizendo por quê.
-		return courseWithGraph(root, args.Symbol,
+		out, err := courseWithGraph(root, args.Symbol,
 			func() (string, error) { return lspCallers(root, args.Symbol, args.Max, args.Depth) },
 			func() (string, error) { return graph.Callers(root, args.Symbol, args.Max, args.Depth) })
+		return groupCallerSites(out), err
 	case "def", "definition":
 		if err := need(args.Symbol, "symbol"); err != nil {
 			return "", err
