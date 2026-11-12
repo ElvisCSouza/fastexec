@@ -111,18 +111,23 @@ func handleExec(args ExecArgs) (string, error) {
 		}
 	}
 
-	// Busca de identificador num repositório: respondida pelo grafo (repetir o comando roda a busca crua)
+	// Busca de identificador num repositório: respondida pelo grafo (repetir o comando roda a busca crua). O pedido
+	// de busca crua ('--raw' ou o prefixo 'raw:') sai do comando antes de rodar: a dica do rodapé tem de funcionar
+	// como está, sem o agente ter de inventar outra forma.
 	var graphNote string
-	if hasCmd {
-		if out, handled, note := tryGraphSearch(args, args.Command); handled {
-			if cdHint != "" {
-				out = cdHint + "\n---\n" + out
-			}
-			avoidedRetry(label, out)
-			return out, nil
-		} else {
-			graphNote = note
+	rawEscape := false
+	if newLabel, stripped := stripRawEscape(&args); stripped {
+		label, rawEscape = newLabel, true
+		graphNote = GraphMarkRaw + ": raw text search as asked (the code graph was skipped)."
+	}
+	if out, handled, note := tryGraphSearch(args, label, rawEscape); handled {
+		if cdHint != "" {
+			out = cdHint + "\n---\n" + out
 		}
+		avoidedRetry(label, out)
+		return out, nil
+	} else if graphNote == "" {
+		graphNote = note
 	}
 
 	// Auto-remediação de cat / type puro (conversão para read_file com notificação pedagógica)

@@ -105,6 +105,7 @@ Each one tells the model what it did and what to do next time.
 | search output over 40 lines | Cut to 40 with a hint to narrow it or use `code_outline` |
 | search for a declaration (`void Foo`, `struct Row`, `func X`) | Hint to use `code_outline` |
 | search for a function's call sites | Hint to use `code_graph` |
+| simple search for one identifier, in a repo that has the code-graph index | Answered from the graph, in the shape of the question — see *Graph-first search answers* |
 | recursive scan of `C:\`, `C:\Users`, `/`, `/home` | Refused (it would take minutes and flood the context) |
 | PowerShell cmdlet in `cmd.exe` | Hint to use `pwsh` |
 | child processes left running after the command | Killed, with a warning to use `job` |
@@ -118,6 +119,39 @@ Each one tells the model what it did and what to do next time.
 | Windows drive path (`W:\Data\x`) in a bash-bound line | Translated the other way (`/w/Data/x`) before running, because unquoted `W:\x` loses its backslashes in bash; noted on the output |
 
 `FASTEXEC_NO_SEARCH_GUARD=1` disables the search and broad-root guards.
+
+### Graph-first search answers
+
+A simple search line that only asks *where a code identifier is declared and who uses it* is answered from the code
+graph, in one call, in the shape of the question: no raw lines to re-check and no follow-up `read_file`.
+
+| The line | What comes back |
+|---|---|
+| `grep -rn Foo .` / `-rw`, `rg -n Foo`, `git grep -n Foo`, `findstr /s /n Foo *.go`, `Select-String -Pattern Foo` | One block: `def:` file, line range, kind and signature; the **body** when the name is declared once and the body is ≤ 40 lines (otherwise the signature plus the `read_file(path, start_line, end_line)` call that fetches it); then `callers:` grouped by file with counts, headed by `non-test: N file(s) \| tests: M file(s)` |
+| `-l` / `--files-with-matches` | Only the file list, non-test first |
+| `-c` | Count per file, non-test first; a file that only declares the name still appears, with `0` and `(declares it)` |
+| `find . -name 'store.go'`, `ls -R . \| grep store`, `git ls-files \| grep store` | The indexed files matching the name, non-test first |
+| Name declared in more than one place | `ambiguous (N definitions)` plus the short definitions — no body is picked for you |
+| Pattern with regex, alternation, anchor or class, or `-i` | Untouched: a real search (`-i` and `^Foo$` find a different set of lines than the identifier does) |
+| Name not declared in the code, or repo with no graph | Untouched: the real search runs |
+
+The answer is capped at 3 KB and ends with what the index covers and how to escape it:
+
+`index covers code identifiers only (comments, strings and docs are not listed). For the raw search: <line> --raw`
+
+Freshness comes first: before answering, the index is compared with the repo (HEAD + `git status --porcelain`) and a
+stale index is reindexed on the spot — incrementally, only the changed files, inside a 900 ms budget. Over budget the
+partial pass is thrown away (its recorded state is deleted, so the next call cannot skip what is missing) and the real
+search answers. **Repeating the exact same line** also runs the real search, and `--raw` (anywhere in the line) or a
+`raw:` prefix forces it on the first call; the escape is stripped from the command *and* from `argv` before running, so
+the hint in the footer works verbatim. An automatic reindex announces itself with `[FastExec Graph] index`, like every
+other auto-remediation.
+
+Any local Git repo within the ≤ 10 k files limit is answered this way, even one that never used `code_graph`: the
+first search builds the index on the spot (announced) and answers from it, and only a build that does not fit in the
+900 ms budget falls back to the real search — the note then says whether the index did not exist yet or was simply
+behind. Remote hosts and repos over the file limit keep getting the plain search. `FASTEXEC_NO_GRAPH_SEARCH=1`
+disables these answers.
 
 ## read_file
 

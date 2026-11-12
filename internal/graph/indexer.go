@@ -32,10 +32,12 @@ const (
 	checkpointAfter = 50
 )
 
-// Stats resume uma passada de indexação.
+// Stats resume uma passada de indexação. Fresh marca a passada que nem precisou varrer (o estado do repositório era
+// o mesmo da última); OverBudget marca a que parou no teto de tempo do Sync (índice possivelmente incompleto).
 type Stats struct {
 	Files, Changed, Removed int
 	Took                    time.Duration
+	Fresh, OverBudget       bool
 }
 
 // ResolveRepoRoot sobe a partir de path até a pasta com .git mais próxima (diretório ou arquivo, como em worktrees).
@@ -202,95 +204,6 @@ func (s *stmts) index(key, rel string, src []byte, mtime int64, hash string) err
 	return err
 }
 
-// Refresh deixa o índice do repositório em dia: só arquivos novos ou com (mtime, hash) diferentes são reprocessados;
-// os que sumiram saem do índice. Na primeira chamada indexa tudo.
-func Refresh(root string) (Stats, error) {
-	start := time.Now()
-	if !isRepoRoot(root) {
-		return Stats{}, ErrNotInRepo(root)
-	}
-	d, err := store()
-	if err != nil {
-		return Stats{}, err
-	}
-	key := repoKey(root)
-	files, total := listFiles(root)
-	if total > maxRepoFiles {
-		return Stats{}, ErrTooManyFiles(total)
-	}
-
-	known := map[string]fileRec{}
-	rows, err := d.Query(`SELECT file_path, mtime, content_hash FROM code_files WHERE repo_root = ?`, key)
-	if err != nil {
-		return Stats{}, err
-	}
-	for rows.Next() {
-		var rel string
-		var rec fileRec
-		if err := rows.Scan(&rel, &rec.mtime, &rec.hash); err == nil {
-			known[rel] = rec
-		}
-	}
-	rows.Close()
-
-	tx, err := d.Begin()
-	if err != nil {
-		return Stats{}, err
-	}
-	defer tx.Rollback()
-	s, err := prepare(tx)
-	if err != nil {
-		return Stats{}, err
-	}
-
-	st := Stats{Files: len(files)}
-	seen := make(map[string]bool, len(files))
-	for _, rel := range files {
-		abs := filepath.Join(root, filepath.FromSlash(rel))
-		info, err := os.Stat(abs)
-		if err != nil || info.IsDir() || info.Size() > maxFileSize {
-			continue
-		}
-		seen[rel] = true
-		mtime := info.ModTime().UnixNano()
-		rec, ok := known[rel]
-		if ok && rec.mtime == mtime {
-			continue
-		}
-		src, err := os.ReadFile(abs)
-		if err != nil {
-			continue
-		}
-		h := contentHash(src)
-		if ok && rec.hash == h {
-			if _, err := s.touchFile.Exec(mtime, key, rel); err != nil {
-				return st, err
-			}
-			continue
-		}
-		if err := s.index(key, rel, src, mtime, h); err != nil {
-			return st, err
-		}
-		st.Changed++
-	}
-	for rel := range known {
-		if !seen[rel] {
-			if err := s.remove(key, rel); err != nil {
-				return st, err
-			}
-			st.Removed++
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return st, err
-	}
-	if st.Changed+st.Removed >= checkpointAfter {
-		_, _ = d.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`) // passada grande: devolve o WAL ao banco e zera o arquivo
-	}
-	st.Took = time.Since(start)
-	return st, nil
-}
-
 // Reindex apaga o índice do repositório e indexa tudo de novo.
 func Reindex(root string) (Stats, error) {
 	if !isRepoRoot(root) {
@@ -305,6 +218,7 @@ func Reindex(root string) (Stats, error) {
 		`DELETE FROM code_symbols WHERE repo_root = ?`,
 		`DELETE FROM code_edges WHERE repo_root = ?`,
 		`DELETE FROM code_files WHERE repo_root = ?`,
+		`DELETE FROM code_meta WHERE repo_root = ?`, // sem isto o estado antigo diria "em dia" para um índice vazio
 	} {
 		if _, err := d.Exec(q, key); err != nil {
 			return Stats{}, err

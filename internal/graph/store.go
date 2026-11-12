@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS code_edges (
 );
 CREATE INDEX IF NOT EXISTS idx_edges_target ON code_edges (repo_root, target_symbol, relation_type);
 CREATE INDEX IF NOT EXISTS idx_edges_source ON code_edges (repo_root, source_file);
+CREATE TABLE IF NOT EXISTS code_meta (
+	repo_root  TEXT PRIMARY KEY,
+	head       TEXT NOT NULL,
+	work       TEXT NOT NULL,
+	files      INTEGER NOT NULL,
+	checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 `
 
 var (

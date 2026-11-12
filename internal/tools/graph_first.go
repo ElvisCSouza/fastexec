@@ -43,6 +43,12 @@ const (
 	GraphMarkOutline = "[FastExec Graph] outline"
 	GraphMarkRepeat  = "[FastExec Graph] repeat"
 	GraphMarkSearch  = "[FastExec Graph] search"
+	// GraphMarkRaw: the command asked for the raw search (--raw / raw:) and the graph stepped aside. It is a
+	// decision of its own (the agent did not have to work around anything).
+	GraphMarkRaw = "[FastExec Graph] raw"
+	// GraphMarkIndex: an automatic reindex (or the fallback when the pass does not fit the time budget). It is an
+	// announcement, not a decision: the answer may still be the raw search.
+	GraphMarkIndex = "[FastExec Graph] index"
 )
 
 var (

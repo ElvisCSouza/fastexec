@@ -302,6 +302,44 @@ func shellWords(s string) []string {
 	return out
 }
 
+// tokenSpan é a extensão de um token na linha (aspas incluídas), para tirar um token do comando por posição sem
+// reescrever o resto.
+type tokenSpan struct{ Start, End int }
+
+// shellTokenSpans devolve a extensão de cada token na mesma regra de shellWords (espaço fora de aspas separa).
+func shellTokenSpans(s string) []tokenSpan {
+	var out []tokenSpan
+	start := -1
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '\'' || c == '"':
+			quote = c
+			if start < 0 {
+				start = i
+			}
+		case c == ' ' || c == '\t':
+			if start >= 0 {
+				out = append(out, tokenSpan{start, i})
+				start = -1
+			}
+		default:
+			if start < 0 {
+				start = i
+			}
+		}
+	}
+	if start >= 0 {
+		out = append(out, tokenSpan{start, len(s)})
+	}
+	return out
+}
+
 // reCallSearch: o padrão buscado é um identificador seguido de '(' (ou '\(' escapado), isto é, procura de chamadas.
 var reCallSearch = regexp.MustCompile(`[A-Za-z_]\w{2,}\\?\(`)
 
