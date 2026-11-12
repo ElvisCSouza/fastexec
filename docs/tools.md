@@ -174,6 +174,24 @@ A folder is not a file: the call is refused saying which tool to use instead (`f
 search line through `exec`) — `pattern` looks inside a single file only. Before, the raw OS error came back, and on
 Windows that is the localized `Função incorreta`, which tells the model nothing.
 
+**A path that does not exist suggests candidates.** The error keeps its own message and gains up to five existing
+paths, one per line, after `not found; did you mean:`. Candidates come from two places: the file's folder and its
+ancestors up to the repository root (or three levels up when there is no repository), matched by same base name
+ignoring case, same stem with another extension, or a small edit distance (names shorter than 6 characters only match
+on the name itself, or on the same stem); and, when a graph index already exists for that repository, the base name
+looked up as a symbol — which is what finds `LevelOutputFormat.cs` when the ask was `Casing.cs`, whose file name looks
+like nothing in the folder:
+
+```
+... Casing.cs: The system cannot find the file specified.
+not found; did you mean: src/Formatting/Display/LevelOutputFormat.cs (declares Casing)
+```
+
+Nothing is read in place of what was asked: only paths are offered, and the content always comes from the file that
+was requested. With no candidate the message is exactly the one from before. The symbol lookup never reindexes —
+a read that already failed does not pay for a freshness pass — so a stale index can only suggest an extra file, and
+every candidate is checked on disk before being offered.
+
 **Types of what was read.** When the excerpt contains a declaration that leaves the type to the compiler
 (`var x = ...`, `x := ...`, `const y = ...`, an inferred lambda parameter) and a language server for that file is
 **already warm**, the answer ends with one compact line:
@@ -353,6 +371,25 @@ files are reparsed):
 - `def`: where it is declared, with line range and signature;
 - `impact`: files that use what a file or symbol defines (check before refactoring);
 - `index`: full rebuild.
+
+### a folder that is not a repository
+
+Outside Git the folder itself is indexed as a **standalone folder**, in the same `graph.db`, under its own key (the
+normalized path). There is no `.gitignore` there, so the scan reads the disk and is capped at 3000 code files or 64 MB
+of them; a folder above either limit is refused exactly as before (`not inside a git repository`), with the path the
+caller asked for. Junk directories are still skipped (`bin`, `obj`, `node_modules`, `.git`, ...).
+
+Freshness does not depend on Git there: with no HEAD and no `git status`, every call compares `(mtime, content hash)`
+per file, which is what the incremental pass already does — editing a file is picked up by the next call. Every answer
+from a standalone folder starts with one line so the model knows what it is reading:
+
+```
+[graph] not a git repository: indexed the folder as standalone (42 files); results reflect the files on disk now.
+```
+
+Results from a standalone folder come from the files on disk in that moment, untracked and uncommitted included. The
+line is a warning, not a promise: there is no revision to name and no history to fall back on. Inside a Git
+repository nothing changes and no such line appears.
 
 ### exact or by name
 

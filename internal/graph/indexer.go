@@ -7,6 +7,7 @@ package graph
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io/fs"
@@ -24,6 +25,14 @@ import (
 // maxRepoFiles: acima disso o repositório quase sempre comitou dependências (node_modules, vendor, builds); a
 // indexação é recusada em vez de inflar o banco. Variável para os testes.
 var maxRepoFiles = 10000
+
+// Pasta avulsa (sem .git): o teto é bem menor, porque a varredura é do disco inteiro da pasta e não passa pelo
+// .gitignore. Acima de qualquer um dos dois a recusa é a de sempre ("not inside a git repository"), sem promessa
+// nova. Variáveis para os testes.
+var (
+	maxStandaloneFiles = 3000
+	maxStandaloneBytes = int64(64 << 20)
+)
 
 const (
 	maxFileSize   = 2 << 20
@@ -71,9 +80,57 @@ func isRepoRoot(root string) bool {
 	return err == nil
 }
 
-// ErrNotInRepo explica por que o grafo não age fora de um repositório git.
-func ErrNotInRepo(path string) error {
-	return fmt.Errorf("'%s' is not inside a git repository: code_graph only indexes git repositories (outside them use code_outline or exec)", path)
+// ResolveStandaloneRoot devolve a pasta a indexar como avulsa: path, quando é pasta, ou a pasta que o contém,
+// quando é arquivo. Só aceita pasta que exista e que NÃO seja raiz de repositório git (essa é do ResolveRepoRoot).
+// Não sobe ancestral nenhum: a pasta pedida é o escopo, e é ela que vira chave do índice.
+func ResolveStandaloneRoot(path string) (string, bool) {
+	if isRepoRoot(path) {
+		return "", false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
+		abs = filepath.Dir(abs)
+	}
+	st, err := os.Stat(abs)
+	if err != nil || !st.IsDir() {
+		return "", false
+	}
+	return abs, true
+}
+
+// standaloneFits diz se a pasta avulsa cabe nos limites (arquivos e bytes). É a mesma trava da passada completa,
+// exposta para o caminho de um arquivo só não deixar entrar no índice a pasta que a passada completa recusaria.
+func standaloneFits(root string) bool {
+	_, _, over := listFiles(root, maxStandaloneFiles, maxStandaloneBytes)
+	return !over
+}
+
+// SetStandaloneLimits troca os tetos da pasta avulsa e devolve a função que restaura os valores anteriores (testes;
+// mesmo espírito do SetDBPath — os tetos são baixos demais para um teste montar a pasta de verdade).
+func SetStandaloneLimits(files int, bytes int64) func() {
+	oldF, oldB := maxStandaloneFiles, maxStandaloneBytes
+	maxStandaloneFiles, maxStandaloneBytes = files, bytes
+	return func() { maxStandaloneFiles, maxStandaloneBytes = oldF, oldB }
+}
+
+// notInRepoError é o erro de recusa, tipado para quem chama poder reconhecer a recusa e reescrevê-la com o caminho
+// que o agente pediu (a mensagem é a mesma de sempre).
+type notInRepoError struct{ path string }
+
+func (e *notInRepoError) Error() string {
+	return fmt.Sprintf("'%s' is not inside a git repository: code_graph only indexes git repositories (outside them use code_outline or exec)", e.path)
+}
+
+// ErrNotInRepo explica por que o grafo não age fora de um repositório git nem numa pasta avulsa dentro dos limites.
+func ErrNotInRepo(path string) error { return &notInRepoError{path: path} }
+
+// IsNotInRepo diz se err é a recusa (para a tools repetir a mensagem com o caminho pedido).
+func IsNotInRepo(err error) bool {
+	var e *notInRepoError
+	return errors.As(err, &e)
 }
 
 // repoKey normaliza a raiz (barras '/', minúsculas no Windows) para particionar o banco.
@@ -105,7 +162,10 @@ func tooBig(rel string, size int64) bool {
 
 // listFiles devolve os caminhos relativos (com '/') dos arquivos indexáveis e o total listado (todos os arquivos
 // do git ls-files, indexáveis ou não; na varredura sem git, os indexáveis), que alimenta a trava de sanidade.
-func listFiles(root string) ([]string, int) {
+// over=true quando a varredura passou de cap arquivos ou de byteCap bytes: aí a pasta é grande demais para ser
+// indexada sem git e quem chamou recusa. Na varredura a contagem e o tamanho somam em quanto já foi varrido, então
+// uma pasta enorme é abandonada no meio em vez de ser lida inteira.
+func listFiles(root string, cap int, byteCap int64) (files []string, total int, over bool) {
 	var out []string
 	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
 		cmd := exec.Command("git", "-C", root, "ls-files", "-co", "--exclude-standard", "-z")
@@ -122,9 +182,10 @@ func listFiles(root string) ([]string, int) {
 					out = append(out, r)
 				}
 			}
-			return out, total
+			return out, total, false
 		}
 	}
+	var bytesSeen int64
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -135,12 +196,21 @@ func listFiles(root string) ([]string, int) {
 			}
 			return nil
 		}
-		if rel, err := filepath.Rel(root, p); err == nil && indexable(filepath.ToSlash(rel)) {
-			out = append(out, filepath.ToSlash(rel))
+		rel, rerr := filepath.Rel(root, p)
+		if rerr != nil || !indexable(filepath.ToSlash(rel)) {
+			return nil
+		}
+		out = append(out, filepath.ToSlash(rel))
+		if info, ierr := d.Info(); ierr == nil {
+			bytesSeen += info.Size()
+		}
+		if len(out) > cap || (byteCap > 0 && bytesSeen > byteCap) {
+			over = true
+			return fs.SkipAll
 		}
 		return nil
 	})
-	return out, len(out)
+	return out, len(out), over
 }
 
 // ErrTooManyFiles recusa indexar repositório grande demais (dependências comitadas, quase sempre).
@@ -251,9 +321,18 @@ func (s *stmts) docEdges(key, rel string, refs []DocRef, ix *docIndex) error {
 	return nil
 }
 
-// Reindex apaga o índice do repositório e indexa tudo de novo.
+// indexableRoot: raiz que o índice aceita — repositório git (comportamento de sempre) ou pasta avulsa existente.
+func indexableRoot(root string) bool {
+	if isRepoRoot(root) {
+		return true
+	}
+	_, ok := ResolveStandaloneRoot(root)
+	return ok
+}
+
+// Reindex apaga o índice do repositório (ou da pasta avulsa) e indexa tudo de novo.
 func Reindex(root string) (Stats, error) {
-	if !isRepoRoot(root) {
+	if !indexableRoot(root) {
 		return Stats{}, ErrNotInRepo(root)
 	}
 	d, err := store()
@@ -276,7 +355,12 @@ func Reindex(root string) (Stats, error) {
 
 // ReindexFile atualiza um único arquivo (ou o remove do índice, se sumiu), numa transação.
 func ReindexFile(root, absPath string) error {
-	if !isRepoRoot(root) {
+	if !indexableRoot(root) {
+		return ErrNotInRepo(root)
+	}
+	// Pasta avulsa que ainda não tem índice passa pela trava da passada completa: recusada lá, recusada aqui (o hook
+	// de gravação só chama isto para raiz já indexada, então a varredura extra só acontece no caminho frio).
+	if !isRepoRoot(root) && !indexed(root) && !standaloneFits(root) {
 		return ErrNotInRepo(root)
 	}
 	d, err := store()
@@ -329,6 +413,17 @@ func ReindexFile(root, absPath string) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// TrackedFiles conta os arquivos indexados na raiz (é o N do aviso de pasta avulsa).
+func TrackedFiles(root string) int {
+	d, err := store()
+	if err != nil {
+		return 0
+	}
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM code_files WHERE repo_root = ?`, repoKey(root)).Scan(&n)
+	return n
 }
 
 func indexed(root string) bool {

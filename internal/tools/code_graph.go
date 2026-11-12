@@ -22,10 +22,31 @@ func HandleCodeGraph(args CodeGraphArgs) (string, error) {
 	if args.RepoPath == "" {
 		return "", fmt.Errorf("parameter 'repo_path' is required (repository root or any path inside it, on host 'local')")
 	}
+	// Repositório git primeiro (comportamento de sempre). Fora dele, a pasta pedida é indexada como avulsa quando
+	// couber nos limites: antes a chamada morria aqui e o modelo perdia o turno (M2/M3 do ciclo 4).
 	root, ok := graph.ResolveRepoRoot(expandHome(args.RepoPath))
+	standalone := false
 	if !ok {
-		return "", graph.ErrNotInRepo(args.RepoPath)
+		if root, ok = graph.ResolveStandaloneRoot(expandHome(args.RepoPath)); !ok {
+			return "", graph.ErrNotInRepo(args.RepoPath)
+		}
+		standalone = true
 	}
+	out, err := runCodeGraph(root, args)
+	if err != nil {
+		if graph.IsNotInRepo(err) { // pasta avulsa grande demais: mesma recusa, com o caminho que o agente pediu
+			return "", graph.ErrNotInRepo(args.RepoPath)
+		}
+		return "", err
+	}
+	if standalone {
+		out = fmt.Sprintf("[graph] not a git repository: indexed the folder as standalone (%d files); "+
+			"results reflect the files on disk now.\n%s", graph.TrackedFiles(root), out)
+	}
+	return out, nil
+}
+
+func runCodeGraph(root string, args CodeGraphArgs) (string, error) {
 	need := func(v, name string) error {
 		if v == "" {
 			return fmt.Errorf("action '%s' needs '%s'", args.Action, name)
