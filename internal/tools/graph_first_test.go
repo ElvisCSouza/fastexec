@@ -16,7 +16,8 @@ func bigGoFile(t *testing.T, funcs, bodyLines int) string {
 	for i := 0; i < funcs; i++ {
 		fmt.Fprintf(&b, "func F%d(x int) int {\n", i)
 		for j := 0; j < bodyLines; j++ {
-			fmt.Fprintf(&b, "\tx += %d\n", j)
+			// linhas com o tamanho de código de verdade: o outline só vale a pena quando o texto tem bytes
+			fmt.Fprintf(&b, "\tx += %d // ajusta o total corrente no passo %d do cálculo de teste\n", j, j)
 		}
 		b.WriteString("\treturn x\n}\n\n")
 	}
@@ -111,7 +112,7 @@ func TestGraphFirstSkipsLinearScriptsAndDocs(t *testing.T) {
 
 func TestGraphFirstDoesNotAffectEdit(t *testing.T) {
 	p := bigGoFile(t, 10, 30)
-	if _, err := HandleEditFile(EditFileArgs{Path: p, Target: "x += 29\n\treturn x\n}\n\nfunc F9", Replacement: "x += 29\n\treturn x\n}\n\nfunc G9", Caller: "test#gf5"}); err != nil {
+	if _, err := HandleEditFile(EditFileArgs{Path: p, Target: "passo 29 do cálculo de teste\n\treturn x\n}\n\nfunc F9", Replacement: "passo 29 do cálculo de teste\n\treturn x\n}\n\nfunc G9", Caller: "test#gf5"}); err != nil {
 		t.Fatalf("edit on a graph-first file: %v", err)
 	}
 	b, _ := os.ReadFile(p)

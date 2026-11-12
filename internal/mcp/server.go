@@ -370,7 +370,8 @@ func (s *Server) serve(r io.Reader) error {
 					return
 				}
 
-				result := s.dispatchTool(callParams.Name, withCaller(callParams.Arguments, s.callerID(), conversationOf(callParams.Meta)))
+				result := s.dispatchTool(callParams.Name, withClientCwd(callParams.Name,
+					withCaller(callParams.Arguments, s.callerID(), conversationOf(callParams.Meta)), s.clientCwd()))
 				s.writeResponse(JSONRPCResponse{
 					JSONRPC: "2.0",
 					ID:      r.ID,

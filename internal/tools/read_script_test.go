@@ -100,7 +100,7 @@ func TestExecWrappedReadUsesGraph(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		fmt.Fprintf(&b, "func F%d(x int) int {\n", i)
 		for j := 0; j < 30; j++ {
-			fmt.Fprintf(&b, "\tx += %d\n", j)
+			fmt.Fprintf(&b, "\tx += %d // ajusta o total corrente no passo %d do cálculo de teste\n", j, j)
 		}
 		b.WriteString("\treturn x\n}\n\n")
 	}

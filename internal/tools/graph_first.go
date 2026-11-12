@@ -33,6 +33,8 @@ import (
 const (
 	graphMinLines     = 120
 	graphMinDecls     = 3
+	graphMinBytes     = 8 * 1024 // abaixo disso o texto inteiro é mais barato que outline + segunda leitura
+	graphMaxOutlinePct = 50      // o outline estimado tem de ser no máximo isto do tamanho do texto
 	graphHeaderMax    = 40
 	graphMaxEntries   = 300
 	graphRepeatWindow = 10 * time.Minute
@@ -112,6 +114,20 @@ func graphFirstRead(args ReadFileArgs, full string, from, to int) (out string, o
 		}
 	}
 	if len(in) < graphMinDecls {
+		return "", false, ""
+	}
+	// Um outline só paga se poupa bytes de verdade: ele custa um turno a mais (o modelo pede o trecho depois), e um
+	// turno repete o imposto fixo de schemas. Arquivo de 138 linhas curtas (3,8 KB) com outline de 3,1 KB: o ciclo6
+	// mostrou o modelo lendo o outline e depois o texto, nas três repetições da CS6.
+	sliceBytes := len(strings.Join(lines[from-1:to], "\n"))
+	if sliceBytes < graphMinBytes {
+		return "", false, ""
+	}
+	estOutline := 0
+	for _, d := range in {
+		estOutline += len(d.Sig) + 10
+	}
+	if estOutline*100 > sliceBytes*graphMaxOutlinePct {
 		return "", false, ""
 	}
 
