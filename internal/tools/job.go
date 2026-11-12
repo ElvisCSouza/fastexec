@@ -42,7 +42,17 @@ func sanitizeUnit(id string) string {
 	return s
 }
 
+// HandleJob resolve o host (host_autolocal.go: caminho Windows sem host explícito com padrão remoto vai para
+// 'local', com aviso na saída) e delega a handleJob.
 func HandleJob(args JobArgs) (string, error) {
+	parts := append([]string{args.Command, args.Cwd}, args.Argv...)
+	host, note := localHostForWindowsPath(args.Host, parts...)
+	args.Host = host
+	out, err := handleJob(args)
+	return withHostNote(note, out, err), err
+}
+
+func handleJob(args JobArgs) (string, error) {
 	action := strings.ToLower(strings.TrimSpace(args.Action))
 	if action == "" {
 		action = "list"

@@ -38,7 +38,7 @@ one client are invisible to the others.
 
 | Key | Meaning |
 |---|---|
-| `default_host` | Host used when a call names none. Default `local`. |
+| `default_host` | Host used when a call names none. Default `local`. An `exec`/`job` call with no `host` that carries a Windows drive path runs on `local` instead, with a `[FastExec Auto-Remediation]` note in the output. |
 | `hosts.<name>.addr` | `ip` or `ip:port` of a `server-exec` daemon (port 9142 when omitted). |
 | `hosts.<name>.ssh` | An alias from your `~/.ssh/config`; commands run through `ssh -o BatchMode=yes`. Slower than `addr`. |
 | `hosts.<name>.cwd` | Working directory for commands on that host. Relative `cwd` arguments resolve from it, and a redundant `cd <cwd> &&` prefix is removed automatically. |

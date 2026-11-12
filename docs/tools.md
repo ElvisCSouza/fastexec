@@ -4,6 +4,13 @@ Every tool takes an optional `host`: `local`, a host from the config, `ssh:<alia
 `local` (a Linux path such as `/var/log/x` goes to the default host); `exec` and `job` default to the config's
 `default_host`. A path can also carry its host: `server:/etc/hosts`.
 
+An explicit `host` always wins. Without one, if the `default_host` is remote (Linux) and the call carries a Windows
+drive path (`W:\...`, `C:/...`) in `command`, `argv` or `cwd`, `exec` and `job` run on `local` and the output opens
+with a `[FastExec Auto-Remediation]` note saying so. The path does not exist on the Linux host, and the alternative
+was a failed turn plus a retry with `host='local'` (measured in the `ds-full2` benchmark). Detection is
+conservative: a drive letter followed by `:` and a slash at the start of a token or after a shell separator — URLs
+(`http://`) and loose text never trigger it.
+
 ## Parameter names
 
 Before a tool runs, its arguments are matched against the tool's own fields (`internal/mcp/argnorm.go`); no
@@ -71,6 +78,7 @@ Each one tells the model what it did and what to do next time.
 | PowerShell cmdlet in `cmd.exe` | Hint to use `pwsh` |
 | child processes left running after the command | Killed, with a warning to use `job` |
 | edit by script (`Get-Content ... -replace ... Set-Content`, `sed -i`) | Hint to use `edit_file` with `edits` |
+| no `host`, remote `default_host`, Windows drive path in `command`/`argv`/`cwd` | Runs on host `local`, with a `[FastExec Auto-Remediation]` note telling the model to pass `host='local'` next time |
 
 `FASTEXEC_NO_SEARCH_GUARD=1` disables the search and broad-root guards.
 

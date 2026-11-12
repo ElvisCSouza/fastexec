@@ -51,7 +51,17 @@ type ExecArgs struct {
 
 const sleepGuardMsg = "[FastExec Guard] 'sleep' and 'timeout' are blocked: exec is event-driven and returns the moment the process exits. For long work raise 'timeout_ms' (e.g. 300000); for asynchronous work use the 'job' tool with action 'wait'"
 
+// HandleExec resolve o host (host_autolocal.go: caminho Windows sem host explícito com padrão remoto vai para
+// 'local', com aviso na saída) e delega a handleExec.
 func HandleExec(args ExecArgs) (string, error) {
+	parts := append([]string{args.Command, args.Cwd}, args.Argv...)
+	host, note := localHostForWindowsPath(args.Host, parts...)
+	args.Host = host
+	out, err := handleExec(args)
+	return withHostNote(note, out, err), err
+}
+
+func handleExec(args ExecArgs) (string, error) {
 	hasCmd, hasArgv := args.Command != "", len(args.Argv) > 0
 	switch {
 	case hasCmd && hasArgv:
