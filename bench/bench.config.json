@@ -2,7 +2,7 @@
   "model": "claude-sonnet-5-5",
   "work_dir": "W:\\Data\\bench-v2",
   "daemon_addr": "127.0.0.1:9246",
-  "fastexec_exe": "..\\bin\\fastexec.exe",
+  "fastexec_exe": "..\\..\\fastexec-private\\bin\\fastexec.exe",
   "arms": {
     "native":   { "label": "Claude nativo",         "mcp": false, "tools": ["Bash", "Read", "Glob", "Grep", "Edit", "Write"] },
     "fastexec": { "label": "Claude com FastExec",   "mcp": true,  "tools": [] },
@@ -27,3 +27,4 @@
       "ref": "v0.139.5" }
   }
 }
+
