@@ -16,7 +16,7 @@ o substitui na prática: é versionado, usa só dados sintéticos e um repositó
 ```powershell
 cd bench
 pwsh -NoProfile -File .\Initialize-Bench.ps1      # compila o medidor, baixa o cobra (ref fixa), congela o FastExec
-pwsh -NoProfile -File .\Run-Bench.ps1 -DryRun     # valida as 13 tarefas e os oráculos, sem gastar nada
+pwsh -NoProfile -File .\Run-Bench.ps1 -DryRun     # valida as 24 tarefas e os oráculos, sem gastar nada
 ```
 
 `Initialize-Bench.ps1` **congela** uma cópia do `fastexec.exe` pelo SHA256: um deploy no meio da rodada não troca o binário
@@ -28,7 +28,7 @@ medido. Para testar outro build: `.\Initialize-Bench.ps1 -FastExec C:\caminho\fa
 # fumaça barata (≈ US$ 0,13): confere que tudo mede
 pwsh -NoProfile -Command "& .\Run-Bench.ps1 -Tasks T0,T2 -Reps 1 -Tag smoke -MaxRunUsd 0.3 -MaxTotalUsd 0.6"
 
-# rodada completa: 13 tarefas x 2 braços x 5 repetições
+# rodada completa: 24 tarefas x 2 braços x 5 repetições
 pwsh -NoProfile -Command "& .\Run-Bench.ps1 -Reps 5 -Tag full1"
 
 pwsh -NoProfile -File .\Report.ps1 -Tag full1     # relatório em results\report-full1.md
@@ -50,11 +50,21 @@ As execuções usam a sua conta do Claude Code e contam no seu uso. Tarefas e br
 | T9 | edição | trocar uma constante num arquivo CRLF de 400 linhas sem alterar o resto |
 | T10 | processo | comando de ~65 s (timeout, espera, retry) |
 | E1–E4 | falhas | aspas, JSON em PowerShell, Windows-1252, controle sem armadilha |
+| X1–X2 | saída | saída gigante com erro no fim (20 mil linhas); falha transitória que só passa na 3ª tentativa |
 | R1–R4 | código | contagem, chamadores (`stripFlags`), localizar função em arquivo grande, tarefa encadeada, tudo no `cobra` v1.8.1 |
+| G1–G3 | grafo | chamadores no `hugo` v0.139.5 (gabarito por `go/ast`, em `tools\callers`) |
+| M1–M2 | edição-multi | Go: renomear função em 8 arquivos; passar `context.Context` por 6 chamadas em 4 arquivos (compila e testa) |
+| M3–M4 | edição-multi | Python: parâmetro keyword-only e usos marcados; JS: `var`→`const`/`let` e `require`→`import` |
+| M5–M6 | edição-multi | 12 arquivos CRLF trocando 3 constantes byte a byte; `API_TIMEOUT` em JSON/YAML/.env preservando formato |
 
 Cada tarefa tem **oráculo objetivo** calculado na hora por programa independente das duas ferramentas, e o `-DryRun` prova que
 o oráculo aceita o gabarito e rejeita resposta errada. Adicionar tarefa: crie uma entrada `$TaskTable['Xn']` em `tasks\*.ps1`
 (`Prepare`, `Gold`, `Score`).
+
+A suíte **`edicao-multi`** (`tasks\edicao.ps1`, tarefas M1–M6) é auto-contida: cada `Prepare` gera um projeto sintético num
+diretório temporário, sem rede. Onde o host tem a ferramenta da linguagem, o oráculo a executa de verdade (`go build`/`go
+test`/`go vet`, `node --check`, `pytest`); onde não tem, cai para o oráculo estrutural e avisa `[edicao-multi] … oráculo só
+estrutural`. Detalhes em [`docs/bench/spec-edicao.md`](../docs/bench/spec-edicao.md).
 
 ## O que é medido por execução
 
