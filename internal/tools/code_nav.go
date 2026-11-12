@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"homelab/fastexec/internal/codescan"
+	"homelab/fastexec/internal/graph"
 )
 
 type CodeOutlineArgs struct {
@@ -47,14 +48,18 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 
 	if !target.IsLocal {
 		lang := codescan.LangFor(args.Path)
-		if lang == nil {
+		doc := codescan.IsDoc(args.Path)
+		if lang == nil && !doc {
 			return "", unsupportedErr(args.Path)
 		}
 		content, err := handleReadFileInner(ReadFileArgs{Host: args.Host, Path: args.Path})
 		if err != nil {
 			return "", fmt.Errorf("%v (on remote hosts code_outline takes a file; a directory runs only on host 'local')", err)
 		}
-		return outlineSource([]byte(content), lang, args.Symbol, max), nil
+		if doc {
+			return outlineDoc("", args.Path, []byte(content), args.Symbol, max), nil
+		}
+		return outlineSource(args.Path, []byte(content), lang, args.Symbol, max), nil
 	}
 
 	path := expandHome(args.Path)
@@ -63,6 +68,18 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		return "", err
 	}
 	if !st.IsDir() {
+		if codescan.IsDoc(path) {
+			src, err := os.ReadFile(path)
+			if err != nil {
+				return "", err
+			}
+			root, rel := docRepo(path)
+			out := outlineDoc(root, rel, src, args.Symbol, max)
+			if args.Symbol != "" && strings.HasPrefix(out, "(no declaration matching") {
+				out += outlineElsewhere(path, args.Symbol, max)
+			}
+			return out, nil
+		}
 		lang := codescan.LangFor(path)
 		if lang == nil {
 			return "", unsupportedErr(path)
@@ -71,7 +88,7 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		out := outlineSource(src, lang, args.Symbol, max)
+		out := outlineSource(path, src, lang, args.Symbol, max)
 		if args.Symbol != "" && strings.HasPrefix(out, "(no declaration matching") {
 			out += outlineElsewhere(path, args.Symbol, max)
 		}
@@ -102,7 +119,36 @@ func outlineElsewhere(file, symbol string, max int) string {
 }
 
 func unsupportedErr(path string) error {
-	return fmt.Errorf("unsupported file type %q (supported: %s)", filepath.Ext(path), codescan.Supported)
+	return fmt.Errorf("unsupported file type %q (supported: %s, %s)", filepath.Ext(path), codescan.Supported, codescan.DocSupported)
+}
+
+// outlineDoc lista as seções de um Markdown (os nós do grafo de documentação) e, se houver referência quebrada,
+// acrescenta a linha "docs: N broken refs". root vazio (host remoto, ou arquivo fora de repositório) mostra só as
+// seções: sem índice não há âncora para conferir.
+func outlineDoc(root, rel string, src []byte, symbol string, max int) string {
+	decls, broken := graph.DocOutline(root, rel, src)
+	ends := make(map[int]int, len(decls))
+	for _, d := range decls {
+		if d.EndLine > d.Line {
+			ends[d.Line] = d.EndLine
+		}
+	}
+	out := renderFileEnds(filterDecls(decls, symbol), max, symbol, ends)
+	if broken != "" {
+		out += "\n" + broken
+	}
+	return out
+}
+
+// docRepo devolve a raiz do repositório e o caminho relativo de um Markdown; fora de repositório, o caminho inteiro.
+func docRepo(path string) (string, string) {
+	if root, ok := graph.ResolveRepoRoot(path); ok {
+		if rel, err := filepath.Rel(root, path); err == nil {
+			return root, filepath.ToSlash(rel)
+		}
+		return root, filepath.ToSlash(path)
+	}
+	return "", filepath.ToSlash(path)
 }
 
 func expandHome(p string) string {
@@ -128,7 +174,7 @@ func scanFileFor(path string, lang *codescan.Lang, symbol string) ([]codescan.De
 	if symbol != "" && !bytes.Contains(bytes.ToLower(src), []byte(strings.ToLower(symbol))) {
 		return nil, nil
 	}
-	decls, _ := codescan.Scan(src, lang)
+	decls := outlineDecls(path, src, lang)
 	return decls, nil
 }
 
@@ -146,12 +192,29 @@ func filterDecls(decls []codescan.Decl, symbol string) []codescan.Decl {
 	return out
 }
 
+// outlineDecls: declarações de um arquivo para o code_outline. C#/.csproj/.sln têm parser próprio no internal/graph
+// (namespace, propriedades, campos, projeto); as demais linguagens seguem nos scanners do codescan.
+func outlineDecls(path string, src []byte, lang *codescan.Lang) []codescan.Decl {
+	if graph.IsCSharp(path) {
+		if decls, ok := graph.ParseCSharp(path, src); ok {
+			return decls
+		}
+	}
+	decls, _ := codescan.Scan(src, lang)
+	return decls
+}
+
 // outlineSource renders one file as "L<start>-L<end>: <declaration>". The end
 // comes from the scanner (balanced braces, or indentation in Python); when the
 // scanner has none, the line before the next declaration is used.
-func outlineSource(src []byte, lang *codescan.Lang, symbol string, max int) string {
-	decls, _ := codescan.Scan(src, lang)
-	ends := declEnds(src, decls)
+func outlineSource(path string, src []byte, lang *codescan.Lang, symbol string, max int) string {
+	decls := outlineDecls(path, src, lang)
+	var ends map[int]int
+	if graph.IsCSharp(path) {
+		ends = map[int]int{} // o parser de C# carimba o fim de cada bloco; o palpite pelo vizinho só piora
+	} else {
+		ends = declEnds(src, decls)
+	}
 	for _, d := range decls {
 		if d.EndLine > d.Line {
 			ends[d.Line] = d.EndLine
@@ -229,7 +292,7 @@ func outlineTree(root, symbol string, max int) (string, error) {
 			}
 			return nil
 		}
-		if codescan.LangFor(p) == nil || isNoiseFile(d.Name()) {
+		if codescan.LangFor(p) == nil || isNoiseFile(d.Name()) || codescan.IsNoiseCSharp(p) {
 			return nil
 		}
 		if info, err := d.Info(); err != nil || info.Size() > outlineMaxFileSize {

@@ -342,7 +342,7 @@ $TaskTable['M1'] = @{
   Score = {
     param($a)
     $d = $script:m1.dir
-    $ok = (Get-EdCount (Get-EdProjectText $d) '\bParseLine\b') -eq 0
+    $ok = (Get-EdCount (Get-EdProjectText $d '*.go') '\bParseLine\b') -eq 0   # só código: o stream.jsonl da execução (com o prompt) mora no mesmo diretório
     if ($ok) {
       foreach ($rel in $script:m1.sites) {
         if ((Get-EdText $d $rel).Length -eq 0) { $ok = $false; break }

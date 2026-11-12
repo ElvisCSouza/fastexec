@@ -181,9 +181,15 @@ var (
 		imports: []*regexp.Regexp{regexp.MustCompile(`@import\(\s*"([^"]+)"`)},
 	}
 
+	// Arquivos de projeto do .NET: aqui só se declara a extensão como conhecida (índice, Touch e varredura de árvore
+	// param de pular o arquivo); quem lê o conteúdo — ProjectReference, o símbolo do projeto — é o parser do
+	// internal/graph, que enxerga essa extensão e responde por ela.
+	langProj = &Lang{Name: "proj"}
+
 	langByExt = map[string]*Lang{
-		".zig": langZig,
-		".cs":  langCS, ".java": langJava, ".kt": langKt, ".kts": langKt,
+		".zig":    langZig,
+		".csproj": langProj, ".sln": langProj,
+		".cs": langCS, ".java": langJava, ".kt": langKt, ".kts": langKt,
 		".c": langC, ".h": langC, ".cc": langC, ".cpp": langC, ".cxx": langC, ".hpp": langC, ".hh": langC, ".hxx": langC, ".inl": langC,
 		".go": langGo,
 		".ts": langJS, ".tsx": langTSX, ".mts": langJS, ".cts": langJS,
@@ -207,7 +213,7 @@ func LangFor(path string) *Lang {
 }
 
 // Supported lista as extensões aceitas (para mensagens de erro).
-const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp, .cs, .java, .kt/.kts, .zig, .css/.scss/.less, .html/.htm, .razor/.cshtml"
+const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp, .cs/.csproj/.sln, .java, .kt/.kts, .zig, .css/.scss/.less, .html/.htm, .razor/.cshtml"
 
 // zigTypeKind: struct, enum, union, opaque ou error (conjunto de erros).
 func zigTypeKind(line string) string {
