@@ -122,25 +122,24 @@ type csScope struct {
 }
 
 type csParser struct {
-	decls   []codescan.Decl
-	refs    []codescan.Ref
-	ns      string
-	stack   []csScope
-	pend    []csPending
-	depth   int
-	total   int
-	declAt  map[int]string
+	decls []codescan.Decl
+	refs  []codescan.Ref
+	ns    string
+	stack []csScope
+	pend  []csPending
+	depth int
+	total int
+	// declCol: por linha, os offsets (bytes, na linha limpa) onde um nome foi declarado. É o que impede a própria
+	// declaração de virar chamada sem calar as chamadas de verdade da mesma linha (`Speak() => ...` e `M() { M(); }`).
+	declCol map[int]map[int]bool
 	curLine int
 }
 
 func (p *csParser) run(lines, clean []string, inside []bool) {
 	for i := range lines {
 		p.curLine = i + 1
-		if !inside[i] {
-			p.declLine(i+1, lines[i], clean[i])
-		}
-		p.braceLine(i+1, clean[i])
-		p.refLine(i+1, clean[i])
+		p.codeLine(i+1, lines[i], clean[i], !inside[i] && len(lines[i]) <= csMaxLine)
+		p.refLine(i+1, clean[i]) // depois: as arestas saem da linha inteira e já sabem quais nomes ela declarou
 	}
 	p.pend = nil
 	for len(p.stack) > 0 {
@@ -164,37 +163,76 @@ func (p *csParser) ownerType() string {
 	return ""
 }
 
-func (p *csParser) add(d codescan.Decl, scope string, open bool) {
+// add registra a declaração e o offset do nome dela na linha (col): é o que separa, na linha da própria declaração,
+// o nome declarado da chamada de mesmo nome.
+func (p *csParser) add(d codescan.Decl, scope string, open bool, col int) {
 	p.decls = append(p.decls, d)
-	if p.declAt == nil {
-		p.declAt = map[int]string{}
+	if p.declCol == nil {
+		p.declCol = map[int]map[int]bool{}
 	}
-	p.declAt[d.Line] = d.Name
+	m := p.declCol[d.Line]
+	if m == nil {
+		m = map[int]bool{}
+		p.declCol[d.Line] = m
+	}
+	m[col] = true
 	if scope != "" && open {
 		p.pend = append(p.pend, csPending{decl: len(p.decls) - 1, scope: scope})
 	}
 }
 
-// braceLine mantém a pilha de escopos: a chave que abre consome a declaração pendente (namespace, tipo ou membro) e
-// a que fecha carimba o fim do bloco na declaração daquele escopo.
-func (p *csParser) braceLine(n int, cl string) {
+// declaredAt diz se a chamada que começa em `col` é o nome de uma declaração da mesma linha.
+func (p *csParser) declaredAt(n, col int) bool { return p.declCol[n][col] }
+
+// codeLine percorre a linha limpa uma única vez e entrelaça escopo e declaração: o que separa uma declaração de uma
+// chamada é o `{`, o `}` e o `;` — não a linha inteira. É o que enxerga a linha que declara mais de uma coisa
+// (`public class Dog { public string Speak() => "woof"; }`) e o membro de corpo de expressão: depois do `{` o escopo
+// já é o do tipo, e o segmento seguinte é lido dentro dele. O delimitador `{`/`;` fica no segmento (o regex de
+// propriedade precisa dele), o `}` não (quem fecha bloco não declara nada). Linha longa demais (gerada) não declara,
+// mas continua contando chaves e arestas, como antes.
+func (p *csParser) codeLine(n int, raw, cl string, decls bool) {
+	seg := 0
 	for i := 0; i < len(cl); i++ {
 		switch cl[i] {
-		case '{':
-			p.depth++
-			if k := len(p.pend) - 1; k >= 0 {
-				pd := p.pend[k]
-				p.pend = p.pend[:k]
-				p.stack = append(p.stack, csScope{kind: pd.scope, name: p.decls[pd.decl].Name, decl: pd.decl, depth: p.depth})
-			} else {
-				p.stack = append(p.stack, csScope{kind: "block", decl: -1, depth: p.depth})
+		case '{', ';':
+			if decls {
+				p.declSeg(n, raw, cl, seg, i+1)
+			}
+			seg = i + 1
+			if cl[i] == '{' {
+				p.braceAt(n, '{')
 			}
 		case '}':
-			if len(p.stack) > 0 && p.stack[len(p.stack)-1].depth == p.depth {
-				p.closeScope(n)
+			if decls {
+				p.declSeg(n, raw, cl, seg, i)
 			}
-			p.depth--
+			p.braceAt(n, '}')
+			seg = i + 1
 		}
+	}
+	if decls {
+		p.declSeg(n, raw, cl, seg, len(cl))
+	}
+}
+
+// braceAt mantém a pilha de escopos: a chave que abre consome a declaração pendente (namespace, tipo ou membro) e a
+// que fecha carimba o fim do bloco na declaração daquele escopo.
+func (p *csParser) braceAt(n int, c byte) {
+	switch c {
+	case '{':
+		p.depth++
+		if k := len(p.pend) - 1; k >= 0 {
+			pd := p.pend[k]
+			p.pend = p.pend[:k]
+			p.stack = append(p.stack, csScope{kind: pd.scope, name: p.decls[pd.decl].Name, decl: pd.decl, depth: p.depth})
+		} else {
+			p.stack = append(p.stack, csScope{kind: "block", decl: -1, depth: p.depth})
+		}
+	case '}':
+		if len(p.stack) > 0 && p.stack[len(p.stack)-1].depth == p.depth {
+			p.closeScope(n)
+		}
+		p.depth--
 	}
 }
 
@@ -209,13 +247,16 @@ func (p *csParser) closeScope(n int) {
 	}
 }
 
-// declLine reconhece uma declaração. Dentro de membro (corpo de método, lambda, bloco solto) não há declaração: só
-// ali se separa declaração de chamada.
-func (p *csParser) declLine(n int, raw, cl string) {
-	t := strings.TrimSpace(cl)
-	if t == "" || len(raw) > csMaxLine {
+// declSeg reconhece uma declaração no segmento [i, j) da linha limpa. Dentro de membro (corpo de método, lambda,
+// bloco solto) não há declaração: só ali se separa declaração de chamada. O escopo é perguntado a cada segmento, e
+// não uma vez por linha: numa linha só, o tipo abre a chave e o membro que vem depois dela já é lido dentro do tipo.
+func (p *csParser) declSeg(n int, raw, cl string, i, j int) {
+	seg := cl[i:j]
+	t := strings.TrimSpace(seg)
+	if t == "" {
 		return
 	}
+	col := i + len(seg) - len(strings.TrimLeft(seg, " \t")) // offset do começo de t na linha
 	inType := p.top() == "type"
 	if len(p.pend) > 0 && p.pend[len(p.pend)-1].scope == "member" && strings.HasSuffix(t, ";") {
 		p.pend = p.pend[:len(p.pend)-1] // assinatura fechada sem corpo (`M()\n    => x;`): não espera mais chave
@@ -230,21 +271,21 @@ func (p *csParser) declLine(n int, raw, cl string) {
 		if m := reCSNamespaceBl.FindStringSubmatch(t); m != nil {
 			p.ns = m[1]
 			p.add(codescan.Decl{Line: n, Name: m[1], Kind: "namespace", Sig: "namespace " + m[1], Exported: true},
-				"namespace", true)
+				"namespace", true, col)
 			return
 		}
 	}
 	if m := reCSType.FindStringSubmatchIndex(t); m != nil {
 		name := t[m[4]:m[5]]
 		p.add(codescan.Decl{Line: n, Name: name, Kind: t[m[2]:m[3]], Sig: csSignature(raw),
-			Exported: csExported(t[:m[2]])}, "type", !strings.HasSuffix(t, ";"))
+			Exported: csExported(t[:m[2]])}, "type", !strings.HasSuffix(t, ";"), col+m[4])
 		p.baseRefs(n, t[m[5]:])
 		return
 	}
 	if !inType {
 		if m := reCSDelegate.FindStringSubmatchIndex(t); m != nil {
 			p.add(codescan.Decl{Line: n, Name: t[m[2]:m[3]], Kind: "delegate", Sig: csSignature(raw),
-				Exported: csExported(t[:m[2]])}, "", false)
+				Exported: csExported(t[:m[2]])}, "", false, col+m[2])
 			return
 		}
 		// lista de bases na linha seguinte (`public class Foo` / `    : Bar, IFoo`): o tipo ainda não abriu chave
@@ -260,12 +301,13 @@ func (p *csParser) declLine(n int, raw, cl string) {
 			kind = "constructor"
 		}
 		p.add(codescan.Decl{Line: n, Name: name, Kind: kind, Sig: csSignature(raw), Exported: csExported(t[:m[2]])},
-			"member", !strings.HasSuffix(t, ";"))
+			"member", !strings.HasSuffix(t, ";"), col+m[2])
 		return
 	}
 	if m := reCSProperty.FindStringSubmatchIndex(t); m != nil {
 		p.add(codescan.Decl{Line: n, Name: t[m[2]:m[3]], Kind: "property", Sig: csSignature(raw),
-			Exported: csExported(t[:m[2]])}, "member", !strings.HasSuffix(t, ";") && strings.Contains(t, "{"))
+			Exported: csExported(t[:m[2]])}, "member", !strings.HasSuffix(t, ";") && strings.Contains(t, "{"),
+			col+m[2])
 		return
 	}
 	if m := reCSField.FindStringSubmatchIndex(t); m != nil {
@@ -274,7 +316,7 @@ func (p *csParser) declLine(n int, raw, cl string) {
 			return // campo de instância: estado interno, não entra no índice
 		}
 		p.add(codescan.Decl{Line: n, Name: t[m[2]:m[3]], Kind: "field", Sig: csSignature(raw),
-			Exported: csExported(t[:m[2]])}, "", false)
+			Exported: csExported(t[:m[2]])}, "", false, col+m[2])
 	}
 }
 
@@ -364,14 +406,17 @@ func (p *csParser) refLine(n int, cl string) {
 	attr := csAttrMask(cl)
 	for _, loc := range reCSCall.FindAllStringSubmatchIndex(cl, -1) {
 		name := cl[loc[2]:loc[3]]
-		if csNotCall[name] || p.declAt[n] == name || csAfterNew(cl, loc[2]) || attr[loc[2]] {
+		if csNotCall[name] || p.declaredAt(n, loc[2]) || csAfterNew(cl, loc[2]) || attr[loc[2]] {
 			continue
 		}
-		p.refs = append(p.refs, codescan.Ref{Line: n, Target: name, Rel: "calls"})
+		// a coluna do NOME é guardada: em C# classe e membro cabem na mesma linha e a linha sozinha não diz
+		// qual símbolo contém a referência (enclosing.go). A linha limpa tem o mesmo tamanho da original.
+		p.refs = append(p.refs, codescan.Ref{Line: n, Col: utf16Col(cl[:loc[2]]), Target: name, Rel: "calls"})
 	}
 	for _, loc := range reCSNew.FindAllStringSubmatchIndex(cl, -1) {
+		// lastName corta o qualificador (`System.Foo` -> `Foo`): a coluna é a do nome que ficou
 		if name := lastName(cl[loc[2]:loc[3]]); name != "" && !csNotCall[name] && !attr[loc[0]] {
-			p.refs = append(p.refs, codescan.Ref{Line: n, Target: name, Rel: "references"})
+			p.refs = append(p.refs, codescan.Ref{Line: n, Col: utf16Col(cl[:loc[3]-len(name)]), Target: name, Rel: "references"})
 		}
 	}
 }

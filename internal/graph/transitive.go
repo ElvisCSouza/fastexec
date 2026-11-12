@@ -86,15 +86,7 @@ func levelSites(d *sql.DB, root string, targets []string, declCache map[string][
 	for _, t := range targets {
 		args = append(args, t)
 	}
-	rows, err := d.Query(`SELECT e.source_file, e.source_line, e.relation_type, e.target_symbol,
-			COALESCE((SELECT s.name || char(31) || s.signature FROM code_symbols s
-				WHERE s.repo_root = e.repo_root AND s.file_path = e.source_file
-					AND s.start_line <= e.source_line AND s.end_line >= e.source_line
-				ORDER BY s.end_line - s.start_line LIMIT 1), ''),
-			COALESCE((SELECT t.name FROM code_symbols t
-				WHERE t.repo_root = e.repo_root AND t.file_path = e.source_file AND t.kind IN (`+typeKindsSQL+`)
-					AND t.start_line <= e.source_line AND t.end_line >= e.source_line
-				ORDER BY t.end_line - t.start_line LIMIT 1), '')
+	rows, err := d.Query(`SELECT e.source_file, e.source_line, e.source_col, e.relation_type, e.target_symbol
 		FROM code_edges e
 		WHERE e.repo_root = ? AND e.target_symbol IN (`+ph+`) AND e.relation_type IN ('calls','references','renders')
 		ORDER BY e.source_file, e.source_line`, args...)
@@ -104,13 +96,13 @@ func levelSites(d *sql.DB, root string, targets []string, declCache map[string][
 	// as linhas são lidas todas antes de qualquer outra consulta: o pool tem UMA conexão (store.go), então
 	// consultar dentro do laço de rows travava o próprio rows aberto.
 	type rawSite struct {
-		file, rel, target, in, typ string
-		line                       int
+		file, rel, target string
+		line, col         int
 	}
 	var raw []rawSite
 	for rows.Next() {
 		var r rawSite
-		if err := rows.Scan(&r.file, &r.line, &r.rel, &r.target, &r.in, &r.typ); err != nil {
+		if err := rows.Scan(&r.file, &r.line, &r.col, &r.rel, &r.target); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -123,15 +115,15 @@ func levelSites(d *sql.DB, root string, targets []string, declCache map[string][
 	}
 
 	src := &srcLines{root: root}
+	ix := newEnclosingIndex(d, root, src)
 	out := make([]callerSite, 0, len(raw))
 	for _, r := range raw {
 		s := callerSite{file: r.file, line: r.line, rel: r.rel}
-		if r.in != "" {
-			s.name, _, _ = strings.Cut(r.in, "\x1f")
-			s.label = callerLabel(r.in)
-			if r.typ != "" && !strings.Contains(s.label, ".") {
-				s.label = r.typ + "." + s.label
-			}
+		// o símbolo envolvente sai por linha E coluna (enclosing.go); o nome cru (s.name) é a chave do próximo salto.
+		inner, typ := ix.at(r.file, r.line, ix.refCol(r.file, r.line, r.col, r.target))
+		if inner != "" {
+			s.name, _, _ = strings.Cut(inner, "\x1f")
+			s.label = callLabel(inner, typ)
 		}
 		// homônimos (homonyms.go): só quando o nome chamado é declarado em mais de um tipo; o receptor da chamada
 		// diz para qual deles ela aponta ("via x -> Tipo", "-> ?" quando indecidível). Nada é descartado em silêncio.
@@ -145,7 +137,7 @@ func levelSites(d *sql.DB, root string, targets []string, declCache map[string][
 				if recv != "" {
 					s.via = " via " + recv
 				}
-				if g := guessType(recv, r.typ, decl); g != "" {
+				if g := guessType(recv, typ, decl); g != "" {
 					s.via += " -> " + g
 				} else {
 					s.via += " -> ?"

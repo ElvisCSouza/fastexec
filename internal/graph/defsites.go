@@ -157,34 +157,30 @@ func AnnotateRefs(root, name string, refs []Site) []RefInfo {
 		return out
 	}
 	key := repoKey(root)
+	// A coluna da referência vem da aresta (source_col) e, quando o índice não a tem, do texto atual (nameCol, o
+	// mesmo helper do LSP): com uma linha por membro a linha bastava, com uma linha por CLASSE não bastava
+	// (enclosing.go). O índice de envolvimento é criado uma vez e cacheia por arquivo; cada consulta fecha antes
+	// da próxima e o pool tem UMA conexão (store.go), então nada fica aberto por baixo.
+	src := &srcLines{root: root}
+	ix := newEnclosingIndex(d, root, src)
 	for i, r := range refs {
-		var inner, typ, rel string
-		err := d.QueryRow(`SELECT COALESCE((SELECT s.name || char(31) || s.signature FROM code_symbols s
-				WHERE s.repo_root = ? AND s.file_path = ? AND s.start_line <= ? AND s.end_line >= ?
-				ORDER BY s.end_line - s.start_line LIMIT 1), ''),
-			COALESCE((SELECT t.name FROM code_symbols t
-				WHERE t.repo_root = ? AND t.file_path = ? AND t.kind IN (`+typeKindsSQL+`)
-					AND t.start_line <= ? AND t.end_line >= ?
-				ORDER BY t.end_line - t.start_line LIMIT 1), ''),
-			COALESCE((SELECT e.relation_type FROM code_edges e
+		var rel string
+		var col int
+		err := d.QueryRow(`SELECT COALESCE((SELECT e.relation_type FROM code_edges e
 				WHERE e.repo_root = ? AND e.source_file = ? AND e.source_line = ?
-					AND e.target_symbol IN (?, ?) LIMIT 1), '')`,
-			key, r.File, r.Line, r.Line,
-			key, r.File, r.Line, r.Line,
-			key, r.File, r.Line, name, lastName(name)).Scan(&inner, &typ, &rel)
+					AND e.target_symbol IN (?, ?) LIMIT 1), ''),
+			COALESCE((SELECT e.source_col FROM code_edges e
+				WHERE e.repo_root = ? AND e.source_file = ? AND e.source_line = ?
+					AND e.target_symbol IN (?, ?) LIMIT 1), 0)`,
+			key, r.File, r.Line, name, lastName(name),
+			key, r.File, r.Line, name, lastName(name)).Scan(&rel, &col)
 		if err != nil {
 			continue
 		}
 		out[i].Relation = rel
-		if inner == "" {
-			continue
-		}
-		out[i].Label = callerLabel(inner)
-		// O índice guarda o receptor no cabeçalho da assinatura (Go); nas linguagens em que ele não
-		// está lá, o tipo que envolve a linha é o mesmo dado por outro caminho.
-		if typ != "" && !strings.Contains(out[i].Label, ".") {
-			out[i].Label = typ + "." + out[i].Label
-		}
+		// O índice guarda o receptor no cabeçalho da assinatura (Go); nas linguagens em que ele não está lá, o
+		// tipo que envolve a posição é o mesmo dado por outro caminho (callLabel fecha os dois casos).
+		out[i].Label = ix.label(r.File, r.Line, ix.refCol(r.File, r.Line, col, name))
 	}
 	return out
 }

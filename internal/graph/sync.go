@@ -23,31 +23,44 @@ import (
 // e a busca real responde (o FastExec nunca troca uma resposta por uma espera).
 const SyncBudget = 900 * time.Millisecond
 
+// extractorVersion é a versão do que os scanners GRAVAM (declarações, arestas, coluna da referência). O frescor
+// incremental é por (mtime, hash) do arquivo, então arquivo parado nunca seria re-lido e um parser corrigido não
+// chegaria ao índice já existente: a versão é o único gatilho que faz a re-extração acontecer uma vez por
+// repositório. Suba o número SEMPRE que a saída de um scanner mudar de forma que o índice antigo fique errado.
+const extractorVersion = 2
+
+// staleMtime marca em code_files a linha cuja extração veio de OUTRA versão do extrator: com mtime negativo o
+// frescor por arquivo não tem como casar (mtime e hash do arquivo em disco são sempre >= 0), então o arquivo é
+// relido e reextraído uma vez. O próprio index() reescreve mtime e hash reais, e é assim que a marca desaparece.
+const staleMtime = -1
+
 type meta struct {
 	head  string
 	work  string
 	files int
 	docs  int // Markdown rastreados na passada completa: é o que mantém Stats.Docs verdadeiro no caminho "Fresh"
+	ev    int // versão do extrator que produziu este índice
 }
 
 func readMeta(d *sql.DB, key string) (meta, bool) {
 	var m meta
-	err := d.QueryRow(`SELECT head, work, files, docs FROM code_meta WHERE repo_root = ?`, key).
-		Scan(&m.head, &m.work, &m.files, &m.docs)
+	err := d.QueryRow(`SELECT head, work, files, docs, ev FROM code_meta WHERE repo_root = ?`, key).
+		Scan(&m.head, &m.work, &m.files, &m.docs, &m.ev)
 	return m, err == nil
 }
 
 // sameState diz se o estado já gravado é o do repositório agora — o teste barato que abre toda passada (o porcelano
 // cobre exatamente o que o índice segue). É o mesmo teste das duas pontas: o Sync e o disparo da indexação de fundo.
+// Extrator de outra versão não é o mesmo estado: o índice tem de ser refeito antes de responder.
 func sameState(d *sql.DB, key, head, work string) bool {
 	m, ok := readMeta(d, key)
-	return ok && m.head == head && m.work == work && m.files > 0
+	return ok && m.head == head && m.work == work && m.files > 0 && m.ev == extractorVersion
 }
 
 func writeMeta(d *sql.DB, key, head, work string, files, docs int) error {
-	_, err := d.Exec(`INSERT INTO code_meta (repo_root, head, work, files, docs, checked_at) VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
+	_, err := d.Exec(`INSERT INTO code_meta (repo_root, head, work, files, docs, ev, checked_at) VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP)
 		ON CONFLICT(repo_root) DO UPDATE SET head = excluded.head, work = excluded.work, files = excluded.files,
-			docs = excluded.docs, checked_at = CURRENT_TIMESTAMP`, key, head, work, files, docs)
+			docs = excluded.docs, ev = excluded.ev, checked_at = CURRENT_TIMESTAMP`, key, head, work, files, docs, extractorVersion)
 	return err
 }
 
@@ -150,6 +163,18 @@ func syncWith(root string, o syncOpts) (Stats, error) {
 		return partial(len(files))
 	}
 
+	// Índice de outra versão do extrator: a base de frescor por arquivo é marcada como vencida ANTES da varredura
+	// (mtime = staleMtime, ver o comentário da constante) e o estado é apagado na hora. Marcar em vez de apagar
+	// mantém o nome de cada arquivo, que é o que a passada usa para achar o que sumiu do disco; apagar o estado na
+	// hora é o que impede a marca de ser reaplicada na passada seguinte (uma passada cortada pelo teto continua de
+	// onde parou, em vez de recomeçar a marcação para sempre).
+	if m, ok := readMeta(d, key); ok && m.ev != extractorVersion {
+		if _, err := d.Exec(`UPDATE code_files SET mtime = ? WHERE repo_root = ? AND mtime >= 0`, staleMtime, key); err != nil {
+			return Stats{}, err
+		}
+		_, _ = d.Exec(`DELETE FROM code_meta WHERE repo_root = ?`, key)
+	}
+
 	known := map[string]fileRec{}
 	rows, err := d.Query(`SELECT file_path, mtime, content_hash FROM code_files WHERE repo_root = ?`, key)
 	if err != nil {
@@ -203,7 +228,8 @@ func syncWith(root string, o syncOpts) (Stats, error) {
 		}
 		mtime := info.ModTime().UnixNano()
 		rec, ok := known[rel]
-		if ok && rec.mtime == mtime {
+		stale := ok && rec.mtime < 0 // linha de outra versão do extrator: (mtime, hash) antigos não valem
+		if ok && !stale && rec.mtime == mtime {
 			continue
 		}
 		src, err := os.ReadFile(abs)
@@ -211,7 +237,7 @@ func syncWith(root string, o syncOpts) (Stats, error) {
 			continue
 		}
 		h := contentHash(src)
-		if ok && rec.hash == h {
+		if ok && !stale && rec.hash == h {
 			if _, err := s.touchFile.Exec(mtime, key, rel); err != nil {
 				return st, err
 			}
@@ -261,11 +287,13 @@ func syncWith(root string, o syncOpts) (Stats, error) {
 		return partial(len(files))
 	}
 	// o estado só é gravado se o repositório não mexeu durante a passada: gravar um estado já vencido faria a
-	// próxima chamada pular a passada que ainda falta.
-	if have {
-		if h2, w2, ok2 := gitState(root); ok2 && h2 == head && w2 == work {
-			_ = writeMeta(d, key, head, work, len(files), st.Docs)
-		}
+	// próxima chamada pular a passada que ainda falta. Fora de git (pasta avulsa, ou git que não respondeu) grava
+	// assim mesmo, com head/work vazios: o frescor de lá é por arquivo e não olha este estado, mas é ele que
+	// registra a versão do extrator daquele índice — sem isso uma pasta avulsa nunca seria reextraída.
+	if !have {
+		_ = writeMeta(d, key, head, work, len(files), st.Docs)
+	} else if h2, w2, ok2 := gitState(root); ok2 && h2 == head && w2 == work {
+		_ = writeMeta(d, key, head, work, len(files), st.Docs)
 	}
 	st.Fresh = st.Changed == 0 && st.Removed == 0
 	st.Took = time.Since(start)

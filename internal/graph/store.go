@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS code_edges (
 	repo_root     TEXT NOT NULL,
 	source_file   TEXT NOT NULL,
 	source_line   INTEGER NOT NULL,
+	source_col    INTEGER NOT NULL DEFAULT 0,
 	target_symbol TEXT NOT NULL,
 	relation_type TEXT NOT NULL
 );
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS code_meta (
 	work       TEXT NOT NULL,
 	files      INTEGER NOT NULL,
 	docs       INTEGER NOT NULL DEFAULT 0,
+	ev         INTEGER NOT NULL DEFAULT 0,
 	checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `
@@ -121,6 +123,11 @@ func store() (*sql.DB, error) {
 	}
 	// code_meta ganhou a contagem de Markdown depois: banco criado antes disso recebe a coluna aqui (erro = já existe).
 	_, _ = d.Exec(`ALTER TABLE code_meta ADD COLUMN docs INTEGER NOT NULL DEFAULT 0`)
+	// code_edges ganhou a coluna da referência depois: mesma ideia. Linha antiga fica com 0 e o leitor cai na
+	// posição aproximada pelo texto (enclosing.go não inventa posição que o índice não tem).
+	_, _ = d.Exec(`ALTER TABLE code_edges ADD COLUMN source_col INTEGER NOT NULL DEFAULT 0`)
+	// code_meta ganhou a versão do extrator (extractorVersion, sync.go): banco antigo fica em 0 e é re-extraído.
+	_, _ = d.Exec(`ALTER TABLE code_meta ADD COLUMN ev INTEGER NOT NULL DEFAULT 0`)
 	db = d
 	return db, nil
 }

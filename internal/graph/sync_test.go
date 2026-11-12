@@ -256,3 +256,48 @@ func TestAnswerQueries(t *testing.T) {
 		t.Fatalf("esperava duas declarações (homônimo): %+v err=%v", defs, err)
 	}
 }
+
+// TestSyncReindexesOnExtractorChange: o arquivo está parado no disco, mas o índice foi gravado por outra versão do
+// extrator. O frescor por (mtime, hash) pularia justamente esse arquivo, e é por isso que a versão do extrator faz
+// parte do estado: a passada seguinte reextrai tudo uma vez — sem isso uma correção de parser nunca chegaria a um
+// repositório já indexado.
+func TestSyncReindexesOnExtractorChange(t *testing.T) {
+	isolated(t)
+	root := gitRepo(t, map[string]string{"a.go": "package p\n\nfunc A() {}\n"})
+	if _, err := Refresh(root); err != nil {
+		t.Fatal(err)
+	}
+	d, err := store()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := repoKey(root)
+	// índice de um extrator anterior: o símbolo que ele extraiu some (é o que a correção nova traria de volta) e o
+	// estado não tem a versão atual.
+	if _, err := d.Exec(`DELETE FROM code_symbols WHERE repo_root = ?`, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`UPDATE code_meta SET ev = ? WHERE repo_root = ?`, extractorVersion-1, key); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Refresh(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Changed != 1 {
+		t.Fatalf("índice de outra versão tem de ser reextraído mesmo com o arquivo parado: %+v", st)
+	}
+	if defs, err := Definitions(root, "A"); err != nil || len(defs) != 1 {
+		t.Fatalf("o símbolo perdido tinha de voltar: %+v err=%v", defs, err)
+	}
+	m, ok := readMeta(d, key)
+	if !ok || m.ev != extractorVersion {
+		t.Fatalf("a passada completa grava a versão do extrator: %+v ok=%v", m, ok)
+	}
+	// com a versão certa gravada, o arquivo parado volta a ser pulado (a marca é de uma passada só).
+	st, err = Refresh(root)
+	if err != nil || st.Changed != 0 || !st.Fresh {
+		t.Fatalf("com a versão certa o arquivo parado é pulado: %+v %v", st, err)
+	}
+}

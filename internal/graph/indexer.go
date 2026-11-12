@@ -243,7 +243,7 @@ func prepare(tx *sql.Tx) (*stmts, error) {
 		{&s.delEdge, `DELETE FROM code_edges WHERE repo_root = ? AND source_file = ?`},
 		{&s.delFile, `DELETE FROM code_files WHERE repo_root = ? AND file_path = ?`},
 		{&s.insSym, `INSERT INTO code_symbols (repo_root, file_path, name, kind, signature, start_line, end_line, is_exported) VALUES (?,?,?,?,?,?,?,?)`},
-		{&s.insEdge, `INSERT INTO code_edges (repo_root, source_file, source_line, target_symbol, relation_type) VALUES (?,?,?,?,?)`},
+		{&s.insEdge, `INSERT INTO code_edges (repo_root, source_file, source_line, source_col, target_symbol, relation_type) VALUES (?,?,?,?,?,?)`},
 		{&s.upFile, `INSERT INTO code_files (repo_root, file_path, mtime, content_hash, indexed_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP)
 			ON CONFLICT(repo_root, file_path) DO UPDATE SET mtime = excluded.mtime, content_hash = excluded.content_hash, indexed_at = CURRENT_TIMESTAMP`},
 		{&s.touchFile, `UPDATE code_files SET mtime = ? WHERE repo_root = ? AND file_path = ?`},
@@ -295,7 +295,7 @@ func (s *stmts) index(key, rel string, src []byte, mtime int64, hash string) ([]
 		}
 	}
 	for _, r := range refs {
-		if _, err := s.insEdge.Exec(key, rel, r.Line, r.Target, r.Rel); err != nil {
+		if _, err := s.insEdge.Exec(key, rel, r.Line, r.Col, r.Target, r.Rel); err != nil {
 			return nil, err
 		}
 	}
@@ -319,7 +319,7 @@ func (s *stmts) docEdges(key, rel string, refs []DocRef, ix *docIndex) error {
 			continue
 		}
 		seen[k] = true
-		if _, err := s.insEdge.Exec(key, rel, r.Line, t, r.Kind); err != nil {
+		if _, err := s.insEdge.Exec(key, rel, r.Line, 0, t, r.Kind); err != nil {
 			return err
 		}
 	}

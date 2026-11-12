@@ -130,40 +130,43 @@ func Callers(root, symbol string, max, depth int) (string, error) {
 		want = qualifierType(symbol, decl)
 	}
 	src := &srcLines{root: root}
-	// the innermost symbol that contains the call site is the caller: naming it saves the agent a read per line
-	rows, err := d.Query(`SELECT e.source_file, e.source_line, e.relation_type,
-			COALESCE((SELECT s.name || char(31) || s.signature FROM code_symbols s
-				WHERE s.repo_root = e.repo_root AND s.file_path = e.source_file
-					AND s.start_line <= e.source_line AND s.end_line >= e.source_line
-				ORDER BY s.end_line - s.start_line LIMIT 1), ''),
-			COALESCE((SELECT t.name FROM code_symbols t
-				WHERE t.repo_root = e.repo_root AND t.file_path = e.source_file AND t.kind IN (`+typeKindsSQL+`)
-					AND t.start_line <= e.source_line AND t.end_line >= e.source_line
-				ORDER BY t.end_line - t.start_line LIMIT 1), '')
+	ix := newEnclosingIndex(d, root, src)
+	// the innermost symbol that contains the call site is the caller: naming it saves the agent a read per line.
+	// O símbolo sai por linha E coluna (enclosing.go): só a linha confundia os membros declarados na mesma linha.
+	rows, err := d.Query(`SELECT e.source_file, e.source_line, e.source_col, e.relation_type
 		FROM code_edges e
 		WHERE e.repo_root = ? AND e.target_symbol = ? AND e.relation_type IN ('calls','references','renders')
 		ORDER BY e.source_file, e.source_line`, repoKey(root), name)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	// as linhas são lidas todas antes de qualquer outra consulta: o pool tem UMA conexão (store.go), então
+	// consultar dentro do laço de rows travava o próprio rows aberto.
+	type callSite struct {
+		file, rel string
+		line, col int
+	}
+	var sites []callSite
+	for rows.Next() {
+		var s callSite
+		if err := rows.Scan(&s.file, &s.line, &s.col, &s.rel); err != nil {
+			rows.Close()
+			return "", err
+		}
+		sites = append(sites, s)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	files := map[string]bool{}
 	excluded := map[string]int{}
 	total := 0
-	for rows.Next() {
-		var f, rel, in, typ string
-		var line int
-		if err := rows.Scan(&f, &line, &rel, &in, &typ); err != nil {
-			return "", err
-		}
-		label := ""
-		if in != "" {
-			label = callerLabel(in)
-			if typ != "" && !strings.Contains(label, ".") {
-				label = typ + "." + label
-			}
-		}
+	for _, c := range sites {
+		f, line, rel := c.file, c.line, c.rel
+		label, typ := ix.labelType(f, line, ix.refCol(f, line, c.col, name))
 		via := ""
 		if homonym {
 			recv, found := receiverOf(src.line(f, line), name)

@@ -450,3 +450,82 @@ public class C
 		t.Error("ParseCSharp não deveria responder por .go")
 	}
 }
+
+// csTinyRepo monta o caso minimo: membros de expressao declarados na MESMA linha da classe, um por linha, e um
+// arquivo de topo que chama os dois. E o fixture que separa "linha" de "posicao" (ver enclosing.go).
+func csTinyRepo(t *testing.T) string {
+	t.Helper()
+	SetDBPath(filepath.Join(t.TempDir(), "graph.db"))
+	t.Cleanup(func() { SetDBPath("") })
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"Tiny.csproj": `<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+</Project>
+`,
+		"Animals.cs": `public class Dog { public string Speak() => "woof"; }
+public class Cat { public string Speak() => "meow"; }
+public static class Greeter {
+    public static string Greet(string name, bool loud)
+    {
+        var d = new Dog();
+        return loud ? d.Speak().ToUpper() + name : name;
+    }
+}
+`,
+		"Program.cs": `Console.WriteLine(Greeter.Greet("x", true) + new Cat().Speak() + new Dog().Speak());
+`,
+	}
+	for name, body := range files {
+		p := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Refresh(root); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// TestCSharpMembrosDeExpressao cobre os dois lados de uma so vez: a declaracao de expressao conta como declaracao
+// (nao como chamada) e o simbolo que envolve uma chamada sai por linha E coluna.
+func TestCSharpMembrosDeExpressao(t *testing.T) {
+	root := csTinyRepo(t)
+
+	got, _ := Definition(root, "Speak")
+	sites := strings.Count(got, "- Animals.cs:")
+	if sites != 2 {
+		t.Errorf("Definition Speak = %d declaracoes, quer 2:\n%s", sites, got)
+	}
+	if !strings.Contains(got, "Animals.cs:1-1 (method)") || !strings.Contains(got, "Animals.cs:2-2 (method)") {
+		t.Errorf("declaracoes de Speak fora de lugar:\n%s", got)
+	}
+
+	got, _ = Callers(root, "Speak", 0, 1)
+	// 3 chamadas reais: Animals.cs:7 e as DUAS de Program.cs:1 (nao 3: e uma linha so). A declaracao nao entra.
+	if n := strings.Count(got, "- "); n != 3 {
+		t.Errorf("Callers Speak = %d chamadas, quer 3 (Animals.cs:7 + Program.cs:1 x2):\n%s", n, got)
+	}
+	for _, w := range []string{"Animals.cs:7", "Program.cs:1", "Total: 3 references in 2 files"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("Callers Speak sem %q:\n%s", w, got)
+		}
+	}
+	// o envolvente e Greet (linhas 4-8), nao Greeter (3-9): menor simbolo que CONTEM a posicao
+	if !strings.Contains(got, "Animals.cs:7 in Greeter.Greet") {
+		t.Errorf("envolvente da chamada em Animals.cs:7 errado:\n%s", got)
+	}
+	// a chamada em Animals.cs:7 e o membro de expressao na MESMA linha da classe: a declaracao nao pode virar caller
+	if strings.Contains(got, "Animals.cs:1") || strings.Contains(got, "Animals.cs:2") {
+		t.Errorf("declaracao de expressao listada como chamada:\n%s", got)
+	}
+}

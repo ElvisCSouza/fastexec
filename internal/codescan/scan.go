@@ -13,8 +13,13 @@ type Decl struct {
 }
 
 // Ref é uma referência saindo do arquivo: chamada, import ou uso de nome importado.
+//
+// Col é a coluna 1-based do nome na linha (0 = o scanner não sabe). Só quem consegue posicionar o nome preenche:
+// o C# precisa dela porque declara membro e classe na MESMA linha, e aí a linha sozinha não diz qual símbolo
+// contém a referência (ver enclosing.go). Os demais scanners deixam 0 e continuam valendo pela linha.
 type Ref struct {
 	Line   int
+	Col    int
 	Target string
 	Rel    string // "calls", "imports", "references"
 }

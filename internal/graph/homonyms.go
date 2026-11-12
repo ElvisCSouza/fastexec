@@ -17,7 +17,20 @@ import (
 	"strings"
 )
 
-const typeKindsSQL = `'class','struct','interface','record','enum','object','trait','union'`
+// typeKinds são os kinds que DECLARAM outros símbolos (podem envolvê-los); typeKindsSQL é a mesma lista para o
+// SQL, derivada dela para as duas nunca divergirem (enclosing.go decide em Go o que as consultas decidiam em SQL).
+var typeKinds = []string{"class", "struct", "interface", "record", "enum", "object", "trait", "union"}
+
+var typeKindsSQL = `'` + strings.Join(typeKinds, "','") + `'`
+
+func isTypeKind(kind string) bool {
+	for _, k := range typeKinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
 
 // declaringTypes devolve os tipos (classes) que declaram um método/função com esse nome, sem repetição e em ordem.
 func declaringTypes(d *sql.DB, root, name string) []string {
