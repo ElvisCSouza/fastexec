@@ -90,6 +90,83 @@ func (we *WorkspaceEdit) Files() []string {
 	return out
 }
 
+// Sizes counts, per absolute path, how many text edits the edit carries (a
+// create, rename or delete counts as one). It answers "how big is this rename"
+// before anything is written, which is what the caller needs to decide whether
+// to apply it at all.
+func (we *WorkspaceEdit) Sizes() (map[string]int, error) {
+	ops, err := we.operations()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int, len(ops))
+	for _, op := range ops {
+		n := len(op.edits)
+		if op.kind != opEdit {
+			n = 1
+		}
+		if n == 0 {
+			n = 1
+		}
+		out[op.path] += n
+	}
+	return out, nil
+}
+
+// Spots lists where the edit changes text: one location per text edit, at the start of the range it
+// replaces; a create, rename or delete is reported once, at the file. Callers use it to tell the model
+// which file:line moved, not just which files — the same job Sites does for an exact answer.
+func (we *WorkspaceEdit) Spots() ([]Location, error) {
+	ops, err := we.operations()
+	if err != nil {
+		return nil, err
+	}
+	var out []Location
+	for _, op := range ops {
+		if op.kind != opEdit {
+			out = append(out, Location{URI: PathToURI(op.path)})
+			continue
+		}
+		for _, e := range op.edits {
+			out = append(out, Location{URI: PathToURI(op.path), Range: e.Range})
+		}
+	}
+	return out, nil
+}
+
+// ResultFor returns what this edit would make of text, for one file, without
+// touching the disk. ok is false when the edit has nothing for that path.
+//
+// It exists so a caller can check an edit before applying it: the file the user
+// is editing already has a known post-image, and the server's version of that
+// same file must agree with it, or the edit is about something else and must
+// not be applied.
+func (we *WorkspaceEdit) ResultFor(path, text string) (result string, ok bool, err error) {
+	abs, err := absPath(path)
+	if err != nil {
+		return "", false, err
+	}
+	ops, err := we.operations()
+	if err != nil {
+		return "", false, err
+	}
+	for _, op := range ops {
+		if op.kind != opEdit || op.path != abs {
+			continue
+		}
+		eol := textenc.LineEnding(text)
+		if eol == "" {
+			eol = "\n"
+		}
+		out, err := ApplyTextEdits(text, op.edits, eol)
+		if err != nil {
+			return "", false, err
+		}
+		return out, true, nil
+	}
+	return "", false, nil
+}
+
 // ---------------------------------------------------------------------------
 // Normalisation
 // ---------------------------------------------------------------------------
@@ -214,6 +291,12 @@ type ApplyOptions struct {
 	// UndoDir receives the reverse patch. Empty disables the patch (tests, dry
 	// runs).
 	UndoDir string
+	// Skip lists absolute paths this call must not write, even though the edit
+	// touches them. A caller that is writing one file itself (the file the user
+	// asked to edit) passes it here so the server's edit for that file is
+	// computed, checked and then left alone: writing it twice would either
+	// duplicate the change or undo it.
+	Skip map[string]bool
 	// DryRun computes everything and writes nothing.
 	DryRun bool
 	// Logf, when set, receives one line per touched file.
@@ -265,6 +348,19 @@ func ApplyWorkspaceEdit(we *WorkspaceEdit, opts ApplyOptions) (*ApplyResult, err
 	ops, err := we.operations()
 	if err != nil {
 		return nil, err
+	}
+	if len(opts.Skip) > 0 {
+		kept := make([]editOp, 0, len(ops))
+		for _, op := range ops {
+			if opts.Skip[op.path] {
+				continue
+			}
+			kept = append(kept, op)
+		}
+		ops = kept
+		if len(ops) == 0 {
+			return &ApplyResult{}, nil
+		}
 	}
 	if err := checkVersions(ops, opts.Versions); err != nil {
 		return nil, err
@@ -542,9 +638,15 @@ func writePatch(dir, body string) (string, error) {
 // Text edit application
 // ---------------------------------------------------------------------------
 
-// applyTextEdits applies the edits of one document. eol is the file's existing
+// ApplyTextEdits applies the edits of one document. eol is the file's existing
 // line ending: servers always send "\n", and inserting LF into a CRLF file
-// would leave it with mixed endings.
+// would leave it with mixed endings. Exported so a caller can preview or apply
+// a plain list of edits (a quickfix, a format run) with the same rules the
+// WorkspaceEdit applier uses.
+func ApplyTextEdits(text string, edits []TextEdit, eol string) (string, error) {
+	return applyTextEdits(text, edits, eol)
+}
+
 func applyTextEdits(text string, edits []TextEdit, eol string) (string, error) {
 	type span struct {
 		start, end int
@@ -861,19 +963,66 @@ func encodingOf(data string) string {
 // ---------------------------------------------------------------------------
 
 // ApplyEdit applies a WorkspaceEdit returned by this server, validating the
-// versions of the documents it has open. The reverse patch goes to
-// <data_dir>/undo/ unless undoDir is given.
-func (c *Client) ApplyEdit(we *WorkspaceEdit, undoDir string) (*ApplyResult, error) {
-	opts := ApplyOptions{
-		Root:     c.root,
-		Versions: c.openVersions(),
-		UndoDir:  undoDir,
-		Logf:     c.cfg.Logf,
+// versions of the documents it has open. Fields left empty in opts are filled
+// from the client: Root, Versions, UndoDir (<data_dir>/undo) and Logf.
+//
+// When the edit lands, the documents it wrote are re-synced: the server would
+// otherwise keep the bytes it had before, and the next query would answer about
+// a file that no longer exists on disk.
+func (c *Client) ApplyEdit(we *WorkspaceEdit, opts ApplyOptions) (*ApplyResult, error) {
+	if opts.Root == "" {
+		opts.Root = c.root
+	}
+	if opts.Versions == nil {
+		opts.Versions = c.openVersions()
 	}
 	if opts.UndoDir == "" {
 		opts.UndoDir = DefaultUndoDir()
 	}
-	return ApplyWorkspaceEdit(we, opts)
+	if opts.Logf == nil {
+		opts.Logf = c.cfg.Logf
+	}
+	res, err := ApplyWorkspaceEdit(we, opts)
+	if err != nil {
+		return nil, err
+	}
+	c.syncAfterApply(res)
+	return res, nil
+}
+
+// syncAfterApply brings the client's open-document set in line with what the
+// edit just wrote: a written file is re-sent, a file that is gone is closed.
+// Failures are ignored — the write already happened, and a stale document only
+// costs accuracy on the next query, never the edit.
+func (c *Client) syncAfterApply(res *ApplyResult) {
+	if res == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	join := func(rel string) string {
+		if filepath.IsAbs(rel) {
+			return rel
+		}
+		return filepath.Join(c.root, filepath.FromSlash(rel))
+	}
+	for _, rel := range res.Edited {
+		_ = c.ensureOpen(ctx, join(rel))
+	}
+	for _, rel := range res.Created {
+		_ = c.ensureOpen(ctx, join(rel))
+	}
+	for _, rel := range res.Deleted {
+		_ = c.closeDoc(ctx, join(rel))
+	}
+	for _, rn := range res.Renamed {
+		old, neu, ok := strings.Cut(rn, " -> ")
+		if !ok {
+			continue
+		}
+		_ = c.closeDoc(ctx, join(old))
+		_ = c.closeDoc(ctx, join(neu))
+	}
 }
 
 func (c *Client) openVersions() map[string]int {
@@ -892,7 +1041,7 @@ func DefaultUndoDir() string { return filepath.Join(config.Home(), "undo") }
 // RenameAndApply is the whole rename in one call: prepare, compute, apply. It
 // exists so a caller that has already decided to rename does not have to walk
 // the three steps and risk applying an edit it did not validate.
-func (c *Client) RenameAndApply(ctx context.Context, path string, pos Position, newName, undoDir string) (*ApplyResult, error) {
+func (c *Client) RenameAndApply(ctx context.Context, path string, pos Position, newName string, opts ApplyOptions) (*ApplyResult, error) {
 	we, err := c.Rename(ctx, path, pos, newName)
 	if err != nil {
 		return nil, err
@@ -900,5 +1049,5 @@ func (c *Client) RenameAndApply(ctx context.Context, path string, pos Position, 
 	if we == nil {
 		return nil, fmt.Errorf("lsp: server returned no edit for rename to %q", newName)
 	}
-	return c.ApplyEdit(we, undoDir)
+	return c.ApplyEdit(we, opts)
 }

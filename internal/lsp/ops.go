@@ -294,6 +294,39 @@ func (c *Client) Diagnostics(ctx context.Context, path string, settle time.Durat
 	}
 }
 
+// Published returns the diagnostics the server last pushed for a file, without asking it anything.
+// It is the state the client already holds, and it is what a caller needs as the "before" of an edit:
+// against it, the diagnostics that come back afterwards can be told apart into the ones the edit
+// caused and the ones that were already there. Asking Diagnostics instead would wait for a fresh
+// publish, which for a file nothing touched never comes.
+func (c *Client) Published(path string) []Diagnostic {
+	abs, err := absOf(path)
+	if err != nil {
+		return nil
+	}
+	uri := PathToURI(abs)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]Diagnostic, len(c.diags[uri]))
+	copy(out, c.diags[uri])
+	return out
+}
+
+// Diagnosed reports whether the server has published diagnostics for a file at least once.
+//
+// It is what tells an empty Published apart from an unknown one: a file the server never looked at
+// has no baseline, and "no errors" cannot be claimed about it — nor can any later error be called new.
+func (c *Client) Diagnosed(path string) bool {
+	abs, err := absOf(path)
+	if err != nil {
+		return false
+	}
+	uri := PathToURI(abs)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.diagSeq[uri] > 0
+}
+
 // CodeActions returns fixes for a range. only filters by kind prefix, e.g.
 // "quickfix" or "source.organizeImports".
 func (c *Client) CodeActions(ctx context.Context, path string, rng Range, only []string) ([]CodeAction, error) {
