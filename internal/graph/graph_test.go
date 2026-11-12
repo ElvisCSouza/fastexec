@@ -96,7 +96,7 @@ func body(s string) string {
 
 func TestCallersExatos(t *testing.T) {
 	root := fixture(t)
-	got, err := Callers(root, "helper", 0)
+	got, err := Callers(root, "helper", 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,11 +104,11 @@ func TestCallersExatos(t *testing.T) {
 	if body(got) != want {
 		t.Errorf("callers helper:\n%s\nquer:\n%s", got, want)
 	}
-	got, _ = Callers(root, "store.NewEntry", 0)
+	got, _ = Callers(root, "store.NewEntry", 0, 1)
 	if body(got) != "=== callers of 'NewEntry' ===\n- app/app.go:6 in Run (calls)\nTotal: 1 references in 1 files." {
 		t.Errorf("callers NewEntry:\n%s", got)
 	}
-	got, err = Callers(root, "fmt", 0)
+	got, err = Callers(root, "fmt", 0, 1)
 	if err != nil {
 		t.Fatalf("callers fmt: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestImpactArquivo(t *testing.T) {
 
 func TestRuidoForaDoIndice(t *testing.T) {
 	root := fixture(t)
-	got, _ := Callers(root, "helper", 0)
+	got, _ := Callers(root, "helper", 0, 1)
 	if strings.Contains(got, "node_modules") || strings.Contains(got, "vendor") {
 		t.Errorf("ruído indexado:\n%s", got)
 	}
@@ -182,7 +182,7 @@ func TestIncremental(t *testing.T) {
 	if st.Changed != 1 {
 		t.Errorf("1 arquivo mudou: Changed=%d", st.Changed)
 	}
-	got, _ := Callers(root, "helper", 0)
+	got, _ := Callers(root, "helper", 0, 1)
 	if !strings.Contains(got, "Total: 3 references in 2 files.") {
 		t.Errorf("depois da mudança:\n%s", got)
 	}
@@ -219,11 +219,11 @@ func TestIsolamentoEntreRepos(t *testing.T) {
 	if _, err := Refresh(b); err != nil {
 		t.Fatal(err)
 	}
-	got, _ := Callers(a, "helper", 0)
+	got, _ := Callers(a, "helper", 0, 1)
 	if strings.Contains(got, "x.go") {
 		t.Errorf("repo A viu símbolo do repo B:\n%s", got)
 	}
-	got, _ = Callers(b, "helper", 0)
+	got, _ = Callers(b, "helper", 0, 1)
 	if body(got) != "=== callers of 'helper' ===\n- x.go:3 in y (calls)\nTotal: 1 references in 1 files." {
 		t.Errorf("repo B:\n%s", got)
 	}
@@ -267,7 +267,7 @@ func TestLimiteDeArquivosRecusaIndexar(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "[FastExec Graph]") || !strings.Contains(err.Error(), ".gitignore") {
 		t.Fatalf("repositório acima do limite deveria ser recusado: %v", err)
 	}
-	if _, err := Callers(root, "helper", 0); err == nil {
+	if _, err := Callers(root, "helper", 0, 1); err == nil {
 		t.Error("consulta também deveria recusar (indexa antes)")
 	}
 	d, _ := store()
@@ -301,7 +301,7 @@ func TestCleanRemoveSoORepositorioPedido(t *testing.T) {
 	if len(repos) != 1 || !strings.Contains(repos[0], "(1 files)") {
 		t.Errorf("depois do Clean(a) só o repo b deveria restar: %v", repos)
 	}
-	got, _ := Callers(b, "helper", 0)
+	got, _ := Callers(b, "helper", 0, 1)
 	if !strings.Contains(got, "- x.go:3 in y (calls)") {
 		t.Errorf("repo b afetado pelo Clean(a):\n%s", got)
 	}

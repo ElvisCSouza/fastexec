@@ -1,5 +1,5 @@
 {
-  "wire_bytes": 6080,
+  "wire_bytes": 6150,
   "result": {
     "tools": [
       {
@@ -130,9 +130,12 @@
               "type": "string",
               "description": "'callers', 'def', 'impact' or 'index'"
             },
-            "max": {
+            "depth": {
               "type": "integer",
-              "description": "Max lines"
+              "description": "'callers': 1 direct (default), up to 4 = whole chain"
+            },
+            "max": {
+              "type": "integer"
             },
             "repo_path": {
               "type": "string",

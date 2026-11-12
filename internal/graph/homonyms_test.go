@@ -83,7 +83,7 @@ func csFixture(t *testing.T) string {
 
 func TestCallersHomonimosMostramReceptorETipo(t *testing.T) {
 	root := csFixture(t)
-	got, err := Callers(root, "Calcular", 0)
+	got, err := Callers(root, "Calcular", 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestCallersHomonimosMostramReceptorETipo(t *testing.T) {
 
 func TestCallersQualificadoFiltraOutroTipo(t *testing.T) {
 	root := csFixture(t)
-	got, err := Callers(root, "ScfService.Calcular", 0)
+	got, err := Callers(root, "ScfService.Calcular", 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestCallersQualificadoFiltraOutroTipo(t *testing.T) {
 
 func TestCallersSemHomonimoNaoGastaTokenExtra(t *testing.T) {
 	root := csFixture(t)
-	got, err := Callers(root, "Duplicata", 0)
+	got, err := Callers(root, "Duplicata", 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

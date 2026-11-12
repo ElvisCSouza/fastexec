@@ -242,7 +242,7 @@ func tryGraphSearch(args ExecArgs, label string) (out string, handled bool, note
 	if graphRepeat(key) {
 		return "", false, GraphMarkRepeat + ": raw search output because this exact command was repeated."
 	}
-	callers, _ := graph.Callers(root, req.pattern, 60)
+	callers, _ := graph.Callers(root, req.pattern, 60, 1)
 	callers = keepUnder(callers, sub)
 
 	where := filepath.Base(root)

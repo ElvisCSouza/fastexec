@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"homelab/fastexec/internal/graph"
@@ -14,13 +15,25 @@ import (
 )
 
 const graphUsage = `Usage:
-  fastexec graph callers <symbol> [repo_path]
+  fastexec graph callers <symbol> [repo_path] [depth=N]   (1 = direct callers, up to 4 = transitive closure)
   fastexec graph def <symbol> [repo_path]
   fastexec graph impact <file_or_symbol> [repo_path]
   fastexec graph outline <file>
   fastexec graph index [repo_path]   (full rebuild)
   fastexec graph clean [repo_path]   (drop the repository's index; works even if the repo is gone)
   fastexec graph repos               (list indexed repositories)`
+
+// graphDepth lê "depth=N" (ou "--depth=N") dos argumentos extras de 'callers'; ausente ou inválido = 1.
+func graphDepth(rest []string) int {
+	for _, a := range rest {
+		if v, ok := strings.CutPrefix(strings.TrimLeft(a, "-"), "depth="); ok {
+			if n, err := strconv.Atoi(v); err == nil {
+				return n
+			}
+		}
+	}
+	return 1
+}
 
 // runGraph devolve o código de saída.
 func runGraph(args []string) int {
@@ -102,7 +115,7 @@ func runGraph(args []string) int {
 	}
 	switch action {
 	case "callers":
-		return printResult(graph.Callers(root, rest[0], 0))
+		return printResult(graph.Callers(root, rest[0], 0, graphDepth(rest[1:])))
 	case "def":
 		return printResult(graph.Definition(root, rest[0]))
 	case "impact":

@@ -15,6 +15,7 @@ type CodeGraphArgs struct {
 	Target   string `json:"target"`
 	RepoPath string `json:"repo_path"`
 	Max      int    `json:"max"`
+	Depth    int    `json:"depth"`
 }
 
 func HandleCodeGraph(args CodeGraphArgs) (string, error) {
@@ -36,7 +37,7 @@ func HandleCodeGraph(args CodeGraphArgs) (string, error) {
 		if err := need(args.Symbol, "symbol"); err != nil {
 			return "", err
 		}
-		return graph.Callers(root, args.Symbol, args.Max)
+		return graph.Callers(root, args.Symbol, args.Max, args.Depth)
 	case "def", "definition":
 		if err := need(args.Symbol, "symbol"); err != nil {
 			return "", err

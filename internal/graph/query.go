@@ -16,6 +16,32 @@ import (
 
 const DefaultMax = 200
 
+// fewDirectCallerFiles é o teto de arquivos não-teste (distintos) que conta como "poucos chamadores" na dica de
+// depth: com até 3 arquivos diretos, o que responde a pergunta provavelmente está a um ou dois saltos.
+const fewDirectCallerFiles = 3
+
+// deepHint monta a dica de depth para uma resposta de depth 1. Ela só é anexada quando vale os ~50 bytes: nenhum
+// arquivo de teste no resultado, poucos arquivos não-teste, e o fecho até depth 3 com MAIS símbolos do que a lista
+// direta — ou seja, quando o que responde está mesmo escondido. Sem esse último critério a linha apareceria em toda
+// consulta pequena (inclusive numa cadeia A->B que acaba ali), que é justamente o gasto que a regra evita.
+func deepHint(d *sql.DB, root, name string, max int, tests []string, others int) string {
+	if len(tests) > 0 || others > fewDirectCallerFiles {
+		return ""
+	}
+	levels, _, _, _, err := callerLevels(d, root, name, max, 3)
+	if err != nil || len(levels) == 0 {
+		return ""
+	}
+	deeper := 0
+	for _, l := range levels[1:] {
+		deeper += len(l)
+	}
+	if deeper <= len(levels[0]) {
+		return ""
+	}
+	return fmt.Sprintf("\ntransitive: depth=3 reaches %d more symbols.", deeper)
+}
+
 func lastName(sym string) string {
 	if i := strings.LastIndex(sym, "."); i >= 0 && i < len(sym)-1 {
 		return sym[i+1:]
@@ -39,7 +65,6 @@ func ready(root string) (*sql.DB, Stats, error) {
 	return d, st, err
 }
 
-// Callers lista onde o símbolo é chamado ou referenciado.
 var goReceiverRe = regexp.MustCompile(`^func\s*\(\s*(?:\w+\s+)?\*?\s*([A-Za-z_]\w*)(?:\[[^\]]*\])?\s*\)`)
 
 // callerLabel turns the "name<US>signature" of an enclosing symbol into the name shown to the agent: Go methods
@@ -52,7 +77,10 @@ func callerLabel(nameAndSig string) string {
 	return name
 }
 
-func Callers(root, symbol string, max int) (string, error) {
+// Callers lista onde o símbolo é chamado/referenciado. depth 1 (padrão e comportamento de sempre) é um salto só;
+// depth>1 devolve o fecho transitivo agrupado por nível, com a linha "tests:" e o tratamento de homônimos
+// (ver transitive.go).
+func Callers(root, symbol string, max, depth int) (string, error) {
 	if max <= 0 {
 		max = DefaultMax
 	}
@@ -61,6 +89,9 @@ func Callers(root, symbol string, max int) (string, error) {
 		return "", err
 	}
 	name := lastName(symbol)
+	if depth > 1 {
+		return deepCallers(d, st, root, name, max, depth)
+	}
 	// homônimos: o mesmo nome declarado em mais de um tipo (ver homonyms.go)
 	decl := declaringTypes(d, root, name)
 	homonym := len(decl) >= 2
@@ -141,6 +172,10 @@ func Callers(root, symbol string, max int) (string, error) {
 		fmt.Fprintf(&b, "... %d more (raise 'max')\n", total-max)
 	}
 	head := fmt.Sprintf("=== callers of '%s' ===\n", name)
+	tests, others := splitTestFiles(files)
+	if len(tests) > 0 { // só quando existe teste: sem isso, depth 1 continua com a saída de sempre
+		head += fmt.Sprintf("tests: %d files: %s\n", len(tests), strings.Join(tests, ", "))
+	}
 	if homonym {
 		head += fmt.Sprintf("NOTE: '%s' is declared in %d types (%s); references are matched by name. 'via' is the call's receiver and '->' the type it points to by the receiver's name ('?' = undecided). Pass symbol='Type.%s' to keep only one type's.\n", name, len(decl), strings.Join(decl, ", "), name)
 	}
@@ -154,6 +189,9 @@ func Callers(root, symbol string, max int) (string, error) {
 		}
 		sort.Strings(ks)
 		tail += fmt.Sprintf("\n[excluded %d reference(s) whose receiver points to another type: %s]", n, strings.Join(ks, ", "))
+	}
+	if total > 0 {
+		tail += deepHint(d, root, name, max, tests, others)
 	}
 	return head + b.String() + tail + indexNote(st), nil
 }

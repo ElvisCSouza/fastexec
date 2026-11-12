@@ -203,6 +203,19 @@ files are reparsed):
 - `impact`: files that use what a file or symbol defines (check before refactoring);
 - `index`: full rebuild.
 
+`callers` takes an optional `depth` (1 = direct callers, the default and the same output as always; up to 4). With
+`depth` > 1 the answer is the transitive closure, deduplicated: one line per symbol, grouped by level (`depth 1:`,
+`depth 2:`, ...), each with `file:line` and the enclosing symbol. So "what reaches this function, directly or
+indirectly" is one call instead of climbing the graph hop by hop. A cycle (`A` calls `B` calls `A`) dries out: the
+starting symbol never comes back. `max` limits the lines shown in total (the footer always carries the real total),
+and the levels past the frontier cap stop there. When the result contains test files (`_test.go`, `.test.ts`,
+`test_*.py`, a `tests/`/`spec/` folder), a line `tests: N files: a, b, c` comes first, which answers "which tests
+exercise this" without another call. At `depth` 1, when the direct callers are few, none of them is a test and the
+closure reaches further, one line `transitive: depth=3 reaches N more symbols.` points at `depth`; nothing is added
+in the other cases. Homonyms reuse the same treatment as `depth` 1: a name declared in more than one type shows the
+call's receiver and the type it points at (`via x -> Type`, `-> ?` when undecided) and is listed in a final `NOTE:`
+line; no link is invented.
+
 Go is parsed with `go/ast`; C/C++, TypeScript/JavaScript, Python, shell and PowerShell with line scanners,
 matched by name without type resolution (in C/C++: function and method definitions, classes, structs, unions,
 enums, `#define`, `using` aliases, `#include`; prototypes are not declarations).
@@ -231,3 +244,5 @@ loading it, `enable`/`disable` add or remove them from the tool list (the client
 The same binary is a CLI: `fastexec exec [host] <command>`, `get`, `put`, `sql`, `job`, `ping`, `stats`, `graph`,
 `handoff`, `config`, `token`, `setup`, `doctor`, `daemon <status|start|stop>`, `version`. Run with no arguments
 (or `mcp`) it is the MCP server.
+
+`fastexec graph callers <symbol> [repo_path] [depth=N]` is the same query as the tool, including `depth` > 1.
