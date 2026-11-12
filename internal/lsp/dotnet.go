@@ -2,7 +2,10 @@ package lsp
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -53,28 +56,50 @@ func csharpCustomize(root string) (args, env []string, problem string) {
 
 	if sln := firstMatch(root, "*.sln"); sln != "" {
 		args = append(args, "--solution", sln)
-	} else if proj := soleProject(root); proj != "" {
-		// csharp-ls 0.16 does NOT discover a bare .csproj: without --solution and
-		// without a single .sln at the root it logs "0 solution(s) found" and
-		// loads nothing (every query then answers "project did not load"). It
-		// does accept a project file as the --solution argument.
-		args = append(args, "--solution", proj)
+	} else if auto := autoSolution(root); auto != "" {
+		// csharp-ls 0.16 loads a SOLUTION and nothing else: without a single .sln
+		// at the root it logs "0 solution(s) found", and given a bare .csproj it
+		// starts and then answers every query with no definition. A repository
+		// with projects and no solution gets one written for the server, outside
+		// the repository (see autoSolution).
+		args = append(args, "--solution", auto)
 	}
 	return args, env, ""
 }
 
-// soleProject is the project file to hand to csharp-ls when the repository has
-// no solution: a .csproj at the root, else the first project the walk finds
-// (sorted, so the choice is stable). Empty when there is none. The path is
-// relative to root, which is the server's working directory.
-func soleProject(root string) string {
-	if p := firstMatch(root, "*.csproj"); p != "" {
-		return p
+// maxAutoSolutionProjects bounds the generated solution: a repository with more
+// projects than this and no solution of its own is not one a guess serves well.
+const maxAutoSolutionProjects = 60
+
+// autoSolution writes a minimal .sln that lists the projects under root and
+// returns its path, or "" when there is nothing to list. The file lives in the
+// OS temp folder under a name derived from root, never inside the user's
+// repository: FastExec does not add files to a repository on its own. The
+// content is deterministic, so a second launch rewrites the same bytes.
+func autoSolution(root string) string {
+	projects := walkProjects(root)
+	if len(projects) == 0 || len(projects) > maxAutoSolutionProjects {
+		return ""
 	}
-	if ps := loadableProjects(root); len(ps) > 0 {
-		return relTo(root, ps[0])
+	sum := sha1.Sum([]byte(strings.ToLower(filepath.Clean(root))))
+	dir := filepath.Join(os.TempDir(), "fastexec-lsp-sln", hex.EncodeToString(sum[:6]))
+	if os.MkdirAll(dir, 0o755) != nil {
+		return ""
 	}
-	return ""
+	var b strings.Builder
+	b.WriteString("\r\nMicrosoft Visual Studio Solution File, Format Version 12.00\r\n# Visual Studio Version 17\r\n")
+	for _, p := range projects {
+		name := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
+		ps := sha1.Sum([]byte(strings.ToLower(p)))
+		g := hex.EncodeToString(ps[:16])
+		guid := strings.ToUpper(g[0:8] + "-" + g[8:12] + "-" + g[12:16] + "-" + g[16:20] + "-" + g[20:32])
+		fmt.Fprintf(&b, "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"%s\", \"%s\", \"{%s}\"\r\nEndProject\r\n", name, p, guid)
+	}
+	path := filepath.Join(dir, "auto.sln")
+	if os.WriteFile(path, []byte(b.String()), 0o644) != nil {
+		return ""
+	}
+	return path
 }
 
 // csharpEnv is what a .NET server needs from its parent to find a runtime that

@@ -59,8 +59,18 @@ func TestCSharpCustomizePassesTheProjectWhenThereIsNoSolution(t *testing.T) {
 	if problem != "" {
 		t.Fatalf("problem = %q, want none", problem)
 	}
-	if len(args) != 2 || args[0] != "--solution" || filepath.Base(args[1]) != filepath.Base(p) {
-		t.Errorf("args = %v, want --solution <Tiny.csproj>: csharp-ls loads nothing from a bare project directory", args)
+	if len(args) != 2 || args[0] != "--solution" || filepath.Ext(args[1]) != ".sln" {
+		t.Fatalf("args = %v, want --solution <a .sln>: csharp-ls loads nothing from a bare project directory", args)
+	}
+	if strings.HasPrefix(args[1], root) {
+		t.Errorf("the generated solution %q lives inside the repository %q", args[1], root)
+	}
+	data, err := os.ReadFile(args[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), p) {
+		t.Errorf("the generated solution does not list %s:\n%s", p, data)
 	}
 }
 
