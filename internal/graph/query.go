@@ -56,6 +56,15 @@ func indexNote(st Stats) string {
 // IndexNote é o rodapé de indexação compartilhado por tool e CLI; com a raiz, os Markdown rastreados aparecem na
 // contagem (é o que explica uma linha "docs:" aparecer depois).
 func IndexNote(root string, st Stats) string {
+	// Índice ainda em construção em segundo plano: a resposta sai do que já está indexado (nunca é erro) e o aviso
+	// diz o tamanho do buraco e o que fazer — repetir a pergunta em instantes.
+	if st.Building {
+		where := ""
+		if st.BuiltTotal > 0 { // nos primeiros instantes a lista de arquivos ainda não existe: o aviso sai sem o N/M
+			where = fmt.Sprintf(" (%d/%d files)", st.Built, st.BuiltTotal)
+		}
+		return fmt.Sprintf("\n[FastExec] the index is still being built in the background%s; partial answer. Ask again in a few seconds.", where)
+	}
 	if st.Changed == 0 && st.Removed == 0 {
 		return ""
 	}
@@ -66,7 +75,18 @@ func IndexNote(root string, st Stats) string {
 	return fmt.Sprintf("\n[index] %d file(s) reindexed, %d removed in %d ms (%d files tracked%s)", st.Changed, st.Removed, st.Took.Milliseconds(), st.Files, docs)
 }
 
+// ready deixa o índice em dia e devolve o banco da consulta. Com uma indexação de fundo em curso para a raiz, ela
+// primeiro espera o portão (BgWaitBudget): terminando dentro do prazo, a passada daqui é barata (o estado já bate)
+// e a resposta é completa. Estourando o prazo, a resposta sai do que já está indexado, com o aviso de construção —
+// nem espera indefinida, nem erro seco: o modelo nunca perde o turno por causa do índice.
 func ready(root string) (*sql.DB, Stats, error) {
+	if finished, done, total := WaitBackground(root, BgWaitBudget); !finished {
+		d, err := store()
+		if err != nil {
+			return nil, Stats{Building: true, Built: done, BuiltTotal: total}, err
+		}
+		return d, Stats{Building: true, Built: done, BuiltTotal: total}, nil
+	}
 	st, err := Refresh(root)
 	if err != nil {
 		return nil, st, err

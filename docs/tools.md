@@ -427,6 +427,27 @@ Results from a standalone folder come from the files on disk in that moment, unt
 line is a warning, not a promise: there is no revision to name and no history to fall back on. Inside a Git
 repository nothing changes and no such line appears.
 
+### the first query does not pay for the index
+
+The full scan of a repository that has no index yet (0.2–0.4 s on a ~250-file repo, more on a large one) used to run
+inside the first `code_graph` call, with the model waiting for it. It now starts earlier: any tool call that carries a
+local path inside a Git repository — `exec` with `cwd`, `read_file`, `edit_file`, `code_outline`, `code_graph` — kicks
+one pass for that repository, in parallel with the call itself, and the answer is ready by the time the graph is asked.
+
+One pass per repository (concurrent calls join the one already in flight), one pass at a time in the whole process,
+running below normal priority, cancellable, and nothing is written outside `<data_dir>/telemetry/graph.db`. A folder
+outside Git is never scanned on its own: to index one, call `code_graph` on it explicitly. `FASTEXEC_BG_INDEX=off`
+disables all of it.
+
+A `code_graph` query that arrives while the pass is running waits for it, up to 8 s, and answers complete. Past that
+deadline it answers with whatever the index already has, plus one line — never a dry error, never a hang:
+
+```
+[FastExec] the index is still being built in the background (37/120 files); partial answer. Ask again in a few seconds.
+```
+
+On shutdown the pass is cancelled and awaited briefly, so a half-written index is not left behind.
+
 ### exact or by name
 
 `callers`, `def` and `impact` (of a symbol) answer from the repository's own **language server** when there is one

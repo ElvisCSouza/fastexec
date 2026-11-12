@@ -11,6 +11,7 @@ import (
 
 	"homelab/fastexec/internal/logger"
 	"homelab/fastexec/internal/mcp"
+	"homelab/fastexec/internal/tools"
 	"homelab/fastexec/internal/transport"
 )
 
@@ -120,6 +121,9 @@ func handleConn(conn net.Conn) {
 			})
 			go func() {
 				time.Sleep(50 * time.Millisecond)
+				// A passada de fundo do grafo é cancelada e esperada antes de o processo sair: ela escreve no
+				// SQLite e não vale ser cortada no meio (prazo curto, bgStopWait).
+				tools.StopBackgroundIndex()
 				os.Exit(0)
 			}()
 			return

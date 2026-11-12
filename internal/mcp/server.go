@@ -199,6 +199,10 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	var err error
 
 	telemetry.BeginCall()
+	// Toda chamada com caminho local já diz em que repositório se está trabalhando: a indexação de fundo do grafo
+	// começa aqui, em paralelo com a própria tool, e chega pronta para a consulta seguinte. Uma vez por repositório,
+	// barata e silenciosa — quem decide é internal/graph (singleflight, teto de CPU, FASTEXEC_BG_INDEX=off).
+	tools.KickBackgroundIndex(name, rawArgs)
 	if h, ok := toolHandlers[name]; ok {
 		outText, err = h(rawArgs)
 	} else {

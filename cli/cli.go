@@ -14,6 +14,7 @@ import (
 	"homelab/fastexec/internal/daemon"
 	"homelab/fastexec/internal/logger"
 	"homelab/fastexec/internal/mcp"
+	"homelab/fastexec/internal/tools"
 	"homelab/fastexec/internal/transport"
 )
 
@@ -82,9 +83,11 @@ func Main() {
 			return *res, nil
 		}
 		if err := server.Run(); err != nil {
+			tools.StopBackgroundIndex() // o processo está saindo: nenhuma passada de fundo começa (nem fica pela metade)
 			logger.Error("MCP server stopped with error: %v", err)
 			os.Exit(1)
 		}
+		tools.StopBackgroundIndex()
 		return
 	}
 
