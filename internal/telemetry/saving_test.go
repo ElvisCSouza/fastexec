@@ -90,6 +90,17 @@ func TestSavingsReport(t *testing.T) {
 		if sum != 4200 {
 			t.Errorf("%s: soma da série %d, esperado 4200 (%v)", p, sum, r.Series)
 		}
+		// a série de tokens lidos cobre os mesmos buckets e soma o mesmo que SentTokens
+		if len(r.SentSeries) != len(r.Series) {
+			t.Errorf("%s: sent_series tem %d buckets, esperado %d", p, len(r.SentSeries), len(r.Series))
+		}
+		var sentSum int64
+		for _, v := range r.SentSeries {
+			sentSum += v
+		}
+		if sentSum != r.SentTokens {
+			t.Errorf("%s: soma de sent_series %d, esperado %d (%v)", p, sentSum, r.SentTokens, r.SentSeries)
+		}
 		if len(r.Recent) != 3 {
 			t.Errorf("%s: %d eventos recentes, esperado 3", p, len(r.Recent))
 		}

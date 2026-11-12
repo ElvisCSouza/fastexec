@@ -78,7 +78,8 @@ type SavingsReport struct {
 	SavedMs         int64         `json:"saved_ms"`
 	FailuresAvoided int64         `json:"failures_avoided"`
 	Cats            []CatTotal    `json:"cats"`
-	Series          []int64       `json:"series"` // tokens economizados por intervalo (mais antigo primeiro)
+	Series          []int64       `json:"series"`      // tokens economizados por intervalo (mais antigo primeiro)
+	SentSeries      []int64       `json:"sent_series"` // tokens lidos (audit) por intervalo, mesmo bucket de Series; a curva "With" anda a cada chamada real
 	SeriesStart     string        `json:"series_start"`
 	SeriesEnd       string        `json:"series_end"`
 	Recent          []SavingEvent `json:"recent"`
@@ -173,6 +174,21 @@ func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
 			}
 		}
 		srows.Close()
+	}
+
+	// série irmã: tokens que o modelo leu (audit) por intervalo, no mesmo bucket.
+	// Onde não houve evento de economia a curva de economia fica plana; esta série faz a
+	// linha "With" andar a cada chamada real.
+	r.SentSeries = make([]int64, n)
+	arows, err := db.Query(`SELECT ` + bucket + ` AS b, COALESCE(SUM(est_tokens_out),0) FROM audit WHERE ` + aw + ` GROUP BY b`)
+	if err == nil {
+		for arows.Next() {
+			var b, tk int64
+			if arows.Scan(&b, &tk) == nil && b >= 0 && int(b) < n {
+				r.SentSeries[n-1-int(b)] += tk
+			}
+		}
+		arows.Close()
 	}
 
 	// atividade recente: uma linha por chamada

@@ -94,7 +94,7 @@ td:first-child,th:first-child{text-align:left;font-weight:600}
   <div class="card two">
     <div style="flex:1 1 420px;min-width:0">
       <h2>If you had not used FastExec</h2>
-      <div class="mut" style="font-size:13px">Tokens the model read, added up over the period. The shaded gap is what you kept. The two end values are measured; the curve between them is estimated from when the savings happened.</div>
+      <div class="mut" style="font-size:13px">Tokens the model read, added up over the period. The shaded gap is what you kept. The two end values are measured; both curves follow the calls actually made, and the gap is what was saved.</div>
       <svg id="cmp" viewBox="0 0 560 230" width="100%" style="display:block;margin-top:10px" role="img" aria-label="Cumulative tokens with and without FastExec"></svg>
       <div style="display:flex;gap:18px;font-size:12px;margin-top:6px;flex-wrap:wrap">
         <span><span class="sw" style="display:inline-block;width:14px;height:3px;background:var(--r);vertical-align:middle"></span> Without FastExec</span>
@@ -162,16 +162,24 @@ function render(){
  const yMax=Math.max(r.without_tokens,1),ratio=r.without_tokens>0?r.sent_tokens/r.without_tokens:1;
  const kf=v=>v>=1e6?(v/1e6).toFixed(1)+"M":v>=1e4?Math.round(v/1e3)+"k":v>=1e3?(v/1e3).toFixed(1)+"k":String(Math.round(v));
  const step=(()=>{const raw=yMax/4,mag=Math.pow(10,Math.floor(Math.log10(raw))),f=raw/mag;return(f<=1?1:f<=2?2:f<=5?5:10)*mag})();
- const top=Math.ceil(yMax/step)*step,X=i=>L+pw*(i/Math.max(n,1)),Y=v=>T+ph-ph*(v/top);
- let cum=0;const wo=[X(0).toFixed(1)+","+Y(0).toFixed(1)],wi=[wo[0]];
- r.series.forEach((v,i)=>{cum+=v;const c=yMax*cum/sum;
-  wo.push(X(i+1).toFixed(1)+","+Y(c).toFixed(1));wi.push(X(i+1).toFixed(1)+","+Y(c*ratio).toFixed(1))});
+ const top=Math.ceil(yMax/step)*step;
+ // "With" sobe a cada chamada real (sent_series); "Without" = "With" + economia acumulada.
+ // Sem sent_series (relatório de versão antiga) cai no cálculo anterior.
+ const sent=(Array.isArray(r.sent_series)&&r.sent_series.length===n)?r.sent_series:null;
+ let last=0;r.series.forEach((v,i)=>{if(v||(sent&&sent[i]))last=i+1});
+ const m=sent?Math.max(last,1):n;
+ const X=i=>L+pw*(i/Math.max(m,1)),Y=v=>T+ph-ph*(v/top);
+ const sSum=sent?sent.reduce((a,b)=>a+b,0):0,kT=sSum?r.sent_tokens/sSum:0,kS=r.saved_tokens/sum;
+ let sc=0,sv=0;const wo=[X(0).toFixed(1)+","+Y(0).toFixed(1)],wi=[wo[0]];
+ for(let i=0;i<m;i++){sc+=sent?sent[i]:0;sv+=r.series[i];
+  const t=sent?kT*sc:yMax*sv/sum*ratio,w=sent?t+kS*sv:yMax*sv/sum;
+  wo.push(X(i+1).toFixed(1)+","+Y(w).toFixed(1));wi.push(X(i+1).toFixed(1)+","+Y(t).toFixed(1))}
  const ns="http://www.w3.org/2000/svg",mk=(t,at)=>{const e=document.createElementNS(ns,t);for(const k in at)e.setAttribute(k,at[k]);return e};
  const tx=(x,y,s,at)=>{const e=mk("text",Object.assign({x:x,y:y,"font-size":11},at));e.textContent=s;return e};
  const muted="fill:var(--mut)",grid=[];
  for(let v=0;v<=top+1;v+=step){const y=Y(v).toFixed(1);
   grid.push(mk("line",{x1:L,y1:y,x2:L+pw,y2:y,stroke:"currentColor","stroke-opacity":v?".1":".3"}),tx(L-6,+y+4,kf(v),{"text-anchor":"end",style:muted}))}
- const xe=X(n),yW=Y(yMax),yS=Y(r.sent_tokens);
+ const xe=X(m),yW=Y(yMax),yS=Y(r.sent_tokens);
  $("cmp").replaceChildren(...grid,
   mk("polygon",{points:wo.concat(wi.slice().reverse()).join(" "),fill:"#0F7B5F","fill-opacity":".16"}),
   mk("polyline",{points:wo.join(" "),fill:"none",stroke:"#B4473A","stroke-width":2.5,"stroke-linejoin":"round"}),

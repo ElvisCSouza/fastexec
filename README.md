@@ -103,6 +103,7 @@ See [docs/install.md](docs/install.md#language-servers-optional).
 - [Remote daemon](docs/server.md): building and running `server-exec`, tokens, protocol
 - [Tools](docs/tools.md): every tool, the output cleaning, guards and corrections
 - [Telemetry](docs/telemetry.md): what is recorded, where, and how to turn it off
+- [Savings report](docs/savings.md): the savings panel, its report fields and the Without/With curve
 - [Contributing](CONTRIBUTING.md): layout, tests, extending FastExec with your own commands
 
 ## Telemetry
