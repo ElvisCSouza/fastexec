@@ -9,7 +9,7 @@ It is one self-contained program. No runtime to install, no account, nothing lea
 - [What it is](#what-it-is)
 - [How it works](#how-it-works)
 - [Install](#install): [let Claude Desktop do it](#paste-this-prompt-into-claude-desktop), or [run the installer](#install-with-the-installer-about-one-minute)
-- [See what it saves you](#see-what-fastexec-saves-you)
+- [See what it saves you](#see-what-fastexec-saves-you), [the benchmark](#does-it-really-save-tokens-the-benchmark)
 - [Tools](#tools), [privacy](#privacy), [uninstall](#uninstall)
 
 ## What it is
@@ -220,7 +220,38 @@ are estimated as bytes ÷ 3.5; items based on an assumption are marked **estimat
 total, and its menu can start it with Windows. The window is served only on `127.0.0.1` and reads the local statistics
 database; nothing leaves your computer.
 
-## Tools
+## Does it really save tokens? The benchmark
+We measured it instead of guessing. The same model gets the same tasks twice, once with only Claude Code's native tools
+(Bash, Read, Glob, Grep, Edit, Write) and once with only FastExec, and we compare what the account is billed for
+(input + output tokens, prompt cache off). The method, the task kinds and every raw result are in
+[`benchmark/`](benchmark/).
+**Latest round (build `core-f5d1719`, 68 tasks, 180 valid pairs):**
+| | Native tools | FastExec |
+|---|---|---|
+| Tokens, geometric mean of the per-pair ratio | 1.00 | **0.725** (-27.5%, 95% CI -32.7% to -21.8%) |
+| Same, only pairs where both arms got the answer right | 1.00 | **0.721** (-27.9%) |
+| Correct answers | 169 of 199 (85%) | 173 of 199 (87%) |
+| Fixed cost per turn (system prompt + tool schemas) | 4,884 tokens | 3,559 tokens |
+| Median wall time per task | 6.95 s | 5.10 s |
+| Peak memory (whole process tree) | 461 MB | 520 MB |
+Where the saving comes from, by kind of task (ratio of tokens, lower is better):
+| Task kind | Change |
+|---|---|
+| Code navigation with the code graph (who calls this?) | -61% |
+| Data files (one-line JSON, big logs) | -57% |
+| Reading and searching documentation | -39% |
+| Terminal work (processes, git, logs) | -35% |
+| Multi-file edits | -22% |
+| C# | -11% |
+| Large-output commands, and a software-engineering subset | -10%, -8% |
+It is not a win everywhere. A few tasks cost more with FastExec than without it (for example one C# bug fix by
+reading and verifying took about 2.8 times the tokens because the model ran many extra build and test steps), and the
+gain is smallest on short tasks, where there is little to cut.
+**Read the numbers with these limits in mind.** One model (DeepSeek V4.1 Flash, through Together AI), synthetic and
+open-source fixtures, 2 to 5 repetitions per task, cache off. The confidence interval exists because the sample is
+small. Other models, other repositories and real sessions will differ; the figure to trust is the one you measure on
+your own work with `fastexec monitor`. This round measured build `core-f5d1719`; the release adds one later change
+(compact `dotnet build` and `dotnet test` output, including localized messages), which the round did not measure.## Tools
 
 The assistant sees eight compact tools, plus modules it loads only when needed.
 
