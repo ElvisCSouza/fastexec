@@ -68,6 +68,7 @@ As execuções usam a sua conta do Claude Code e contam no seu uso. Tarefas e br
 | W6 | terminal | arquivo de 80 MB quase todo zeros com 3 linhas de texto: texto e posição em bytes de cada uma, sem ler tudo |
 | W7 | terminal | Go: 3 erros de compilação revelados em cadeia num projeto de 6 arquivos |
 | W8 | terminal | JSON de 15 MB numa linha só: soma de um campo com filtro booleano e maior id entre os inativos |
+| SL1–SL8 | swelite | **correção de bug real** em `cobra`/`hugo`: o teste do próprio commit é o oráculo (teste falha antes, passa depois) |
 
 Cada tarefa tem **oráculo objetivo** calculado na hora por programa independente das duas ferramentas, e o `-DryRun` prova que
 o oráculo aceita o gabarito e rejeita resposta errada. Adicionar tarefa: crie uma entrada `$TaskTable['Xn']` em `tasks\*.ps1`
@@ -91,6 +92,21 @@ Terminal-Bench/TerminalWorld (que rodam em Docker com bash) não medem. Cada `Pr
 sem rede e sem efeito fora dele; os processos filhos são encerrados e o `Score` confere que não sobrou nenhum. Onde o host
 não tem a ferramenta (`git`, `go`), o oráculo cai para a checagem estrutural e avisa `[terminal] …`; dá para silenciar com
 `BENCH_TERMINAL_QUIET=1`. Detalhes em [`fastexec-private/_docs/spec-bench-terminal.md`](../fastexec-private/_docs/spec-bench-terminal.md).
+
+A suíte **`swelite`** (`tasks\swelite.ps1`, tarefas SL1–SL8) é a correção de bug de verdade: 4 commits de bug-fix do `cobra`
+e 4 do `hugo`, escolhidos por regra determinista (mensagem com `fix`; diff de 1 arquivo de código + 1 de teste no mesmo
+pacote; <40 linhas; e o teste do commit **verificado por `go test`**: falha no pai, passa no commit). O `Prepare` volta ao
+commit pai com **apenas** o arquivo de teste aplicado — o prompt descreve o sintoma na linguagem do commit, sem dar o diff
+nem o nome do arquivo de código — e o `Score` checa o **estado do repositório**, não a resposta: o teste alvo passa, o pacote
+inteiro passa, nenhum `*_test.go` mudou e nada fora do pacote ficou sujo. Os 8 hashes verificados estão em
+`tasks\swelite.commits.json` (gerados por `tools\swelite\Select-Commits.ps1`).
+
+**Por que não é o SWE-bench oficial**: o harness oficial do SWE-bench Verified depende de Docker + Linux e das imagens por
+instância, e mede o modelo por patch aplicado num ambiente isolado; aqui o bench roda no Windows, com `go`/`git` do host, sem
+container e sem nenhum custo de modelo no `-DryRun`. O que se preserva é o essencial — issue real, repositório real, oráculo
+por teste, e o critério "falha antes, passa depois" — e o que se perde é a escala (500 issues), a diversidade de repositórios
+(2 aqui) e o isolamento. Serve para comparar `native` vs `fastexec` no mesmo modelo, não para comparar com números
+publicados. Detalhes em [`fastexec-private/_docs/spec-bench-swelite.md`](../fastexec-private/_docs/spec-bench-swelite.md).
 
 ## O que é medido por execução
 
