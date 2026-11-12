@@ -22,6 +22,42 @@ foreach ($p in $cfg.repos.PSObject.Properties) {
   "fixture $($p.Name): $dest @ $(git -C $dest describe --tags --always)"
 }
 
+# 2b) fixtures GERADAS (nao vem de git clone): o corpus sintetico de Markdown do estrato 'docs'.
+#     New-DocsCorpus e' deterministico e apaga/reescreve o destino, entao rodar sempre deixa a
+#     fixture no estado esperado sem precisar de -Refresh; Test-DocsFacts confere o resultado.
+if ($cfg.generated) {
+  . (Join-Path $PSScriptRoot 'tools\docs\New-DocsCorpus.ps1')
+  foreach ($p in $cfg.generated.PSObject.Properties) {
+    $dest = Join-Path "$work\fixtures" $p.Value
+    $r = New-DocsCorpus -Dest $dest
+    $null = Test-DocsFacts -Corpus $dest
+    "fixture gerada $($p.Name): $dest ($($r.mds) MDs, $($r.files) arquivos)"
+  }
+}
+
+# 2c) .NET: um restore por projeto alvo, uma vez, para que o build das tarefas rode offline depois.
+#     O restore roda numa COPIA descartavel: Copy-CsRepo reescreve o global.json (os pins antigos
+#     dos repos nao existem nesta maquina) e a fixture compartilhada fica intacta. O que precisa
+#     persistir e' o cache NuGet (dotnet.nuget_packages), nao a copia.
+if ($cfg.dotnet -and $cfg.dotnet.projects) {
+  . (Join-Path $PSScriptRoot 'tools\csoracle\CsOracle.ps1')
+  foreach ($p in $cfg.dotnet.projects.PSObject.Properties) {
+    $repo = $p.Name; $spec = $p.Value
+    $src = Join-Path "$work\fixtures" $repo
+    if (-not (Test-Path $src)) { "restore ${repo}: fixture ausente, pulado"; continue }
+    if (-not (Test-Path (Join-Path $src $spec.project))) { "restore ${repo}: $($spec.project) ausente, pulado"; continue }
+    $tmp = "$work\_restore\$repo"
+    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+    New-Item -ItemType Directory -Force (Split-Path $tmp -Parent) | Out-Null
+    $null = Copy-CsRepo -Src $src -Dst $tmp
+    $r = Invoke-CsDotnet -CsArgs @('restore', (Join-Path $tmp $spec.project)) -WorkDir $tmp -TimeoutSec 900
+    $ok = (-not $r.timeout) -and ($r.exit -eq 0)
+    "restore ${repo}: $(if ($r.timeout) { 'TIMEOUT' } elseif ($ok) { 'ok' } else { "rc=$($r.exit)" })"
+    if (-not $ok) { ($r.out -split "`n" | Where-Object { $_.Trim() } | Select-Object -Last 6) | ForEach-Object { "  $_" } }
+    Remove-Item -Recurse -Force $tmp
+  }
+}
+
 # 3) congela o FastExec sob teste: um deploy no meio da rodada nao pode trocar o binario medido
 if (-not $FastExec) { $FastExec = (Resolve-Path (Join-Path $script:BenchRoot $cfg.fastexec_exe)).Path }
 $sha = (Get-FileHash $FastExec -Algorithm SHA256).Hash.Substring(0, 12).ToLower()
