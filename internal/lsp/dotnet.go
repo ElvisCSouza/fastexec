@@ -53,8 +53,28 @@ func csharpCustomize(root string) (args, env []string, problem string) {
 
 	if sln := firstMatch(root, "*.sln"); sln != "" {
 		args = append(args, "--solution", sln)
+	} else if proj := soleProject(root); proj != "" {
+		// csharp-ls 0.16 does NOT discover a bare .csproj: without --solution and
+		// without a single .sln at the root it logs "0 solution(s) found" and
+		// loads nothing (every query then answers "project did not load"). It
+		// does accept a project file as the --solution argument.
+		args = append(args, "--solution", proj)
 	}
 	return args, env, ""
+}
+
+// soleProject is the project file to hand to csharp-ls when the repository has
+// no solution: a .csproj at the root, else the first project the walk finds
+// (sorted, so the choice is stable). Empty when there is none. The path is
+// relative to root, which is the server's working directory.
+func soleProject(root string) string {
+	if p := firstMatch(root, "*.csproj"); p != "" {
+		return p
+	}
+	if ps := loadableProjects(root); len(ps) > 0 {
+		return relTo(root, ps[0])
+	}
+	return ""
 }
 
 // csharpEnv is what a .NET server needs from its parent to find a runtime that

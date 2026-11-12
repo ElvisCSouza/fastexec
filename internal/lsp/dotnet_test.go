@@ -48,6 +48,22 @@ func envValue(env []string, key string) (string, bool) {
 	return "", false
 }
 
+func TestCSharpCustomizePassesTheProjectWhenThereIsNoSolution(t *testing.T) {
+	sdk := t.TempDir()
+	stubSDK(t, sdk, false)
+	root := t.TempDir()
+	p := csproj(t, root, "Tiny.csproj")
+	restored(t, root)
+
+	args, _, problem := csharpCustomize(root)
+	if problem != "" {
+		t.Fatalf("problem = %q, want none", problem)
+	}
+	if len(args) != 2 || args[0] != "--solution" || filepath.Base(args[1]) != filepath.Base(p) {
+		t.Errorf("args = %v, want --solution <Tiny.csproj>: csharp-ls loads nothing from a bare project directory", args)
+	}
+}
+
 func TestCSharpCustomizeWithoutAnSDKReportsIt(t *testing.T) {
 	stubSDK(t, "", false)
 	root := t.TempDir()
@@ -125,8 +141,8 @@ func TestCSharpCustomizeLeavesThePathAloneForAnInstalledSDK(t *testing.T) {
 	if problem != "" {
 		t.Fatalf("problem = %q, want none", problem)
 	}
-	if len(args) != 0 {
-		t.Errorf("args = %v, want no --solution for a project with no solution", args)
+	if len(args) != 2 || args[0] != "--solution" {
+		t.Errorf("args = %v, want --solution <project> for a project with no solution", args)
 	}
 	if _, ok := envValue(env, "PATH"); ok {
 		t.Error("PATH was rewritten for an SDK that is already on it")
@@ -467,9 +483,9 @@ func TestCSharpCustomizeNamesThePinnedSDKItCannotSatisfy(t *testing.T) {
 				if problem != "" {
 					t.Fatalf("problem = %q, want the pin treated as satisfiable", problem)
 				}
-				// No .sln in the fixture, so a launch that goes ahead carries no
-				// arguments — but it does have to happen.
-				if len(args) != 0 {
+				// No .sln in the fixture, so the launch carries the project as its
+				// solution — but it does have to happen.
+				if len(args) != 2 {
 					t.Errorf("args = %v, want the launch to go ahead", args)
 				}
 				if got, ok := envValue(env, "DOTNET_ROOT"); !ok || got != sdk {
