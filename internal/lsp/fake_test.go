@@ -473,6 +473,10 @@ func (s *fakeServer) didOpen(params json.RawMessage) {
 	s.mu.Lock()
 	s.docs[p.TextDocument.URI] = text
 	s.mu.Unlock()
+	if os.Getenv("FAKELSP_NO_PUSH") != "" {
+		// A pull-only server (csharp-ls): it answers textDocument/diagnostic and never publishes.
+		return
+	}
 	// Push diagnostics, the way a real server does after a change.
 	s.notify("textDocument/publishDiagnostics", map[string]any{
 		"uri":         p.TextDocument.URI,

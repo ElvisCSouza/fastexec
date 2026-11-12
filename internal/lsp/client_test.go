@@ -231,6 +231,25 @@ func TestDiagnosticsPushFallback(t *testing.T) {
 	}
 }
 
+// TestWaitSettledPullOnlyServer: a server that speaks pull diagnostics and never
+// publishes (csharp-ls) must settle through the pull, not run out the budget and
+// be reported as "did not load" for a project that is loaded.
+func TestWaitSettledPullOnlyServer(t *testing.T) {
+	root := t.TempDir()
+	path := writeFixture(t, root, "main.go", fixtureSrc)
+	c := fakeClient(t, root, "FAKELSP_NO_PUSH=1")
+	if !c.Capabilities().Diagnostics {
+		t.Fatal("fake lost its pull capability")
+	}
+	start := time.Now()
+	if err := c.WaitSettled(context.Background(), path, 5*time.Second); err != nil {
+		t.Fatalf("WaitSettled on a pull-only server: %v", err)
+	}
+	if d := time.Since(start); d > 3*time.Second {
+		t.Errorf("settled after %v, want it to come from the pull, not the timeout", d)
+	}
+}
+
 func TestRequestTimeout(t *testing.T) {
 	root := t.TempDir()
 	path := writeFixture(t, root, "main.go", fixtureSrc)

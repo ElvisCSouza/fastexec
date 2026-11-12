@@ -1039,6 +1039,28 @@ func (c *Client) WaitSettled(ctx context.Context, path string, settle time.Durat
 		settle = DefaultSettle
 	}
 	deadline := time.Now().Add(settle)
+	// A server that speaks PULL diagnostics only (csharp-ls) never publishes: waiting
+	// for a publication would run out the whole budget and report "did not load" for a
+	// project that is loaded. Pulling is the request that answers once the server has
+	// analysed the document, so a pull that comes back IS the settle signal.
+	if c.capabilities().Diagnostics {
+		pctx, cancel := context.WithDeadline(ctx, deadline)
+		_, err := c.requestWithDoc(pctx, path, "textDocument/diagnostic", map[string]any{
+			"textDocument": map[string]any{"uri": PathToURI(abs)},
+		})
+		cancel()
+		if err == nil {
+			if title, busy := c.Loading(); busy {
+				return c.loadingErr(title)
+			}
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// The pull failed or timed out: fall through to the push wait, which
+		// ends in notReady() when nothing arrives.
+	}
 	for {
 		c.mu.Lock()
 		// Any publication for this document means the server has looked at it.
