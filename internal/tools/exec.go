@@ -424,10 +424,20 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 		if res.Local && isWindowsCmdletMismatch(command, errMsg) {
 			errMsg += "\n[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use read_file / edit_file."
 		}
-		if isBenignExitCode1(command, stdout, stderr) {
-			return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), nil
+		out := fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg)
+		// Saída e erro contam os dois: numa linha composta ('busca && interpretador') o primeiro estágio pode ter
+		// funcionado e impresso o que a LLM pediu, e só o segundo falhou. Antes o stdout era descartado sempre que
+		// havia stderr — a LLM não via o resultado da busca e repetia a chamada inteira só para lê-lo (turno pago a
+		// mais, medido no bench). O '[exit N]' continua abrindo o texto (é dele que o erro do MCP se origina) e o
+		// stdout vem depois, marcado e anunciado, para não ser lido como mensagem de erro.
+		if stderr != "" && stdout != "" {
+			out += "\n[stdout before the failure]\n" + shapeOrCap(stdout) +
+				"\n[FastExec] The command failed, but the output above was produced before the failure: it is the command's stdout, not part of the error."
 		}
-		return fmt.Sprintf("[exit %d] %s", res.ExitCode, errMsg), fmt.Errorf("command failed with exit code %d", res.ExitCode)
+		if isBenignExitCode1(command, stdout, stderr) {
+			return out, nil
+		}
+		return out, fmt.Errorf("command failed with exit code %d", res.ExitCode)
 	}
 
 	if stdout == "" && stderr != "" {
