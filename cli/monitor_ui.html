@@ -82,8 +82,8 @@ td:first-child,th:first-child{text-align:left;font-weight:600}
   <div class="card two">
     <div style="flex:1 1 420px;min-width:0">
       <h2>If you had not used FastExec</h2>
-      <div class="mut" style="font-size:13px">Same work, same calls, with the plain tools. The shaded gap is what you kept.</div>
-      <svg id="cmp" viewBox="0 0 560 170" width="100%" style="display:block;margin-top:10px" role="img" aria-label="Cumulative tokens with and without FastExec"></svg>
+      <div class="mut" style="font-size:13px">Tokens the model read, added up over the period. The shaded gap is what you kept. The two end values are measured; the curve between them is estimated from when the savings happened.</div>
+      <svg id="cmp" viewBox="0 0 560 230" width="100%" style="display:block;margin-top:10px" role="img" aria-label="Cumulative tokens with and without FastExec"></svg>
       <div style="display:flex;gap:18px;font-size:12px;margin-top:6px;flex-wrap:wrap">
         <span><span class="sw" style="display:inline-block;width:14px;height:3px;background:var(--r);vertical-align:middle"></span> Without FastExec</span>
         <span><span class="sw" style="display:inline-block;width:14px;height:3px;background:var(--g);vertical-align:middle"></span> With FastExec</span>
@@ -91,6 +91,7 @@ td:first-child,th:first-child{text-align:left;font-weight:600}
     </div>
     <div style="flex:0 0 400px;max-width:100%">
       <table><thead><tr><th></th><th style="color:var(--rd)">Without</th><th style="color:var(--gd)">With</th><th>Change</th></tr></thead><tbody id="cmpRows"></tbody></table>
+      <div class="mut" id="cmpNote" style="font-size:12px;margin-top:10px"></div>
     </div>
   </div>
 
@@ -128,7 +129,7 @@ const kb=b=>b>=1024?(b/(b>=10240?1024:1024)).toFixed(b>=10240?0:1)+" KB":b+" B";
 const mins=ms=>{const m=Math.round(ms/60000);if(m<1)return Math.round(ms/1000)+" s";return m>=60?Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")+" min":m+" min"};
 function el(t,a,...c){const e=document.createElement(t);for(const k in(a||{})){if(k==="style")e.style.cssText=a[k];else if(k.startsWith("on"))e[k]=a[k];else e.setAttribute(k,a[k])}for(const x of c)e.append(x);return e}
 function api(path){return fetch(path+(path.includes("?")?"&":"?")+"t="+TOKEN,{headers:{"X-Token":TOKEN}}).then(r=>{if(!r.ok)throw new Error(r.status);return r.json()})}
-const pc=(a,b)=>a>0?"−"+Math.round((1-b/a)*100)+"%":"–";
+const pc=(a,b)=>a>0&&a!==b?"−"+Math.round((1-b/a)*100)+"%":"–";
 
 function render(){
  const r=R;if(!r)return;
@@ -146,16 +147,32 @@ function render(){
  $("since").textContent=r.since?"Measuring since "+r.since+". Earlier calls are estimated from the sizes they recorded.":"";
 
  // counterfactual chart
- const W=560,H=170,p=4,n=r.series.length,sum=r.series.reduce((a,b)=>a+b,0)||1;
- let cum=0;const wo=[p+","+(H-p)],wi=[p+","+(H-p)];
- const ratio=r.without_tokens>0?r.sent_tokens/r.without_tokens:1;
- r.series.forEach((v,i)=>{cum+=v;const f=cum/sum,x=(p+(W-2*p)*((i+1)/n)).toFixed(1);
-  wo.push(x+","+(H-p-(H-2*p)*f).toFixed(1));wi.push(x+","+(H-p-(H-2*p)*f*ratio).toFixed(1))});
+ const W=560,H=230,L=46,T=16,B=26,RM=92,pw=W-L-RM,ph=H-T-B,n=r.series.length,sum=r.series.reduce((a,b)=>a+b,0)||1;
+ const yMax=Math.max(r.without_tokens,1),ratio=r.without_tokens>0?r.sent_tokens/r.without_tokens:1;
+ const kf=v=>v>=1e6?(v/1e6).toFixed(1)+"M":v>=1e4?Math.round(v/1e3)+"k":v>=1e3?(v/1e3).toFixed(1)+"k":String(Math.round(v));
+ const step=(()=>{const raw=yMax/4,mag=Math.pow(10,Math.floor(Math.log10(raw))),f=raw/mag;return(f<=1?1:f<=2?2:f<=5?5:10)*mag})();
+ const top=Math.ceil(yMax/step)*step,X=i=>L+pw*(i/Math.max(n,1)),Y=v=>T+ph-ph*(v/top);
+ let cum=0;const wo=[X(0).toFixed(1)+","+Y(0).toFixed(1)],wi=[wo[0]];
+ r.series.forEach((v,i)=>{cum+=v;const c=yMax*cum/sum;
+  wo.push(X(i+1).toFixed(1)+","+Y(c).toFixed(1));wi.push(X(i+1).toFixed(1)+","+Y(c*ratio).toFixed(1))});
  const ns="http://www.w3.org/2000/svg",mk=(t,at)=>{const e=document.createElementNS(ns,t);for(const k in at)e.setAttribute(k,at[k]);return e};
- $("cmp").replaceChildren(mk("line",{x1:0,y1:166,x2:560,y2:166,stroke:"currentColor","stroke-opacity":".2"}),
-  mk("polygon",{points:wo.concat(wi.slice().reverse()).join(" "),fill:"#0F7B5F","fill-opacity":".14"}),
+ const tx=(x,y,s,at)=>{const e=mk("text",Object.assign({x:x,y:y,"font-size":11},at));e.textContent=s;return e};
+ const muted="fill:var(--mut)",grid=[];
+ for(let v=0;v<=top+1;v+=step){const y=Y(v).toFixed(1);
+  grid.push(mk("line",{x1:L,y1:y,x2:L+pw,y2:y,stroke:"currentColor","stroke-opacity":v?".1":".3"}),tx(L-6,+y+4,kf(v),{"text-anchor":"end",style:muted}))}
+ const xe=X(n),yW=Y(yMax),yS=Y(r.sent_tokens);
+ $("cmp").replaceChildren(...grid,
+  mk("polygon",{points:wo.concat(wi.slice().reverse()).join(" "),fill:"#0F7B5F","fill-opacity":".16"}),
   mk("polyline",{points:wo.join(" "),fill:"none",stroke:"#B4473A","stroke-width":2.5,"stroke-linejoin":"round"}),
-  mk("polyline",{points:wi.join(" "),fill:"none",stroke:"#0F7B5F","stroke-width":2.5,"stroke-linejoin":"round"}));
+  mk("polyline",{points:wi.join(" "),fill:"none",stroke:"#0F7B5F","stroke-width":2.5,"stroke-linejoin":"round"}),
+  mk("line",{x1:xe+5,y1:yW,x2:xe+5,y2:yS,stroke:"#0F7B5F","stroke-width":2}),
+  tx(xe+12,yW+4,kf(r.without_tokens),{"font-weight":700,style:"fill:var(--rd)"}),
+  tx(xe+12,yS+4,kf(r.sent_tokens),{"font-weight":700,style:"fill:var(--gd)"}),
+  r.saved_tokens>0?tx(xe+12,(yW+yS)/2+4,"−"+kf(r.saved_tokens),{"font-weight":700,style:"fill:var(--gd)"}):mk("g",{}),
+  tx(L,H-8,r.series_start,{style:muted}),
+  tx(xe,H-8,r.series_end,{"text-anchor":"end",style:muted}),
+  tx(4,12,"tokens",{style:muted}));
+ $("cmpNote").textContent=(r.trips_avoided===0&&r.failures_avoided===0)?"Round trips, time and failed calls match because, in this period, every saving came from smaller output. No call was fixed before it failed, so nothing was avoided there.":"";
  const trips=r.calls+r.trips_avoided,woMs=r.active_ms+r.saved_ms,woFail=r.failed_calls+r.failures_avoided;
  const money=v=>"$"+v.toFixed(2);
  const rows=[["Tokens read",fmt(r.without_tokens),fmt(r.sent_tokens),pc(r.without_tokens,r.sent_tokens)],
