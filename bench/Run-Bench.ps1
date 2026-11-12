@@ -20,6 +20,8 @@ if ($Provider) { $prov = $cfg.providers.$Provider; if (-not $prov) { throw "prov
   if (-not ([Environment]::GetEnvironmentVariable($prov.api_key_env, 'User') -or [Environment]::GetEnvironmentVariable($prov.api_key_env, 'Process'))) { throw "variavel de ambiente $($prov.api_key_env) nao definida" } }
 $modelUsed = if ($prov) { $prov.model } else { $cfg.model }
 $Fixtures = @{}; foreach ($p in $cfg.repos.PSObject.Properties) { $Fixtures[$p.Name] = Join-Path "$work\fixtures" $p.Name }
+# fixtures GERADAS (nao vem de git clone): o Initialize-Bench.ps1 as escreve em <work>\fixtures\<subdir>
+if ($cfg.generated) { foreach ($p in $cfg.generated.PSObject.Properties) { $Fixtures[$p.Name] = Join-Path "$work\fixtures" $p.Value } }
 
 # carrega as tarefas (cada arquivo preenche $TaskTable)
 $TaskTable = @{}

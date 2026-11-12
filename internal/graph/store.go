@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS code_meta (
 	head       TEXT NOT NULL,
 	work       TEXT NOT NULL,
 	files      INTEGER NOT NULL,
+	docs       INTEGER NOT NULL DEFAULT 0,
 	checked_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `
@@ -118,6 +119,8 @@ func store() (*sql.DB, error) {
 		d.Close()
 		return nil, err
 	}
+	// code_meta ganhou a contagem de Markdown depois: banco criado antes disso recebe a coluna aqui (erro = já existe).
+	_, _ = d.Exec(`ALTER TABLE code_meta ADD COLUMN docs INTEGER NOT NULL DEFAULT 0`)
 	db = d
 	return db, nil
 }

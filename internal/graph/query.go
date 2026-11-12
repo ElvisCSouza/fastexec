@@ -50,10 +50,20 @@ func lastName(sym string) string {
 }
 
 func indexNote(st Stats) string {
+	return IndexNote("", st)
+}
+
+// IndexNote é o rodapé de indexação compartilhado por tool e CLI; com a raiz, os Markdown rastreados aparecem na
+// contagem (é o que explica uma linha "docs:" aparecer depois).
+func IndexNote(root string, st Stats) string {
 	if st.Changed == 0 && st.Removed == 0 {
 		return ""
 	}
-	return fmt.Sprintf("\n[index] %d file(s) reindexed, %d removed in %d ms (%d files tracked)", st.Changed, st.Removed, st.Took.Milliseconds(), st.Files)
+	docs := ""
+	if root != "" && st.Docs > 0 {
+		docs = fmt.Sprintf(", %d docs", st.Docs)
+	}
+	return fmt.Sprintf("\n[index] %d file(s) reindexed, %d removed in %d ms (%d files tracked%s)", st.Changed, st.Removed, st.Took.Milliseconds(), st.Files, docs)
 }
 
 func ready(root string) (*sql.DB, Stats, error) {
@@ -111,7 +121,7 @@ func Callers(root, symbol string, max, depth int) (string, error) {
 					AND t.start_line <= e.source_line AND t.end_line >= e.source_line
 				ORDER BY t.end_line - t.start_line LIMIT 1), '')
 		FROM code_edges e
-		WHERE e.repo_root = ? AND e.target_symbol = ? AND e.relation_type IN ('calls','references')
+		WHERE e.repo_root = ? AND e.target_symbol = ? AND e.relation_type IN ('calls','references','renders')
 		ORDER BY e.source_file, e.source_line`, repoKey(root), name)
 	if err != nil {
 		return "", err
@@ -165,8 +175,9 @@ func Callers(root, symbol string, max, depth int) (string, error) {
 			fmt.Fprintf(&b, "- %s:%d%s%s (%s)\n", f, line, label, via, rel)
 		}
 	}
+	docs := docMentionsOf(d, repoKey(root), name, st.Docs > 0)
 	if total == 0 {
-		return fmt.Sprintf("(no callers of '%s' in %d indexed files)", name, st.Files) + indexNote(st), nil
+		return fmt.Sprintf("(no callers of '%s' in %d indexed files)", name, st.Files) + docs + indexNote(st), nil
 	}
 	if total > max {
 		fmt.Fprintf(&b, "... %d more (raise 'max')\n", total-max)
@@ -193,7 +204,7 @@ func Callers(root, symbol string, max, depth int) (string, error) {
 	if total > 0 {
 		tail += deepHint(d, root, name, max, tests, others)
 	}
-	return head + b.String() + tail + indexNote(st), nil
+	return head + b.String() + tail + docs + indexNote(st), nil
 }
 
 // Definition mostra arquivo, intervalo de linhas e assinatura de cada declaração com esse nome.
@@ -223,7 +234,9 @@ func Definition(root, symbol string) (string, error) {
 	}
 	rows.Close()
 	if n > 0 {
-		return fmt.Sprintf("=== definition of '%s' ===\n%s", name, strings.TrimRight(b.String(), "\n")) + indexNote(st), nil
+		// documentação que cita o símbolo: a resposta a "onde isso é documentado" sem abrir MD nenhum
+		docs := docMentionsOf(d, key, name, st.Docs > 0)
+		return fmt.Sprintf("=== definition of '%s' ===\n%s", name, strings.TrimRight(b.String(), "\n")) + docs + indexNote(st), nil
 	}
 	var similar []string
 	if r2, err := d.Query(`SELECT DISTINCT name FROM code_symbols WHERE repo_root = ? AND name LIKE ? LIMIT 8`, key, "%"+name+"%"); err == nil {
@@ -263,8 +276,13 @@ func Impact(root, target string, max int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// documentação que cita o arquivo (link, wikilink ou menção de caminho)
+	docs := ""
+	if isFile {
+		docs = docCitedBy(d, key, rel, st.Docs > 0)
+	}
 	if len(uses) == 0 {
-		return fmt.Sprintf("(nothing in %d indexed files depends on '%s')", st.Files, rel) + indexNote(st), nil
+		return fmt.Sprintf("(nothing in %d indexed files depends on '%s')", st.Files, rel) + docs + indexNote(st), nil
 	}
 	files := make([]string, 0, len(uses))
 	for f := range uses {
@@ -279,7 +297,7 @@ func Impact(root, target string, max int) (string, error) {
 		}
 		fmt.Fprintf(&b, "- %s (%s)\n", f, strings.Join(uses[f], ", "))
 	}
-	return fmt.Sprintf("=== impact of '%s' ===\n%sTotal: %d files.", rel, b.String(), len(files)) + indexNote(st), nil
+	return fmt.Sprintf("=== impact of '%s' ===\n%sTotal: %d files.", rel, b.String(), len(files)) + docs + indexNote(st), nil
 }
 
 // fileTarget diz se target é um arquivo indexado do repositório e devolve o caminho relativo.
@@ -302,7 +320,7 @@ func fileTarget(d *sql.DB, root, key, target string) (string, bool) {
 
 func symbolImpact(d *sql.DB, key, name string) (map[string][]string, error) {
 	rows, err := d.Query(`SELECT source_file, COUNT(*) FROM code_edges WHERE repo_root = ? AND target_symbol = ?
-		AND relation_type IN ('calls','references') GROUP BY source_file`, key, name)
+		AND relation_type IN ('calls','references','renders') GROUP BY source_file`, key, name)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +339,9 @@ func symbolImpact(d *sql.DB, key, name string) (map[string][]string, error) {
 
 func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 	exported := map[string]bool{}
-	rows, err := d.Query(`SELECT name, is_exported FROM code_symbols WHERE repo_root = ? AND file_path = ? AND kind != 'route'`, key, rel)
+	// seções de documentação não são símbolos do arquivo: quem cita um Markdown aparece pela linha "docs:", não
+	// como "uses:" de cabeçalho
+	rows, err := d.Query(`SELECT name, is_exported FROM code_symbols WHERE repo_root = ? AND file_path = ? AND kind NOT IN ('route', '`+KindDocSection+`')`, key, rel)
 	if err != nil {
 		return nil, err
 	}
@@ -334,16 +354,53 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 	}
 	rows.Close()
 
+	isGo := strings.HasSuffix(rel, ".go")
+	isCS := strings.HasSuffix(rel, ".cs")
+
 	importers := map[string]bool{}
+	if !isCS { // em C# o import é o NAMESPACE do arquivo, não um caminho: a visibilidade sai de loadCSScopes
+		rows, err = d.Query(`SELECT DISTINCT source_file, target_symbol FROM code_edges
+			WHERE repo_root = ? AND relation_type = 'imports' AND source_file != ?`, key, rel)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var src, imp string
+			if rows.Scan(&src, &imp) == nil && importResolves(src, imp, rel) {
+				importers[src] = true
+			}
+		}
+		rows.Close()
+	}
+
+	var cs *csScopes
+	targetNS := globalNS
+	if isCS {
+		if cs, err = loadCSScopes(d, key); err != nil {
+			return nil, err
+		}
+		targetNS = cs.namespacesOf(rel)
+	}
+
+	// Em C# o uso de um tipo costuma ser a herança/interface (`: Base, IFoo`), e não uma chamada: sem essas arestas o
+	// impact de um arquivo de tipos sairia vazio.
+	rels := "'calls','references','renders'"
+	if isCS {
+		rels = "'calls','references','inherits','implements'"
+	}
+
+	// <script src>/<link href> apontam para o arquivo por caminho, não por pacote: o alvo é resolvido relativo a
+	// quem referencia (assetResolves), e quem referencia entra como dependente mesmo sem usar símbolo nenhum.
+	htmlUsers := map[string]bool{}
 	rows, err = d.Query(`SELECT DISTINCT source_file, target_symbol FROM code_edges
-		WHERE repo_root = ? AND relation_type = 'imports' AND source_file != ?`, key, rel)
+		WHERE repo_root = ? AND relation_type = 'html_ref' AND source_file != ?`, key, rel)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var src, imp string
-		if rows.Scan(&src, &imp) == nil && importResolves(src, imp, rel) {
-			importers[src] = true
+		var src, asset string
+		if rows.Scan(&src, &asset) == nil && assetResolves(src, asset, rel) {
+			htmlUsers[src] = true
 		}
 	}
 	rows.Close()
@@ -358,20 +415,25 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 			marks = append(marks, "?")
 		}
 		rows, err = d.Query(`SELECT DISTINCT source_file, target_symbol FROM code_edges WHERE repo_root = ? AND source_file != ?
-			AND relation_type IN ('calls','references') AND target_symbol IN (`+strings.Join(marks, ",")+`)`, names...)
+			AND relation_type IN (`+rels+`) AND target_symbol IN (`+strings.Join(marks, ",")+`)`, names...)
 		if err != nil {
 			return nil, err
 		}
-		isGo := strings.HasSuffix(rel, ".go")
+		// nome de classe/id de CSS não é escopado por import (a folha de estilo é global, ligada por <link> ou
+		// className): para arquivo de estilo, quem usa um dos nomes entra, importando ou não.
+		style := isStyleFile(rel)
 		for rows.Next() {
 			var src, sym string
 			if rows.Scan(&src, &sym) != nil {
 				continue
 			}
-			visible := importers[src]
-			if isGo {
+			visible := importers[src] || style
+			switch {
+			case isGo:
 				samePkg := strings.HasSuffix(src, ".go") && path.Dir(src) == path.Dir(rel)
 				visible = samePkg || (importers[src] && exported[sym])
+			case isCS:
+				visible = cs.visible(src, exported[sym], targetNS)
 			}
 			if !visible {
 				continue
@@ -393,14 +455,188 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 		sort.Strings(list)
 		out[src] = []string{"uses: " + strings.Join(list, ", ")}
 	}
-	if !strings.HasSuffix(rel, ".go") {
+	if !isGo && !isCS {
 		for src := range importers {
 			if _, ok := out[src]; !ok {
 				out[src] = []string{"imports"}
 			}
 		}
 	}
+	for src := range htmlUsers {
+		if _, ok := out[src]; !ok {
+			out[src] = []string{"html_ref"}
+		}
+	}
+	deps, err := projectDependents(d, key, rel)
+	if err != nil {
+		return nil, err
+	}
+	for src, why := range deps {
+		if _, ok := out[src]; !ok {
+			out[src] = []string{why}
+		}
+	}
 	return out, nil
+}
+
+// csScopes reúne, por arquivo, os namespaces que ele declara e os que importa (`using`). É o que substitui a
+// resolução de import por caminho: em C# o `using` aponta para um namespace, nunca para um arquivo.
+type csScopes struct {
+	ns      map[string]map[string]bool
+	imports map[string]map[string]bool
+}
+
+// globalNS: arquivo sem namespace declarado vive no namespace global, que é um namespace como outro qualquer
+// (dois arquivos sem namespace se enxergam).
+var globalNS = map[string]bool{"": true}
+
+func loadCSScopes(d *sql.DB, key string) (*csScopes, error) {
+	cs := &csScopes{ns: map[string]map[string]bool{}, imports: map[string]map[string]bool{}}
+	rows, err := d.Query(`SELECT file_path, name FROM code_symbols WHERE repo_root = ? AND kind = 'namespace'`, key)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var f, n string
+		if rows.Scan(&f, &n) == nil {
+			addSet(cs.ns, f, n)
+		}
+	}
+	rows.Close()
+	if rows, err = d.Query(`SELECT source_file, target_symbol FROM code_edges
+		WHERE repo_root = ? AND relation_type = 'imports'`, key); err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var f, n string
+		if rows.Scan(&f, &n) == nil {
+			addSet(cs.imports, f, n)
+		}
+	}
+	return cs, nil
+}
+
+func addSet(m map[string]map[string]bool, k, v string) {
+	if m[k] == nil {
+		m[k] = map[string]bool{}
+	}
+	m[k][v] = true
+}
+
+func (c *csScopes) namespacesOf(file string) map[string]bool {
+	if s := c.ns[file]; len(s) > 0 {
+		return s
+	}
+	return globalNS
+}
+
+// visible: o mesmo namespace enxerga tudo (internal incluído); de fora, só o que é público — e só se o namespace do
+// alvo estiver entre os usings do arquivo (é a regra do C#, sem resolução de tipos).
+func (c *csScopes) visible(src string, exported bool, target map[string]bool) bool {
+	if intersects(c.namespacesOf(src), target) {
+		return true
+	}
+	return exported && intersects(c.imports[src], target)
+}
+
+func intersects(a, b map[string]bool) bool {
+	for k := range a {
+		if b[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// projectDependents: projetos .csproj/.sln que referenciam o projeto dono do alvo. A aresta 'projref' vai do projeto
+// que referencia para o NOME do projeto referenciado, então basta reduzir o alvo ao nome do projeto que o contém.
+func projectDependents(d *sql.DB, key, rel string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, owner := range projectOwners(d, key, rel) {
+		rows, err := d.Query(`SELECT DISTINCT source_file FROM code_edges
+			WHERE repo_root = ? AND relation_type = 'projref' AND target_symbol = ?`, key, owner)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var f string
+			if rows.Scan(&f) == nil && f != rel {
+				out[f] = "projref: " + owner
+			}
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
+// isStyleFile: folha de estilo. O nome declarado nela (.card, #main, --cor) vale no documento inteiro.
+func isStyleFile(rel string) bool {
+	switch strings.ToLower(path.Ext(rel)) {
+	case ".css", ".scss", ".less":
+		return true
+	}
+	return false
+}
+
+// assetResolves diz se o asset referenciado em src (src de <script>/<link>, caminho relativo ao repositório) é o
+// arquivo f. O alvo é relativo a quem referencia — é o que <script src="../js/app.js"> significa —, e "/x" conta a
+// partir da raiz do repositório. Sem extensão também casa ("./app" para app.js), como nos imports de TS.
+func assetResolves(src, asset, f string) bool {
+	if asset == "" {
+		return false
+	}
+	p := path.Clean(asset)
+	if !strings.HasPrefix(asset, "/") {
+		p = path.Clean(path.Join(path.Dir(src), asset))
+	}
+	if p == f {
+		return true
+	}
+	return path.Ext(p) == "" && p == strings.TrimSuffix(f, path.Ext(f))
+}
+
+// projectOwners: nome do projeto de um arquivo — ele mesmo, se for .csproj/.sln, senão o projeto do diretório mais
+// próximo acima dele (o que contém o arquivo). Vazio para arquivo fora de projeto.
+func projectOwners(d *sql.DB, key, rel string) []string {
+	base := path.Base(rel)
+	switch strings.ToLower(path.Ext(base)) {
+	case ".csproj", ".sln":
+		return []string{strings.TrimSuffix(base, path.Ext(base))}
+	case ".cs":
+	default:
+		return nil
+	}
+	dir := path.Dir(rel)
+	if dir == "." {
+		dir = ""
+	}
+	rows, err := d.Query(`SELECT file_path, name FROM code_symbols WHERE repo_root = ? AND kind = 'project'`, key)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	best, owners := -1, []string{}
+	for rows.Next() {
+		var f, n string
+		if rows.Scan(&f, &n) != nil {
+			continue
+		}
+		pd := path.Dir(f)
+		if pd == "." {
+			pd = ""
+		}
+		if dir != pd && pd != "" && !strings.HasPrefix(dir, pd+"/") {
+			continue
+		}
+		switch {
+		case len(pd) > best:
+			best, owners = len(pd), []string{n}
+		case len(pd) == best:
+			owners = append(owners, n)
+		}
+	}
+	return owners
 }
 
 // importResolves diz se o import imp, feito em src, aponta para o arquivo f (caminhos relativos ao repositório).

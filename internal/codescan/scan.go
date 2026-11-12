@@ -27,6 +27,9 @@ const (
 
 // Scan extrai declarações e referências de um arquivo inteiro.
 func Scan(src []byte, l *Lang) ([]Decl, []Ref) {
+	if l.custom != nil { // linguagem fora do modelo "uma declaração por linha" (CSS/HTML/Razor)
+		return l.custom(src)
+	}
 	text := strings.TrimPrefix(string(src), utf8BOM)
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	lines := strings.Split(text, "\n")

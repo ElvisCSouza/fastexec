@@ -100,7 +100,7 @@ func graphFirstRead(args ReadFileArgs, full string, from, to int) (out string, o
 	if to-from+1 <= graphMinLines {
 		return "", false, ""
 	}
-	decls, _ := codescan.Scan([]byte(full), lang)
+	decls := outlineDecls(args.Path, []byte(full), lang)
 	var in []codescan.Decl
 	for _, d := range decls {
 		end := d.EndLine

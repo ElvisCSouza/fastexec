@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"homelab/fastexec/internal/codescan"
 )
 
 // SyncBudget é o teto da passada de frescor disparada por uma busca: acima disso a resposta pronta não sai a tempo
@@ -25,18 +27,20 @@ type meta struct {
 	head  string
 	work  string
 	files int
+	docs  int // Markdown rastreados na passada completa: é o que mantém Stats.Docs verdadeiro no caminho "Fresh"
 }
 
 func readMeta(d *sql.DB, key string) (meta, bool) {
 	var m meta
-	err := d.QueryRow(`SELECT head, work, files FROM code_meta WHERE repo_root = ?`, key).Scan(&m.head, &m.work, &m.files)
+	err := d.QueryRow(`SELECT head, work, files, docs FROM code_meta WHERE repo_root = ?`, key).
+		Scan(&m.head, &m.work, &m.files, &m.docs)
 	return m, err == nil
 }
 
-func writeMeta(d *sql.DB, key, head, work string, files int) error {
-	_, err := d.Exec(`INSERT INTO code_meta (repo_root, head, work, files, checked_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP)
+func writeMeta(d *sql.DB, key, head, work string, files, docs int) error {
+	_, err := d.Exec(`INSERT INTO code_meta (repo_root, head, work, files, docs, checked_at) VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
 		ON CONFLICT(repo_root) DO UPDATE SET head = excluded.head, work = excluded.work, files = excluded.files,
-			checked_at = CURRENT_TIMESTAMP`, key, head, work, files)
+			docs = excluded.docs, checked_at = CURRENT_TIMESTAMP`, key, head, work, files, docs)
 	return err
 }
 
@@ -72,8 +76,12 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 	key := repoKey(root)
 	head, work, have := gitState(root)
 	if have {
+		// O estado só é gravado no fim de uma passada completa (que inclui a segunda passada das arestas de doc),
+		// então estado igual dispensa a varredura sem deixar Markdown pendente para trás. O estado carrega também a
+		// contagem de Markdown daquela passada: sem ela a resposta fresca diria "0 docs" e as consultas esconderiam
+		// toda a documentação (é o gate st.Docs > 0).
 		if m, ok := readMeta(d, key); ok && m.head == head && m.work == work && m.files > 0 {
-			return Stats{Files: m.files, Fresh: true, Took: time.Since(start)}, nil
+			return Stats{Files: m.files, Docs: m.docs, Fresh: true, Took: time.Since(start)}, nil
 		}
 	}
 	deadline := time.Time{}
@@ -122,6 +130,11 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 
 	st := Stats{Files: len(files)}
 	seen := make(map[string]bool, len(files))
+	type pendingDoc struct {
+		rel  string
+		refs []DocRef
+	}
+	var docs []pendingDoc
 	budgetHit := false
 	for _, rel := range files {
 		if over() {
@@ -130,10 +143,13 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 		}
 		abs := filepath.Join(root, filepath.FromSlash(rel))
 		info, err := os.Stat(abs)
-		if err != nil || info.IsDir() || info.Size() > maxFileSize {
+		if err != nil || info.IsDir() || tooBig(rel, info.Size()) {
 			continue
 		}
 		seen[rel] = true
+		if codescan.IsDoc(rel) {
+			st.Docs++
+		}
 		mtime := info.ModTime().UnixNano()
 		rec, ok := known[rel]
 		if ok && rec.mtime == mtime {
@@ -150,8 +166,12 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 			}
 			continue
 		}
-		if err := s.index(key, rel, src, mtime, h); err != nil {
+		refs, err := s.index(key, rel, src, mtime, h)
+		if err != nil {
 			return st, err
+		}
+		if refs != nil {
+			docs = append(docs, pendingDoc{rel: rel, refs: refs})
 		}
 		st.Changed++
 	}
@@ -162,6 +182,21 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 					return st, err
 				}
 				st.Removed++
+			}
+		}
+	}
+	// Segunda passada: as arestas de documentação só podem ser resolvidas com o índice já atualizado (arquivos e
+	// símbolos desta transação, sem os que sumiram). Roda também quando o teto cortou a varredura: as arestas de doc
+	// dos arquivos processados ficam inteiras na transação e o que faltou é anunciado pelo OverBudget, que proíbe
+	// responder do índice.
+	if len(docs) > 0 {
+		ix, err := loadDocIndex(tx, key, root, false)
+		if err != nil {
+			return st, err
+		}
+		for _, pd := range docs {
+			if err := s.docEdges(key, pd.rel, pd.refs, ix); err != nil {
+				return st, err
 			}
 		}
 	}
@@ -178,7 +213,7 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 	// próxima chamada pular a passada que ainda falta.
 	if have {
 		if h2, w2, ok2 := gitState(root); ok2 && h2 == head && w2 == work {
-			_ = writeMeta(d, key, head, work, len(files))
+			_ = writeMeta(d, key, head, work, len(files), st.Docs)
 		}
 	}
 	st.Fresh = st.Changed == 0 && st.Removed == 0

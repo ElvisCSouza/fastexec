@@ -24,6 +24,10 @@ type Lang struct {
 	cppRaw       bool             // strings cruas R"delim(...)delim" multilinha (C++)
 	imports      []*regexp.Regexp // grupo 1 = módulo importado
 	importNames  *regexp.Regexp   // grupo 1 = lista de nomes importados ("a, b as c")
+	// custom substitui a varredura por linha quando as regras não dão conta: CSS/HTML/Razor têm
+	// vários seletores por linha, atributos no meio da tag e aninhamento. Como é campo de Lang,
+	// quem consome (code_outline, grafo) usa a mesma extração para a mesma extensão.
+	custom func(src []byte) ([]Decl, []Ref)
 }
 
 type rule struct {
@@ -177,16 +181,25 @@ var (
 		imports: []*regexp.Regexp{regexp.MustCompile(`@import\(\s*"([^"]+)"`)},
 	}
 
+	// Arquivos de projeto do .NET: aqui só se declara a extensão como conhecida (índice, Touch e varredura de árvore
+	// param de pular o arquivo); quem lê o conteúdo — ProjectReference, o símbolo do projeto — é o parser do
+	// internal/graph, que enxerga essa extensão e responde por ela.
+	langProj = &Lang{Name: "proj"}
+
 	langByExt = map[string]*Lang{
-		".zig": langZig,
-		".cs":  langCS, ".java": langJava, ".kt": langKt, ".kts": langKt,
+		".zig":    langZig,
+		".csproj": langProj, ".sln": langProj,
+		".cs": langCS, ".java": langJava, ".kt": langKt, ".kts": langKt,
 		".c": langC, ".h": langC, ".cc": langC, ".cpp": langC, ".cxx": langC, ".hpp": langC, ".hh": langC, ".hxx": langC, ".inl": langC,
 		".go": langGo,
-		".ts": langJS, ".tsx": langJS, ".mts": langJS, ".cts": langJS,
-		".js": langJS, ".jsx": langJS, ".mjs": langJS, ".cjs": langJS,
+		".ts": langJS, ".tsx": langTSX, ".mts": langJS, ".cts": langJS,
+		".js": langJS, ".jsx": langTSX, ".mjs": langJS, ".cjs": langJS,
 		".py": langPy,
 		".sh": langSh, ".bash": langSh, ".zsh": langSh,
 		".ps1": langPS1, ".psm1": langPS1,
+		".css": langCSS, ".scss": langCSS, ".less": langCSS,
+		".html": langHTML, ".htm": langHTML,
+		".razor": langRazor, ".cshtml": langRazor,
 	}
 )
 
@@ -200,7 +213,7 @@ func LangFor(path string) *Lang {
 }
 
 // Supported lista as extensões aceitas (para mensagens de erro).
-const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp, .cs, .java, .kt/.kts, .zig"
+const Supported = ".go, .ts/.tsx/.js/.jsx/.mjs/.cjs, .py, .sh/.bash, .ps1, .c/.h/.cpp/.cc/.hpp, .cs/.csproj/.sln, .java, .kt/.kts, .zig, .css/.scss/.less, .html/.htm, .razor/.cshtml"
 
 // zigTypeKind: struct, enum, union, opaque ou error (conjunto de erros).
 func zigTypeKind(line string) string {

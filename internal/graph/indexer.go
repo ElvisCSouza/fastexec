@@ -32,12 +32,14 @@ const (
 	checkpointAfter = 50
 )
 
-// Stats resume uma passada de indexação. Fresh marca a passada que nem precisou varrer (o estado do repositório era
-// o mesmo da última); OverBudget marca a que parou no teto de tempo do Sync (índice possivelmente incompleto).
+// Stats resume uma passada de indexação. Docs conta os Markdown rastreados (só eles entram no grafo de
+// documentação e só eles justificam consultar as arestas de doc). Fresh marca a passada que nem precisou varrer (o
+// estado do repositório era o mesmo da última); OverBudget marca a que parou no teto de tempo do Sync (índice
+// possivelmente incompleto).
 type Stats struct {
-	Files, Changed, Removed int
-	Took                    time.Duration
-	Fresh, OverBudget       bool
+	Files, Changed, Removed, Docs int
+	Took                          time.Duration
+	Fresh, OverBudget             bool
 }
 
 // ResolveRepoRoot sobe a partir de path até a pasta com .git mais próxima (diretório ou arquivo, como em worktrees).
@@ -90,7 +92,15 @@ func contentHash(b []byte) string {
 }
 
 func indexable(rel string) bool {
-	return codescan.LangFor(rel) != nil && !codescan.IsNoisePath(rel)
+	return (codescan.LangFor(rel) != nil || codescan.IsDoc(rel)) && !codescan.IsNoisePath(rel)
+}
+
+// tooBig aplica o limite de tamanho: documentação tem teto menor (MD de 2 MB é log colado ou doc gerada).
+func tooBig(rel string, size int64) bool {
+	if codescan.IsDoc(rel) {
+		return size > maxDocSize
+	}
+	return size > maxFileSize
 }
 
 // listFiles devolve os caminhos relativos (com '/') dos arquivos indexáveis e o total listado (todos os arquivos
@@ -181,27 +191,64 @@ func (s *stmts) remove(key, rel string) error {
 	return nil
 }
 
-// index troca símbolos e arestas do arquivo pelos recém-extraídos e registra (mtime, hash).
-func (s *stmts) index(key, rel string, src []byte, mtime int64, hash string) error {
+// index troca símbolos e arestas do arquivo pelos recém-extraídos e registra (mtime, hash). Num Markdown os nós
+// são as seções e as arestas de saída dependem do índice inteiro já atualizado, então voltam para a segunda
+// passada da mesma transação em vez de serem gravadas aqui.
+func (s *stmts) index(key, rel string, src []byte, mtime int64, hash string) ([]DocRef, error) {
 	if _, err := s.delSym.Exec(key, rel); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := s.delEdge.Exec(key, rel); err != nil {
-		return err
+		return nil, err
+	}
+	if codescan.IsDoc(rel) {
+		secs, refs := ParseMarkdown(rel, src)
+		for _, sec := range secs {
+			if _, err := s.insSym.Exec(key, rel, sec.Name, KindDocSection, sec.Header, sec.Line, sec.EndLine, true); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := s.upFile.Exec(key, rel, mtime, hash); err != nil {
+			return nil, err
+		}
+		return refs, nil
 	}
 	decls, refs, _ := ParseFile(rel, src)
 	for _, d := range decls {
 		if _, err := s.insSym.Exec(key, rel, d.Name, d.Kind, d.Sig, d.Line, d.EndLine, d.Exported); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	for _, r := range refs {
 		if _, err := s.insEdge.Exec(key, rel, r.Line, r.Target, r.Rel); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := s.upFile.Exec(key, rel, mtime, hash); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// docEdges grava as arestas de um Markdown já indexado, resolvendo cada referência contra o índice recém-atualizado
+// (ix). Uma aresta por (relação, alvo): a linha guardada é a da primeira menção, que é a que a linha "docs:" mostra.
+func (s *stmts) docEdges(key, rel string, refs []DocRef, ix *docIndex) error {
+	seen := map[string]bool{}
+	for _, r := range refs {
+		t, _ := ix.refTarget(rel, r)
+		if t == "" {
+			continue
+		}
+		k := r.Kind + "\x00" + t
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		if _, err := s.insEdge.Exec(key, rel, r.Line, t, r.Kind); err != nil {
 			return err
 		}
 	}
-	_, err := s.upFile.Exec(key, rel, mtime, hash)
-	return err
+	return nil
 }
 
 // Reindex apaga o índice do repositório e indexa tudo de novo.
@@ -261,15 +308,25 @@ func ReindexFile(root, absPath string) error {
 		}
 		return tx.Commit()
 	}
-	if info.Size() > maxFileSize {
+	if tooBig(rel, info.Size()) {
 		return nil
 	}
 	src, err := os.ReadFile(absPath)
 	if err != nil {
 		return err
 	}
-	if err := s.index(key, rel, src, info.ModTime().UnixNano(), contentHash(src)); err != nil {
+	refs, err := s.index(key, rel, src, info.ModTime().UnixNano(), contentHash(src))
+	if err != nil {
 		return err
+	}
+	if refs != nil {
+		ix, err := loadDocIndex(tx, key, root, false)
+		if err != nil {
+			return err
+		}
+		if err := s.docEdges(key, rel, refs, ix); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -291,7 +348,7 @@ var (
 // Touch agenda a reindexação de um arquivo gravado (debounce): só age se o banco já existe e o repositório do
 // arquivo já foi indexado; nunca cria índice nem bloqueia quem gravou.
 func Touch(path string) {
-	if codescan.LangFor(path) == nil || !exists() {
+	if !indexable(filepath.ToSlash(path)) || !exists() {
 		return
 	}
 	abs, err := filepath.Abs(path)

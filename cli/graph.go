@@ -126,7 +126,11 @@ func runGraph(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	fmt.Printf("indexed %s: %d files in %d ms\n", root, st.Changed, st.Took.Milliseconds())
+	docs := ""
+	if st.Docs > 0 {
+		docs = fmt.Sprintf(" (%d docs)", st.Docs)
+	}
+	fmt.Printf("indexed %s: %d files%s in %d ms\n", root, st.Changed, docs, st.Took.Milliseconds())
 	return 0
 }
 

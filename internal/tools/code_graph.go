@@ -57,7 +57,11 @@ func HandleCodeGraph(args CodeGraphArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("indexed %s: %d files in %d ms", root, st.Changed, st.Took.Milliseconds()), nil
+		docs := ""
+		if st.Docs > 0 {
+			docs = fmt.Sprintf(" (%d docs)", st.Docs)
+		}
+		return fmt.Sprintf("indexed %s: %d files%s in %d ms", root, st.Changed, docs, st.Took.Milliseconds()), nil
 	}
 	return "", fmt.Errorf("unknown action %q (use callers, def, impact or index)", args.Action)
 }

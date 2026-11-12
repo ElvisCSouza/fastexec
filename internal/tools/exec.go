@@ -266,6 +266,14 @@ func handleExec(args ExecArgs) (string, error) {
 		out = strings.TrimRight(out, "\r\n") + "\n\n" + graphNote
 	}
 	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
+		// apagou arquivo de código? o índice (de antes do apagamento) diz quem ainda usa os símbolos dele
+		if h := execDeleteImpact(args); h != "" {
+			out = strings.TrimRight(out, "\r\n")
+			if out != "" {
+				out += "\n"
+			}
+			out += h
+		}
 		out = dedupExecOutput(args, label, out)
 	}
 	// Rodapé do tempo (elapsed.go) por ÚLTIMO: depois do '[exit N]', das notas de remediação e do dedup — se ele

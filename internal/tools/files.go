@@ -472,6 +472,12 @@ func selectFromText(filePath, data string, args ReadFileArgs) (string, error) {
 }
 
 func HandleWriteFile(args WriteFileArgs) (string, error) {
+	return handleWriteFile(args, true)
+}
+
+// handleWriteFile é o HandleWriteFile com o aviso de impacto (edit_impact.go) sob controle: o edit_file, que já
+// calcula o dele, chama com impact=false para não pagar duas vezes pela mesma consulta.
+func handleWriteFile(args WriteFileArgs, impact bool) (string, error) {
 	if args.Path == "" {
 		return "", fmt.Errorf("parameter 'path' is required")
 	}
@@ -513,10 +519,16 @@ func HandleWriteFile(args WriteFileArgs) (string, error) {
 			}
 		}
 		graph.Touch(args.Path) // índice de código: reindexa em segundo plano se o repositório já é indexado
+		msg := okReply(int64(len(contentBytes)))
 		if h := rewriteHint(oldText, args.Content); h != "" {
-			return okReply(int64(len(contentBytes))) + "\n" + h, nil
+			msg += "\n" + h
 		}
-		return okReply(int64(len(contentBytes))), nil
+		if impact {
+			if h := editImpact(args.Host, args.Path, oldText, args.Content); h != "" {
+				msg += "\n" + h
+			}
+		}
+		return msg, nil
 	}
 
 	// Remoto via daemon chunked
@@ -696,16 +708,20 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		// o aviso de impacto lê o texto decodificado, antes de encodeForWrite (edit_impact.go)
+		if h := editImpact(host, args.Path, content, newContent); h != "" {
+			note += "\n" + h
+		}
 		if newContent, err = encodeForWrite(newContent, enc); err != nil {
 			return "", err
 		}
-		_, err = HandleWriteFile(WriteFileArgs{
+		_, err = handleWriteFile(WriteFileArgs{
 			Host:      host,
 			Path:      args.Path,
 			Content:   newContent,
 			Atomic:    true,
 			Overwrite: true,
-		})
+		}, false)
 		if err != nil {
 			return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
 		}
@@ -786,22 +802,27 @@ func handleEditFile(args EditFileArgs) (string, error) {
 	}
 
 	proof := editProof(newContent, applied, enc)
+	// o aviso de impacto lê o texto decodificado, antes de encodeForWrite (edit_impact.go)
+	impact := editImpact(host, args.Path, content, newContent)
 	if newContent, err = encodeForWrite(newContent, enc); err != nil {
 		return "", err
 	}
-	_, err = HandleWriteFile(WriteFileArgs{
+	_, err = handleWriteFile(WriteFileArgs{
 		Host:      host,
 		Path:      args.Path,
 		Content:   newContent,
 		Atomic:    true,
 		Overwrite: true,
-	})
+	}, false)
 	if err != nil {
 		return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
 	}
 
 	msg := fmt.Sprintf("[edit_file] %d change(s) applied (%d -> %d bytes) in %s.", len(ops), oldBytes, newBytes, args.Path)
 	msg += proof
+	if impact != "" {
+		msg += "\n" + impact
+	}
 	if len(notes) > 0 {
 		msg += " Note: " + strings.Join(notes, "; ") + "."
 	}

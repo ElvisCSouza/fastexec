@@ -110,6 +110,7 @@ Each one tells the model what it did and what to do next time.
 | PowerShell cmdlet in `cmd.exe` | Hint to use `pwsh` |
 | child processes left running after the command | Killed, with a warning to use `job` |
 | edit by script (`Get-Content ... -replace ... Set-Content`, `sed -i`) | Hint to use `edit_file` with `edits` |
+| command that deletes code files (`rm`, `del`/`erase`, `Remove-Item`, `git rm`), on a repository that already has a graph index | After a successful run, one `[graph] <file> deleted: ... still used in N files: a.go:12, ...` line naming the symbols of the deleted file that other files still use — the index consulted is the one from **before** the deletion. Silent without an index, on a remote host, or when nothing uses those symbols (see `edit_file`) |
 | no `host`, remote `default_host`, Windows drive path in `command`/`argv`/`cwd` | Runs on host `local`, with a `[FastExec Auto-Remediation]` note telling the model to pass `host='local'` next time |
 | Unix-style line (`grep`/`wc`/`sort`/`sed`/`awk`/`cut`/`ls -la`, `$(...)`, single quotes, `/dev/null`, `find` with Unix flags, Git Bash path) with no cmd signal, on a Windows `local` host that has `bash` (Git for Windows) | `bash -lc <line>` is chosen **before** running: one execution, same cwd, same timeout, same guards. The output carries `[FastExec Auto-Remediation] Unix-style command ran in bash (<path>) instead of cmd.exe`, plus the path translation when one happened |
 | Line that starts with a POSIX assignment (`start=$(date +%s%N); …`), with a Unix signal, on a Windows `local` host | Goes to `bash -lc` even when the line also carries a `%NAME%`-looking token (`+%s%N` is not a cmd variable) or a program both shells know (`pwsh`). No valid `cmd.exe` line starts with `VAR=`, and the first token would become the `START` builtin, which swallows the rest of the line: the call would only answer on the timeout (measured: 300 s for a 50 s script) |
@@ -191,10 +192,42 @@ characters). One line per change, up to 5; beyond that the count says `(and N mo
 ending style kept by the file (`CRLF`, `LF`, `mixed` or `none`), plus the encoding when it is not plain UTF-8
 (`encoding kept: Windows-1252`, `UTF-16LE`, `UTF-8 BOM`). Nothing about what is written changes.
 
+### Callers of a symbol whose signature changed
+
+When the edit changes the **header** of a declared symbol (its signature) or removes/renames it, and other files
+use that name, the reply adds one line naming them — so the model edits the callers in the same turn instead of
+spending a turn finding out who calls it:
+
+```
+[edit_file] 1 change(s) applied (18 -> 27 bytes) in W:\src\Fetch.cs.
+L3: public static async Task<Item> Fetch(int id, CancellationToken ct) {
+[graph] Fetch signature changed: 3 use(s) in 3 file(s) may need update: a.go:12, b.go:40, +4 more (tests: 2). By name, not type-checked.
+```
+
+- Fires only on signature change or removal/rename. A body-only edit, a comment, formatting or a **new** symbol
+  changes nothing in the reply.
+- The name is matched by name, not by type: treat the list as "look here", not as a compile error. A name declared
+  in more than one place is not listed at all — the line says `name is ambiguous (K definitions): check callers with
+  code_graph` instead, because the graph cannot tell which one the use belongs to.
+- The edited file itself is never in the list; test files are counted apart (`tests: N`), and at most 5 locations
+  are quoted before `+K more`. One warning per symbol, at most 3 per call (a batch edit can touch several).
+- Requires the repository to already have a graph index (a `.git` and a `graph.db` from a previous `code_graph`
+  use). Nothing is indexed on demand and no database is created: without an index the reply is exactly what it was
+  before. The query is capped at ~150 ms; past that the line is dropped rather than delay the edit.
+- Files whose language has no parseable declarations (`.json`, `.md`, images …) never trigger it.
+
+The same list comes back for `write_file` with `overwrite: true` over an existing file, and with `exec` when the
+command deletes code files (`rm`, `del`/`erase`, `Remove-Item`, `git rm`):
+
+```
+[graph] old/parser.go deleted: Fetch, Parse still used in 2 files: b.go:12, c.go:40, +2 more.
+```
+
 ## write_file
 
 Creates a file, optionally `atomic` (temp file + rename). An existing non-empty file is refused unless
-`overwrite: true`, so a model cannot wipe a file by accident when it meant to edit it.
+`overwrite: true`, so a model cannot wipe a file by accident when it meant to edit it. Overwriting a file that
+exists can bring the caller list above.
 
 ## file_ops
 
@@ -224,8 +257,17 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
 ## code_outline
 
 Declarations of a source file as `L<line>: <signature>`, or, for a folder, where a `symbol` is declared (skips
-dependency and build folders). Go, C/C++, TypeScript/JavaScript, Python, shell, PowerShell. Use it before reading a file
-to jump to the right lines.
+dependency and build folders). Go, C/C++, C#, TypeScript/JavaScript, Python, shell, PowerShell, CSS/SCSS/LESS, HTML
+and Razor (`.razor`/`.cshtml`). In a stylesheet a declaration is a class or id selector (one per name, so `.a, .b`
+gives two) and each `--var`; in HTML/Razor it is an `id`, and in JSX/TSX a component or a custom hook. Use it before
+reading a file to jump to the right lines.
+
+Markdown is accepted too: the output is its sections, one per heading, named by the heading path (`README.md > Install >
+Linux`) and rendered as `L<start>-L<end>: <heading>`. When the file has a reference that no longer lands — a link to a
+file that does not exist, or an anchor no section of the target matches — a last line
+`docs: N broken refs: README.md:12 -> setup.md (not found)` lists up to 5 (then `(+K more)`). That is how stale
+documentation surfaces without reading the file. A whole folder still lists code only; Markdown reaches you through
+`code_graph` (next section).
 
 ## code_graph
 
@@ -250,9 +292,61 @@ in the other cases. Homonyms reuse the same treatment as `depth` 1: a name decla
 call's receiver and the type it points at (`via x -> Type`, `-> ?` when undecided) and is listed in a final `NOTE:`
 line; no link is invented.
 
-Go is parsed with `go/ast`; C/C++, TypeScript/JavaScript, Python, shell and PowerShell with line scanners,
+The same graph carries the **documentation**: inside an indexed repository, every Markdown file becomes
+documentation nodes and edges, by deterministic rule, never by the model. Each section (a heading) is a node, named by
+the heading path, and the references a section makes are edges: `[x](other.md#anchor)` links between Markdown files
+(resolved relative to the file's own folder, GitHub-style, anchor included), `[[Wiki links]]`, and backticked
+`` `Name` `` / `` `pkg.Name()` `` / `` `path/file.go` `` that match **exactly** an indexed symbol name or an existing
+file of the repository (never fuzzy; front matter is ignored, and inside a code fence only paths count, since a bare
+identifier there is sample code). So without opening a single Markdown:
+
+- `def` and `callers` end with `docs: README.md#install, _docs/api.md (+K)` — up to 3 documents, each with the section
+  that holds the mention. That answers "where is this documented" in the same call that answers "where is it declared".
+- `impact` of a file shows the same line for the documents that cite it (link, wiki link or path mention).
+- `index` counts the Markdown it tracked, and `code_outline` reports the broken references of one file.
+
+The line is absent — and the rest of the output is byte for byte what it always was — in a repository with no
+documentation, so nothing grows for the code-only case. Only Markdown inside a Git repository is indexed
+(`node_modules`, `vendor`, `.git` and the like are skipped, as is any file over 512 KB).
+
+Freshness is cheap but never lossy: the recorded repository state (HEAD + `git status --porcelain`) carries the
+Markdown count of the pass that produced it, so a call that finds the index already up to date still answers with the
+`docs:` line and the tracked-document count without scanning anything, and a document edge is only ever written by a
+pass that had the whole index in front of it — the files a budget cut left out are announced, never indexed halfway.
+`index` (full rebuild) drops the recorded state along with the rows, so an empty index cannot pass as up to date.
+
+Go is parsed with `go/ast`; C/C++, C#, TypeScript/JavaScript, Python, shell and PowerShell with line scanners,
 matched by name without type resolution (in C/C++: function and method definitions, classes, structs, unions,
 enums, `#define`, `using` aliases, `#include`; prototypes are not declarations).
+
+Front-end, all deterministic (no LLM, no guessing at a value that is not a literal):
+
+- in `.tsx`/`.jsx`, a function or arrow whose name starts with a capital and whose body returns JSX is a `component`
+  (its signature carries the props when they are typed), and `useX` with a capital X is a `hook`; `<Card />`,
+  `<Card.Sub />` and `<My.Ns.Widget />`
+  create a `renders` edge towards the last name segment, so `callers` of `Card` lists what renders it next to what
+  imports it. `className="a b"` / `className={'a b'}` (and `class=` in Preact/SVG) reference the classes; a template
+  literal or a `clsx()` call is skipped rather than invented;
+- in `.css`/`.scss`/`.less`, every `.class` and `#id` selector is a node (line range = its block) and every `--x` is a
+  `css_var` node; `var(--x)` and `className` are the edges. A stylesheet name is global (it is bound by `<link>` or by
+  `className`, not by an import), so `impact` of the file lists whoever uses a class it declares even without
+  importing it, and `callers` of `card` lists the files using that class;
+- in `.html`/`.htm`, ids are nodes, classes are references, and a local `<script src>`/`<link href>` is a `html_ref`
+  edge towards the file (URL, `data:` and interpolated paths are dropped), so `impact` of `app.js` names the page
+  that loads it;
+- in `.razor`/`.cshtml`, `<Component>` tags give `renders` edges (Blazor) and the `@code`/`@functions` body is ignored
+  as markup (it is C#).
+
+`node_modules`, `dist`, `build`, `vendor`, `.next` and `*.min.*` are never indexed.
+
+For C# (`.cs`, plus `.csproj` and `.sln`) the scanner reads namespaces (file-scoped and block), classes, structs,
+interfaces, records, enums and delegates, methods, constructors, properties and `const`/`static` fields; attributes,
+comments, strings (verbatim, raw and interpolated) and expression bodies yield no symbol. Edges: `Name(`/`.Name(`,
+`new Type(`, `using` and the base list (`: Base, IFoo` → `inherits`/`implements`). `<ProjectReference>` (and each
+`Project` of a `.sln`) is a `projref` edge, so `impact` on a project lists the projects that depend on it. `bin/`,
+`obj/`, `*.g.cs`, `*.Designer.cs` and `*.AssemblyInfo.cs` stay out of the index. `impact` on a `.cs` file only brings
+a file from another namespace when that file has a `using` for it — the same namespace always counts.
+
 Only repositories (a `.git` folder) are indexed, each in isolation, up to 10 000 files. Index:
 `<data_dir>/telemetry/graph.db`. CLI: `fastexec graph clean` and `fastexec graph repos`.
 
