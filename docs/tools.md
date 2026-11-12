@@ -77,7 +77,8 @@ Applied to stdout and stderr before the model sees them:
 6. A line longer than 500 characters keeps its start and end, or 150 characters around the searched term.
 7. Output over 64 KB keeps the first 16 KB and says so. The capture itself is bounded (first 3 MiB, last 1 MiB).
 
-A search that finds nothing (exit 1, no output) answers `no result (exit 1)` instead of looking like a failure.
+A search that finds nothing (exit 1, no output at all) answers `no result (exit 1)` instead of looking like a failure.
+If the same search wrote anything to stderr, that message is shown instead: `no result` is only for real silence.
 A non-zero exit is reported with its code and the first meaningful error line.
 
 ### Guards and corrections
@@ -100,6 +101,9 @@ Each one tells the model what it did and what to do next time.
 | child processes left running after the command | Killed, with a warning to use `job` |
 | edit by script (`Get-Content ... -replace ... Set-Content`, `sed -i`) | Hint to use `edit_file` with `edits` |
 | no `host`, remote `default_host`, Windows drive path in `command`/`argv`/`cwd` | Runs on host `local`, with a `[FastExec Auto-Remediation]` note telling the model to pass `host='local'` next time |
+| Unix tool missing on a Windows `local` host (`grep`, `rg`, `wc`, `head`, `tail`, `sed`, `awk`, `xargs`, `cat`, `ls`, `python`) on a command that failed with no stdout | `[FastExec Hint]` naming the tool, saying it does not exist here (commands run through `cmd.exe`) and giving the native alternative (`read_file`, `code_outline`, `file_ops`, or `pwsh` with `Select-String`/`Get-ChildItem` through `argv`+`input`); when `bash` exists on the host it also offers `argv ['bash','-lc','<the whole line>']` |
+| `find`/`sort` from System32 used with Unix flags (`-printf`, `-name`, `-rn`) | Same hint, saying the binary that ran is the Windows one and takes different flags |
+| Git Bash path (`/w/Data/x`, `/c/tmp/a.sh`) in `command` or `cwd` on the Windows `local` host | Translated to the Windows drive (`W:\Data\x`) before running, with a `[FastExec Auto-Remediation]` note showing what changed; skipped when the line hands the text to `bash`/`sh`/`wsl` |
 
 `FASTEXEC_NO_SEARCH_GUARD=1` disables the search and broad-root guards.
 

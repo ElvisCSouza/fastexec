@@ -48,6 +48,10 @@ func HandleJob(args JobArgs) (string, error) {
 	parts := append([]string{args.Command, args.Cwd}, args.Argv...)
 	host, note := localHostForWindowsPath(args.Host, parts...)
 	args.Host = host
+	// Caminho estilo Git Bash em host Windows (unix_shell.go) é traduzido antes de rodar, com aviso.
+	jobCmd, jobCwd, bashNote := remediateGitBashPaths(args.Host, args.Command, args.Cwd)
+	args.Command, args.Cwd = jobCmd, jobCwd
+	note = joinNotes(note, bashNote)
 	out, err := handleJob(args)
 	return withHostNote(note, out, err), err
 }

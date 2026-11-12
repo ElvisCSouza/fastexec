@@ -57,6 +57,10 @@ func HandleExec(args ExecArgs) (string, error) {
 	parts := append([]string{args.Command, args.Cwd}, args.Argv...)
 	host, note := localHostForWindowsPath(args.Host, parts...)
 	args.Host = host
+	// Caminho estilo Git Bash em host Windows (unix_shell.go) é traduzido antes de rodar, com aviso.
+	argCmd, argCwd, bashNote := remediateGitBashPaths(args.Host, args.Command, args.Cwd)
+	args.Command, args.Cwd = argCmd, argCwd
+	note = joinNotes(note, bashNote)
 	out, err := handleExec(args)
 	return withHostNote(note, out, err), err
 }
@@ -194,22 +198,7 @@ func handleExec(args ExecArgs) (string, error) {
 		out += "\n" + searchExcludedNote
 	}
 	if !searchGuardOff() {
-		switch {
-		case isEditScript(label):
-			out = strings.TrimRight(out, "\r\n") + "\n" + editScriptHint
-		case isDeclSearch(label):
-			out = strings.TrimRight(out, "\r\n") + "\n" + declSearchHint
-		case isCallSearch(label):
-			out = strings.TrimRight(out, "\r\n") + "\n" + callSearchHint
-		case isLineSliceRead(label):
-			out = strings.TrimRight(out, "\r\n") + "\n" + lineSliceHint
-		case isBroadSearch(label) && nonEmptyLines(res.Stdout) >= broadSearchMinLines:
-			out = strings.TrimRight(out, "\r\n") + "\n" + broadSearchHint
-		case isPythonMissing(res.Stdout + res.Stderr):
-			out = strings.TrimRight(out, "\r\n") + "\n" + pythonMissingHint
-		case isFileAggregate(label):
-			out = strings.TrimRight(out, "\r\n") + "\n" + aggregateHint
-		}
+		out = execFailureHints(out, label, unixLabel(label, hasArgv, args.Argv), res)
 	}
 	if res.ExitCode != 0 && !res.TimedOut {
 		if hint := checkCompileOrTestFailure(args.Cwd, label, out); hint != "" {
@@ -262,6 +251,45 @@ func handleExec(args ExecArgs) (string, error) {
 	return out, ferr
 }
 
+// unixLabel: rótulo em que a detecção de ferramenta Unix (unix_shell.go) se apoia. Num 'command' a linha inteira é
+// interpretada pelo shell, então os estágios ('a | b') contam; num 'argv' nada passa por shell e só o executável
+// diz que ferramenta é (sem isso, argv ['echo','grep x | wc -l'] acusaria um 'wc' que nunca vai rodar).
+func unixLabel(label string, hasArgv bool, argv []string) string {
+	if hasArgv && len(argv) > 0 {
+		return argv[0]
+	}
+	return label
+}
+
+// execFailureHints põe uma única nota no fim da saída — a mais específica que couber — e devolve o texto já com ela.
+// 'label' é a linha (ou o argv juntado) para as notas que falam do comando; 'unixLbl' é o rótulo da detecção de
+// ferramenta Unix. A nota do comando Unix fica por último de propósito: as notas acima (edit_file, read_file com
+// ranges) dão o caminho nativo direto para o mesmo erro, e só quando nenhuma cabe é que a nota genérica aparece.
+// O texto de 'out' (o erro original) nunca é escondido: a nota é acrescentada no fim.
+func execFailureHints(out, label, unixLbl string, res *transport.ExecResult) string {
+	unixNote := unixShellNoteFor(unixLbl, res)
+	add := func(note string) string { return strings.TrimRight(out, "\r\n") + "\n" + note }
+	switch {
+	case isEditScript(label):
+		return add(editScriptHint)
+	case isDeclSearch(label):
+		return add(declSearchHint)
+	case isCallSearch(label):
+		return add(callSearchHint)
+	case isLineSliceRead(label):
+		return add(lineSliceHint)
+	case isBroadSearch(label) && nonEmptyLines(res.Stdout) >= broadSearchMinLines:
+		return add(broadSearchHint)
+	case isPythonMissing(res.Stdout + res.Stderr):
+		return add(pythonMissingHint)
+	case isFileAggregate(label):
+		return add(aggregateHint)
+	case unixNote != "":
+		return add(unixNote)
+	}
+	return out
+}
+
 func formatExecResult(command string, res transport.ExecResult) (string, error) {
 	out, err := formatExecOutput(command, res)
 	if res.Leftover > 0 {
@@ -284,7 +312,10 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 		if res.ExitCode == 1 && stdout == "" && stderr == "" {
 			return NoResultText, nil
 		}
-		if (res.ExitCode == 1 || res.ExitCode == 255) && stdout == "" && isSearchOrDiffCommand(command) {
+		// Busca sem resultado é silêncio normal (grep sem casamento sai 1). Mas se o comando escreveu algo na stderr,
+		// o erro é real ('grep' não existe no cmd, arquivo não encontrado): engolir a mensagem era o "no result (exit 1)"
+		// sem pista nenhuma do benchmark. Só o silêncio de verdade vira NoResultText.
+		if (res.ExitCode == 1 || res.ExitCode == 255) && stdout == "" && stderr == "" && isSearchOrDiffCommand(command) {
 			return NoResultText, nil
 		}
 		errMsg := stderr
