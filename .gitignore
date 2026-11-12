@@ -6,3 +6,4 @@ server/dist/
 .teaching/
 
 bench/tools/runjob/runjob.exe
+bench/results/full1-cache.jsonl

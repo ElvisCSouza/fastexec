@@ -14,6 +14,8 @@ if ($MaxRunUsd -le 0) { $MaxRunUsd = [double]$cfg.defaults.max_run_usd }
 if ($MaxTotalUsd -le 0) { $MaxTotalUsd = [double]$cfg.defaults.max_total_usd }
 $work = $cfg.work_dir
 $prov = $null
+# Regra do Elvis: benchmarks NUNCA usam a sessao/assinatura Claude dele; somente Together AI.
+if (-not $Provider) { throw "bloqueado: benchmark sem -Provider usaria a sessao Claude. Use -Provider together-dsv41flash." }
 if ($Provider) { $prov = $cfg.providers.$Provider; if (-not $prov) { throw "provedor desconhecido: $Provider (existem: $(($cfg.providers.PSObject.Properties.Name) -join ', '))" }
   if (-not ([Environment]::GetEnvironmentVariable($prov.api_key_env, 'User') -or [Environment]::GetEnvironmentVariable($prov.api_key_env, 'Process'))) { throw "variavel de ambiente $($prov.api_key_env) nao definida" } }
 $modelUsed = if ($prov) { $prov.model } else { $cfg.model }

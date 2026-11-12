@@ -20,6 +20,10 @@
     }
   },
   "repos": {
-    "cobra": { "url": "https://github.com/spf13/cobra", "ref": "v1.8.1" }
+    "cobra": { "url": "https://github.com/spf13/cobra", "ref": "v1.8.1"
+    },
+    "hugo": {
+      "url": "https://github.com/gohugoio/hugo",
+      "ref": "v0.139.5" }
   }
 }

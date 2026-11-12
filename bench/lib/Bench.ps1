@@ -1,4 +1,4 @@
-# Bench.ps1 - nucleo do benchmark "Claude nativo vs Claude com FastExec".
+﻿# Bench.ps1 - nucleo do benchmark "Claude nativo vs Claude com FastExec".
 # Uma funcao (Invoke-Arm) executa UM braco de UMA tarefa e devolve todas as dimensoes:
 #   Economia (foco) : in_tokens, out_tokens, tokens_total, first_turn_in (imposto fixo por turno), result_kb (o que as
 #                     ferramentas devolveram ao modelo), turns, tool_calls, cost
@@ -21,16 +21,16 @@ function Test-TcpOpen([string]$Addr) {
 
 function Start-BenchDaemon($Cfg, [string]$Fx, [string]$MetricsFile) {
   $data = Join-Path $Cfg.work_dir 'fx-data'; New-Item -ItemType Directory -Force $data | Out-Null
-  $env:FASTEXEC_DAEMON_ADDR = $Cfg.daemon_addr; $env:FASTEXEC_DATA_DIR = $data
+  $env:FASTEXEC_DAEMON_ADDR = $Cfg.daemon_addr; $env:FASTEXEC_DATA_DIR = $data; $env:FASTEXEC_HOME = (Join-Path $Cfg.work_dir 'fx-home'); Remove-Item Env:FASTEXEC_CONFIG -ErrorAction SilentlyContinue
   try { $p = Start-Process -FilePath (Get-RunJobPath) -ArgumentList @('-m', $MetricsFile, '--', $Fx, 'daemon', 'run') -PassThru -WindowStyle Hidden }
-  finally { Remove-Item Env:FASTEXEC_DAEMON_ADDR, Env:FASTEXEC_DATA_DIR -ErrorAction SilentlyContinue }
+  finally { Remove-Item Env:FASTEXEC_DAEMON_ADDR, Env:FASTEXEC_DATA_DIR, Env:FASTEXEC_HOME -ErrorAction SilentlyContinue }
   for ($i = 0; $i -lt 60 -and -not (Test-TcpOpen $Cfg.daemon_addr); $i++) { Start-Sleep -Milliseconds 100 }
   if (-not (Test-TcpOpen $Cfg.daemon_addr)) { throw 'daemon de benchmark nao subiu' }
   return $p
 }
 function Stop-BenchDaemon($Cfg, [string]$Fx, $P) {
-  $env:FASTEXEC_DAEMON_ADDR = $Cfg.daemon_addr; $env:FASTEXEC_DATA_DIR = (Join-Path $Cfg.work_dir 'fx-data')
-  try { & $Fx daemon stop *> $null } finally { Remove-Item Env:FASTEXEC_DAEMON_ADDR, Env:FASTEXEC_DATA_DIR -ErrorAction SilentlyContinue }
+  $env:FASTEXEC_DAEMON_ADDR = $Cfg.daemon_addr; $env:FASTEXEC_DATA_DIR = (Join-Path $Cfg.work_dir 'fx-data'); $env:FASTEXEC_HOME = (Join-Path $Cfg.work_dir 'fx-home')
+  try { & $Fx daemon stop *> $null } finally { Remove-Item Env:FASTEXEC_DAEMON_ADDR, Env:FASTEXEC_DATA_DIR, Env:FASTEXEC_HOME -ErrorAction SilentlyContinue }
   if ($P) { [void]$P.WaitForExit(8000) }
 }
 
@@ -85,7 +85,7 @@ function Invoke-Arm {
   if ($Cache) { Remove-Item Env:DISABLE_PROMPT_CACHING -ErrorAction SilentlyContinue } else { $env:DISABLE_PROMPT_CACHING = '1' }
   $a = $Cfg.arms.$Arm; $daemon = $null
   if ($a.mcp) {
-    $cfgMcp = @{ mcpServers = @{ fastexec = @{ command = $Fx; args = @('mcp'); env = @{ FASTEXEC_DAEMON_ADDR = $Cfg.daemon_addr; FASTEXEC_DATA_DIR = (Join-Path $Cfg.work_dir 'fx-data') } } } }
+    $cfgMcp = @{ mcpServers = @{ fastexec = @{ command = $Fx; args = @('mcp'); env = @{ FASTEXEC_DAEMON_ADDR = $Cfg.daemon_addr; FASTEXEC_DATA_DIR = (Join-Path $Cfg.work_dir 'fx-data'); FASTEXEC_HOME = (Join-Path $Cfg.work_dir 'fx-home') } } } }
     $mcp = Join-Path $Dir 'mcp.json'; ($cfgMcp | ConvertTo-Json -Depth 6) | Set-Content $mcp -Encoding UTF8
     $tools = ($a.tools -join ','); $allow = (@('mcp__fastexec') + @($a.tools) | Where-Object { $_ }) -join ','   # hybrid: nativas + FastExec juntas
     $daemon = Start-BenchDaemon $Cfg $Fx (Join-Path $Dir 'daemon-metrics.json')
@@ -116,11 +116,12 @@ function Invoke-Arm {
     $costOut = ($fresh * [double]$pm.input + $cr * [double]$pm.cached_input + $outT * [double]$pm.output) / 1e6
   }
   $wall = if ($m) { [double]$m.wall_s } else { 0 }; $api = [double]$f.duration_api_ms / 1000
+  $gCalls = [int]$st.tool_counts['mcp__fastexec__code_graph']; $oCalls = [int]$st.tool_counts['mcp__fastexec__code_outline']; $nGrep = [int]$st.tool_counts['Grep'] + [int]$st.tool_counts['Glob']
   $fxCalls = 0; foreach ($k in $st.tool_counts.Keys) { if ($k -like 'mcp__fastexec__*') { $fxCalls += $st.tool_counts[$k] } }
   [pscustomobject]@{
     arm = $Arm; answer = [string]$f.result; stop = [string]$f.subtype; is_error = [bool]$f.is_error
     in_tokens = $inT; out_tokens = $outT; tokens_total = $inT + $outT; first_turn_in = $st.first_turn_in
-    result_kb = [math]::Round($st.result_bytes / 1024, 2); turns = [int]$f.num_turns; tool_calls = $st.tool_calls; fx_calls = $fxCalls
+    result_kb = [math]::Round($st.result_bytes / 1024, 2); turns = [int]$f.num_turns; tool_calls = $st.tool_calls; fx_calls = $fxCalls; graph_calls = $gCalls; outline_calls = $oCalls; grep_calls = $nGrep
     tool_errors = $st.tool_errors; cost = $costOut; cost_reported = [double]$f.total_cost_usd; cache_read_tokens = [int]$u.cache_read_input_tokens; input_raw = [int]$u.input_tokens
     cache_used = (([int]$u.cache_creation_input_tokens + [int]$u.cache_read_input_tokens) -gt 0)
     wall_s = [math]::Round($wall, 1); api_s = [math]::Round($api, 1); tool_s = [math]::Round([math]::Max(0, $wall - $api), 1)

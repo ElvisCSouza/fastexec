@@ -120,9 +120,26 @@ if ($hy.Count) {
     $calls = ($t.Group | Measure-Object tool_calls -Sum).Sum; $fxc = ($t.Group | Measure-Object fx_calls -Sum).Sum
     $share = if ($calls) { $fxc / $calls } else { 0 }
     Out ("| {0} | {1} | {2:N0} | {3:N0} | {4} | {5:P0} | {6}/{7} |" -f $t.Name, $prs.Count, $mn, $mh, (Pct ($mh / $mn)), $share, @($t.Group | Where-Object { $_.correct }).Count, $t.Count)
-    foreach ($p in $prs) { if ($t.Name -ne 'T0') { $hp.Add([double]$p.h.tokens_total / [double][math]::Max(1, $p.n.tokens_total)) } }
+    foreach ($p in $prs) { if ($t.Name -ne 'T0') { $hp.Add([double]$p.h.tokens_total / [math]::Max(1.0, [double]$p.n.tokens_total)) } }
   }
-  if ($hp.Count) { Out ""; Out ("**Média geométrica híbrido/nativo: {0:N3} ({1}), n = {2} pares.**" -f (Gmean @($hp)), (Pct (Gmean @($hp))), $hp.Count) }
+  if ($hp.Count) { $gm = [double](Gmean ([double[]]$hp.ToArray())); Out ""; Out ('**Média geométrica híbrido/nativo: ' + $gm.ToString('N3') + ' (' + (Pct $gm) + '), n = ' + $hp.Count + ' pares.**') }
+}
+
+$gr = @($valid | Where-Object { $_.stratum -eq 'grafo' -or [int]$_.graph_calls -gt 0 -or [int]$_.outline_calls -gt 0 })
+if ($gr.Count) {
+  Out ""
+  Out "## 6. Uso do grafo (code_graph / code_outline)"
+  Out ""
+  Out "Por tarefa e braço: média de chamadas ao grafo e ao outline, chamadas a Grep/Glob nativos, turnos, tokens medianos e acerto. Mostra se o modelo usa o grafo quando ele existe e se isso poupa token."
+  Out ""
+  Out "| Tarefa | Braço | n | graph | outline | grep/glob | turnos | tokens (mediana) | acerto |"
+  Out "|---|---|---|---|---|---|---|---|---|"
+  foreach ($t in ($gr | Group-Object task | Sort-Object Name)) {
+    foreach ($ar in ($valid | Where-Object { $_.task -eq $t.Name } | Group-Object arm | Sort-Object Name)) {
+      $g = $ar.Group
+      Out ("| {0} | {1} | {2} | {3:N1} | {4:N1} | {5:N1} | {6:N1} | {7:N0} | {8}/{2} |" -f $t.Name, $ar.Name, $g.Count, (($g | Measure-Object graph_calls -Average).Average), (($g | Measure-Object outline_calls -Average).Average), (($g | Measure-Object grep_calls -Average).Average), (($g | Measure-Object turns -Average).Average), (Med @($g | ForEach-Object { [double]$_.tokens_total })), @($g | Where-Object { $_.correct }).Count)
+    }
+  }
 }
 
 Out ""
