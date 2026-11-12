@@ -37,12 +37,18 @@ func HandleCodeGraph(args CodeGraphArgs) (string, error) {
 		if err := need(args.Symbol, "symbol"); err != nil {
 			return "", err
 		}
-		return graph.Callers(root, args.Symbol, args.Max, args.Depth)
+		// Exato quando o servidor de linguagem responde (distingue dois métodos de mesmo nome em tipos
+		// diferentes); por nome quando não há servidor, com uma linha dizendo por quê.
+		return courseWithGraph(root, args.Symbol,
+			func() (string, error) { return lspCallers(root, args.Symbol, args.Max, args.Depth) },
+			func() (string, error) { return graph.Callers(root, args.Symbol, args.Max, args.Depth) })
 	case "def", "definition":
 		if err := need(args.Symbol, "symbol"); err != nil {
 			return "", err
 		}
-		return graph.Definition(root, args.Symbol)
+		return courseWithGraph(root, args.Symbol,
+			func() (string, error) { return lspDefinition(root, args.Symbol) },
+			func() (string, error) { return graph.Definition(root, args.Symbol) })
 	case "impact":
 		t := args.Target
 		if t == "" {
@@ -51,7 +57,9 @@ func HandleCodeGraph(args CodeGraphArgs) (string, error) {
 		if err := need(t, "target"); err != nil {
 			return "", err
 		}
-		return graph.Impact(root, t, args.Max)
+		return courseWithGraph(root, t,
+			func() (string, error) { return lspImpact(root, t, args.Max) },
+			func() (string, error) { return graph.Impact(root, t, args.Max) })
 	case "index":
 		st, err := graph.Reindex(root)
 		if err != nil {

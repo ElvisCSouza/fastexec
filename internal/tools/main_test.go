@@ -15,6 +15,10 @@ import (
 func TestMain(m *testing.M) {
 	dir, cleanup := config.Isolate()
 	analytics.SessionsRoot = filepath.Join(dir, "sessions") // calculada no init, antes do Isolate
+	// Hermético: nenhum teste desta suíte inicia gopls por acidente. Sem isto, um code_graph callers em
+	// qualquer teste tentaria subir o servidor (segundos) e o resultado passaria a depender do que está
+	// instalado na máquina. Os testes do caminho exato ligam com t.Setenv("FASTEXEC_LSP", "on").
+	os.Setenv("FASTEXEC_LSP", "off")
 	code := m.Run()
 	telemetry.Close()
 	cleanup()

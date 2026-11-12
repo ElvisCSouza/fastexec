@@ -12,6 +12,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -76,21 +77,102 @@ func editImpact(host, path, oldText, newText string) string {
 	if len(names) > editImpactMaxNames {
 		names = names[:editImpactMaxNames]
 	}
-	uses, ok := graph.Uses(root, names, relToRoot(root, path))
+	self := relToRoot(root, path)
+	uses, ok := graph.Uses(root, names, self)
 	if !ok || time.Since(start) > editImpactTimeout {
 		return ""
 	}
 
-	var lines []string
+	// Caminho exato, só com servidor já quente: a edição JÁ está em disco, então o rodapé pode perder a
+	// precisão, nunca o tempo. Quando ele responde, a lista vem do tipo checado e o "By name, not
+	// type-checked." desaparece; quando não responde, a linha por nome sai igual à de antes.
+	var lspCtx context.Context
+	var cancel context.CancelFunc
+	if left := editImpactTimeout - time.Since(start); left > 0 {
+		if left > editImpactLSPBudget {
+			left = editImpactLSPBudget
+		}
+		lspCtx, cancel = context.WithTimeout(context.Background(), left)
+		defer cancel()
+	}
+	newByLine := make(map[string]int, len(newDecls))
+	for _, d := range newDecls {
+		newByLine[d.Name] = d.Line
+	}
+	lines := make([]string, 0, editImpactMaxWarn)
 	for _, s := range syms {
 		if len(lines) == editImpactMaxWarn {
 			break
+		}
+		if lspCtx != nil && !s.removed {
+			if l, ok := exactImpactLine(lspCtx, root, path, newText, self, s, newByLine[s.name]); ok {
+				if l != "" {
+					lines = append(lines, l)
+				}
+				continue
+			}
 		}
 		if l := impactLine(s, uses[s.name]); l != "" {
 			lines = append(lines, l)
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// exactImpactLine monta o aviso de um símbolo que mudou de assinatura com as referências EXATAS do servidor
+// de linguagem. ok=false significa "não houve resposta do servidor" e quem chama segue pelo nome (o aviso por
+// nome continua sendo entregue, só sem a precisão). ok=true com linha vazia significa o contrário: o servidor
+// respondeu, checou os tipos e não há uso em outro arquivo — não há o que avisar, e a linha por nome, que
+// aqui poderia acusar um homônimo, não deve ser emitida.
+func exactImpactLine(ctx context.Context, root, path, newText, self string, s impactSymbol, line int) (string, bool) {
+	if line <= 0 {
+		return "", false
+	}
+	src := strings.Split(newText, "\n")
+	if line > len(src) {
+		return "", false
+	}
+	col := graph.NameCol(src[line-1], s.name)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	sites, server, err := warmUses(ctx, root, abs, s.name, line, col)
+	if err != nil {
+		return "", false
+	}
+	// O arquivo editado sai da lista: ele é a origem da mudança, não um lugar que "pode precisar de ajuste".
+	var other []graph.Site
+	tests := map[string]bool{}
+	for _, site := range sites {
+		if site.File == self {
+			continue
+		}
+		other = append(other, site)
+		if graph.IsTestPath(site.File) {
+			tests[site.File] = true
+		}
+	}
+	if len(other) == 0 {
+		return "", true
+	}
+	files := map[string]bool{}
+	for _, site := range other {
+		files[site.File] = true
+	}
+	head := fmt.Sprintf("[graph] %s signature changed:", s.name)
+	tail := fmt.Sprintf(" Exact, %s.", server)
+	if len(tests) > 0 {
+		tail = fmt.Sprintf(" (tests: %d)", len(tests)) + tail
+	}
+	for shown := min(len(other), editImpactMaxSites); shown >= 1; shown-- {
+		l := fmt.Sprintf("%s %d use(s) in %d file(s) may need update: %s%s%s",
+			head, len(other), len(files), joinSites(other[:shown]), more(other, shown), tail)
+		if len(l) <= editImpactBudget {
+			return l, true
+		}
+	}
+	return fmt.Sprintf("%s %d use(s) in %d file(s) may need update.%s", head, len(other), len(files), tail), true
 }
 
 // impactLocal: só o host local tem o repositório indexado deste lado. Em host remoto (ou path Windows em host

@@ -36,6 +36,7 @@ var commands = map[string]func(subArgs []string){
 	"version":       cmdVersion,
 	"token":         cmdToken,
 	"doctor":        cmdDoctor,
+	"lsp":           cmdLsp,
 	"setup":         cmdSetup,
 	"monitor":       cmdMonitor,
 	"tray":          cmdTray,
