@@ -111,7 +111,7 @@ func Callers(root, symbol string, max, depth int) (string, error) {
 					AND t.start_line <= e.source_line AND t.end_line >= e.source_line
 				ORDER BY t.end_line - t.start_line LIMIT 1), '')
 		FROM code_edges e
-		WHERE e.repo_root = ? AND e.target_symbol = ? AND e.relation_type IN ('calls','references')
+		WHERE e.repo_root = ? AND e.target_symbol = ? AND e.relation_type IN ('calls','references','renders')
 		ORDER BY e.source_file, e.source_line`, repoKey(root), name)
 	if err != nil {
 		return "", err
@@ -302,7 +302,7 @@ func fileTarget(d *sql.DB, root, key, target string) (string, bool) {
 
 func symbolImpact(d *sql.DB, key, name string) (map[string][]string, error) {
 	rows, err := d.Query(`SELECT source_file, COUNT(*) FROM code_edges WHERE repo_root = ? AND target_symbol = ?
-		AND relation_type IN ('calls','references') GROUP BY source_file`, key, name)
+		AND relation_type IN ('calls','references','renders') GROUP BY source_file`, key, name)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +348,22 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 	}
 	rows.Close()
 
+	// <script src>/<link href> apontam para o arquivo por caminho, não por pacote: o alvo é resolvido relativo a
+	// quem referencia (assetResolves), e quem referencia entra como dependente mesmo sem usar símbolo nenhum.
+	htmlUsers := map[string]bool{}
+	rows, err = d.Query(`SELECT DISTINCT source_file, target_symbol FROM code_edges
+		WHERE repo_root = ? AND relation_type = 'html_ref' AND source_file != ?`, key, rel)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var src, asset string
+		if rows.Scan(&src, &asset) == nil && assetResolves(src, asset, rel) {
+			htmlUsers[src] = true
+		}
+	}
+	rows.Close()
+
 	used := map[string]map[string]bool{}
 	if len(exported) > 0 {
 		names := make([]any, 0, len(exported)+2)
@@ -358,17 +374,20 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 			marks = append(marks, "?")
 		}
 		rows, err = d.Query(`SELECT DISTINCT source_file, target_symbol FROM code_edges WHERE repo_root = ? AND source_file != ?
-			AND relation_type IN ('calls','references') AND target_symbol IN (`+strings.Join(marks, ",")+`)`, names...)
+			AND relation_type IN ('calls','references','renders') AND target_symbol IN (`+strings.Join(marks, ",")+`)`, names...)
 		if err != nil {
 			return nil, err
 		}
 		isGo := strings.HasSuffix(rel, ".go")
+		// nome de classe/id de CSS não é escopado por import (a folha de estilo é global, ligada por <link> ou
+		// className): para arquivo de estilo, quem usa um dos nomes entra, importando ou não.
+		style := isStyleFile(rel)
 		for rows.Next() {
 			var src, sym string
 			if rows.Scan(&src, &sym) != nil {
 				continue
 			}
-			visible := importers[src]
+			visible := importers[src] || style
 			if isGo {
 				samePkg := strings.HasSuffix(src, ".go") && path.Dir(src) == path.Dir(rel)
 				visible = samePkg || (importers[src] && exported[sym])
@@ -400,7 +419,38 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 			}
 		}
 	}
+	for src := range htmlUsers {
+		if _, ok := out[src]; !ok {
+			out[src] = []string{"html_ref"}
+		}
+	}
 	return out, nil
+}
+
+// isStyleFile: folha de estilo. O nome declarado nela (.card, #main, --cor) vale no documento inteiro.
+func isStyleFile(rel string) bool {
+	switch strings.ToLower(path.Ext(rel)) {
+	case ".css", ".scss", ".less":
+		return true
+	}
+	return false
+}
+
+// assetResolves diz se o asset referenciado em src (src de <script>/<link>, caminho relativo ao repositório) é o
+// arquivo f. O alvo é relativo a quem referencia — é o que <script src="../js/app.js"> significa —, e "/x" conta a
+// partir da raiz do repositório. Sem extensão também casa ("./app" para app.js), como nos imports de TS.
+func assetResolves(src, asset, f string) bool {
+	if asset == "" {
+		return false
+	}
+	p := path.Clean(asset)
+	if !strings.HasPrefix(asset, "/") {
+		p = path.Clean(path.Join(path.Dir(src), asset))
+	}
+	if p == f {
+		return true
+	}
+	return path.Ext(p) == "" && p == strings.TrimSuffix(f, path.Ext(f))
 }
 
 // importResolves diz se o import imp, feito em src, aponta para o arquivo f (caminhos relativos ao repositório).
