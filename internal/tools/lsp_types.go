@@ -292,7 +292,10 @@ func inferCandidates(file []string, lines []int) []typeCand {
 				for _, off := range nameOffsets(body[m[2]:m[3]]) {
 					name := body[m[2]+off[0] : m[2]+off[1]]
 					start := m[2] + off[0]
-					if !isPlainIdent(name) || seen[[2]int{n, start}] {
+					// `_` (e `__`) é o descarte: não guarda valor nenhum, então não tem tipo a
+					// mostrar. Sem esta recusa a linha sairia com "_: int", que é uma ida ao
+					// servidor paga para escrever nada.
+					if !isPlainIdent(name) || isBlankIdent(name) || seen[[2]int{n, start}] {
 						continue
 					}
 					seen[[2]int{n, start}] = true
@@ -348,6 +351,11 @@ func nameOffsets(group string) [][2]int {
 	}
 	return out
 }
+
+// isBlankIdent reconhece o identificador de descarte, que é um nome simples mas não uma variável.
+// Ele aparece onde o texto casa mais de um nome (`_, err := f()`, `for _, v := range xs`), e é
+// justamente aí que ele entraria na linha se ninguém o recusasse.
+func isBlankIdent(s string) bool { return strings.Trim(s, "_") == "" }
 
 // isPlainIdent recusa o que não é um nome simples (o grupo pode casar `x[0]` num caso torto).
 func isPlainIdent(s string) bool {

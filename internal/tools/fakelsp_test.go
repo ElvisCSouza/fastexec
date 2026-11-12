@@ -68,6 +68,9 @@ type toolFakeCtl struct {
 	NoPush bool `json:"noPush"`
 	// NoPull tira o diagnosticProvider das capacidades (servidor só de push, como o gopls antigo).
 	NoPull bool `json:"noPull"`
+	// Stderr são linhas que o servidor escreve no próprio erro antes de falar o protocolo. É como os
+	// servidores de verdade contam por que desistiram, e é o que a nota de "não carregou" tem que citar.
+	Stderr []string `json:"stderr"`
 }
 
 // runToolFakeServer é o processo servidor. Só roda quando FAKELSP_TOOLS=1.
@@ -77,6 +80,9 @@ func runToolFakeServer() {
 		if b, err := os.ReadFile(p); err == nil {
 			_ = json.Unmarshal(b, &ctl)
 		}
+	}
+	for _, line := range ctl.Stderr {
+		fmt.Fprintln(os.Stderr, line)
 	}
 	s := &toolFakeSrv{
 		out:  bufio.NewWriter(os.Stdout),

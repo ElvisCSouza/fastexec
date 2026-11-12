@@ -578,3 +578,159 @@ func UseB(b B) { b.Parse() }
 		t.Fatalf("the homonym was renamed too:\n%s", got)
 	}
 }
+
+// realGoplsAuto monta o projeto mínimo para os testes de edição assistida com o gopls de verdade.
+func realGoplsAuto(t *testing.T) string {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("short: the real server loads the module")
+	}
+	if _, _, ok := lsp.Find(lsp.Language{ID: "go", Servers: []lsp.Server{{Name: "gopls"}}}); !ok {
+		t.Skip("gopls not installed")
+	}
+	t.Setenv("FASTEXEC_LSP", "on")
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	writeGo(t, root, "go.mod", "module fixture\n\ngo 1.21\n")
+	t.Cleanup(func() { lsp.Manager().StopRoot(root) })
+	return root
+}
+
+// TestAutoSignatureListsSameFileCallers é o item E: quem chama a assinatura antiga DENTRO do arquivo editado
+// também quebra o build, e era justamente ele que ficava de fora do aviso (o build acusava dois erros e a
+// resposta listava um).
+func TestAutoSignatureListsSameFileCallers(t *testing.T) {
+	root := realGoplsAuto(t)
+	const both = `package fixture
+
+type Both struct{}
+
+func (b Both) Run(x int) int { return x }
+
+func UseBoth(b Both) int { return b.Run(1) }
+`
+	writeGo(t, root, "both.go", both)
+	writeGo(t, root, "other.go", "package fixture\n\nfunc UseBothAgain(b Both) int { return b.Run(2) }\n")
+
+	msg, err := handleWriteFile(WriteFileArgs{
+		Host: "local", Path: filepath.Join(root, "both.go"),
+		Content: strings.Replace(both, "Run(x int) int", "Run(x int, y int) int", 1), Overwrite: true,
+	}, false)
+	if err != nil {
+		t.Fatalf("write_file: %v", err)
+	}
+	if !strings.Contains(msg, "Run: signature changed, 2 caller(s) need adjustment (exact)") {
+		t.Fatalf("same-file caller missing from the warning, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "both.go:7") || !strings.Contains(msg, "other.go:3") {
+		t.Fatalf("want the two call sites, got:\n%s", msg)
+	}
+}
+
+// TestAutoDiagnosticsOnBrokenBuild é o item F com o servidor de verdade: a edição quebra o build e o erro novo
+// aparece — inclusive fora do trecho editado, que é onde a recuperação do parser o coloca. E o mesmo erro não é
+// anunciado de novo na edição seguinte: só o que é novo é notícia.
+func TestAutoDiagnosticsOnBrokenBuild(t *testing.T) {
+	root := realGoplsAuto(t)
+	writeGo(t, root, "alpha.go", bridgeAlpha)
+	writeGo(t, root, "beta.go", bridgeBeta)
+	writeGo(t, root, "caller.go", bridgeCaller)
+	// O arquivo editado nunca foi aberto pelo servidor: é o caso em que não havia "antes" nenhum e o erro novo
+	// fora do trecho era descartado como se fosse antigo.
+	if _, err := lspCallers(root, "Do", 50, 1); err != nil {
+		t.Fatalf("aquecer (lsp_callers): %v", err)
+	}
+
+	broken := "package demo\n\nfunc CallAlpha(a Alpha) int { return a.Do( \n\nfunc CallBeta(b Beta) int { return b.Do() }\n"
+	msg, err := handleWriteFile(WriteFileArgs{
+		Host: "local", Path: filepath.Join(root, "caller.go"), Content: broken, Overwrite: true,
+	}, false)
+	if err != nil {
+		t.Fatalf("write_file: %v", err)
+	}
+	if !strings.Contains(msg, "[lsp] diagnostics:") || !strings.Contains(msg, "expected '('") {
+		t.Fatalf("the new error did not show up, got:\n%s", msg)
+	}
+
+	// Segunda edição, mesmo erro: a mensagem já era conhecida, então não é anunciada de novo.
+	broken2 := strings.Replace(broken, "\n\nfunc CallBeta", "\n// comentário novo\nfunc CallBeta", 1)
+	msg2, err := handleWriteFile(WriteFileArgs{
+		Host: "local", Path: filepath.Join(root, "caller.go"), Content: broken2, Overwrite: true,
+	}, false)
+	if err != nil {
+		t.Fatalf("write_file: %v", err)
+	}
+	if strings.Contains(msg2, "[lsp] diagnostics:") {
+		t.Fatalf("the same error was announced twice, got:\n%s", msg2)
+	}
+}
+
+// TestAutoUndoPatchUndoesTheWholeEdit é o item D com o servidor de verdade: o patch anunciado na resposta
+// precisa desfazer a edição inteira — o rename do servidor, os outros arquivos e a formatação que veio depois —
+// e devolver cada arquivo ao conteúdo original, byte a byte.
+func TestAutoUndoPatchUndoesTheWholeEdit(t *testing.T) {
+	root := realGoplsAuto(t)
+	// Indentação torta de propósito: a formatação do trecho vem DEPOIS do apply do rename e é ela que deixava
+	// o patch anunciado obsoleto.
+	const alpha = `package fixture
+
+func   Alpha(x int) int {
+return x
+}
+`
+	const caller = "package fixture\n\nfunc Use(a int) int {\n\treturn Alpha(a)\n}\n"
+	writeGo(t, root, "alpha.go", alpha)
+	writeGo(t, root, "caller.go", caller)
+	alphaPath := filepath.Join(root, "alpha.go")
+	callerPath := filepath.Join(root, "caller.go")
+
+	msg, err := handleWriteFile(WriteFileArgs{
+		Host: "local", Path: alphaPath,
+		Content: "package fixture\n\nfunc   Omega(x int) int {\nreturn x\n}\n", Overwrite: true,
+	}, false)
+	if err != nil {
+		t.Fatalf("write_file: %v", err)
+	}
+	patch := undoPathIn(msg)
+	if patch == "" {
+		t.Fatalf("a resposta não anunciou patch de undo:\n%s", msg)
+	}
+	if _, err := os.Stat(patch); err != nil {
+		t.Fatalf("o patch anunciado não existe: %v", err)
+	}
+
+	if _, err := lsp.Undo(patch, lsp.UndoOptions{Root: root}); err != nil {
+		t.Fatalf("desfazer pelo patch do aviso: %v\nresposta:\n%s", err, msg)
+	}
+	if got := string(mustRead(t, alphaPath)); got != alpha {
+		t.Errorf("alpha.go depois do undo = %q, queria %q", got, alpha)
+	}
+	if got := string(mustRead(t, callerPath)); got != caller {
+		t.Errorf("caller.go depois do undo = %q, queria %q", got, caller)
+	}
+}
+
+// undoPathIn tira da resposta o caminho do patch que o aviso manda aplicar.
+func undoPathIn(msg string) string {
+	const mark = "undo: git apply -R "
+	i := strings.Index(msg, mark)
+	if i < 0 {
+		return ""
+	}
+	rest := msg[i+len(mark):]
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(rest)
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ler %s: %v", path, err)
+	}
+	return b
+}

@@ -95,6 +95,15 @@ type entry struct {
 	// evicted while inflight > 0.
 	inflight int
 
+	// starting is non-nil while a server for this slot is being spawned, and is
+	// closed when that spawn ends (success or failure). It is the latch that
+	// makes the start single-flight: a second caller that arrives during the
+	// handshake waits on it instead of spawning a rival server for the same
+	// directory. Two gopls processes indexing the same module contend for the
+	// module cache and the CPU, so both settle late — which is what turned one
+	// cold query into "project did not load" and left an orphaned process behind.
+	starting chan struct{}
+
 	// fail records the last start failure and when it happened, so a doomed
 	// server is not respawned on every query.
 	fail   error
@@ -199,13 +208,13 @@ func (m *manager) sweep() {
 			// A slot that only holds a failure record: keep it while the
 			// cooldown still applies, forget it afterwards.
 			if time.Since(e.failAt) >= failCooldown {
-				delete(m.entries, key)
+				m.forgetLocked(key)
 			}
 			continue
 		}
 		if e.client.Idle() >= m.idle {
 			doomed = append(doomed, e)
-			delete(m.entries, key)
+			m.forgetLocked(key)
 		}
 	}
 	m.mu.Unlock()
@@ -246,35 +255,58 @@ func (m *manager) Acquire(ctx context.Context, root string, lang Language) (*Cli
 	m.startSweeper()
 	key := m.key(abs, lang)
 
-	m.mu.Lock()
-	e := m.entries[key]
-	if e != nil && e.client != nil {
+	// How many times a caller will wait on somebody else's start before trying
+	// one of its own. One wait is the whole point (the first caller's server is
+	// the answer); the second covers the case where that start failed and left
+	// nothing behind — a second attempt is then the honest thing to do, not a
+	// loop.
+	const maxStartWaits = 2
+
+	var e *entry
+	for wait := 0; ; wait++ {
+		m.mu.Lock()
+		e = m.entries[key]
+		if e != nil && e.client != nil {
+			e.inflight++
+			m.mu.Unlock()
+			e.client.Touch()
+			return e.client, m.releaseFunc(key), nil
+		}
+		if e != nil && e.fail != nil && time.Since(e.failAt) < failCooldown {
+			fail := e.fail
+			m.mu.Unlock()
+			return nil, nil, fail
+		}
+		if e != nil && e.starting != nil && wait < maxStartWaits {
+			started := e.starting
+			m.mu.Unlock()
+			// The wait ends when the start ends, or when the caller's own budget
+			// runs out (the bridge gives it the ordinary query timeout). Waiting
+			// is bounded by the same clock as starting, never by a new one.
+			select {
+			case <-started:
+			case <-ctx.Done():
+				return nil, nil, unavailable("timed out waiting for %s to start", lang.Primary().Name)
+			}
+			continue
+		}
+		// Reserve the slot before spawning so the cap counts the server being
+		// started, and raise the latch that holds back the next caller.
+		if e == nil {
+			e = &entry{root: abs, lang: lang}
+			m.entries[key] = e
+		}
 		e.inflight++
-		m.mu.Unlock()
-		e.client.Touch()
-		return e.client, m.releaseFunc(key), nil
-	}
-	if e != nil && e.fail != nil && time.Since(e.failAt) < failCooldown {
-		fail := e.fail
-		m.mu.Unlock()
-		return nil, nil, fail
-	}
-	// Reserve the slot before spawning so two callers cannot start the same
-	// server twice, and so the cap counts the server being started.
-	if e == nil {
-		e = &entry{root: abs, lang: lang}
-		m.entries[key] = e
-	}
-	e.inflight++
-	if err := m.evictForCapLocked(key); err != nil {
-		e.inflight--
-		if e.client == nil {
-			delete(m.entries, key)
+		e.starting = make(chan struct{})
+		if err := m.evictForCapLocked(key); err != nil {
+			e.inflight--
+			m.forgetLocked(key)
+			m.mu.Unlock()
+			return nil, nil, err
 		}
 		m.mu.Unlock()
-		return nil, nil, err
+		break
 	}
-	m.mu.Unlock()
 
 	launch, ok := launchFor(lang, abs)
 	if !ok {
@@ -288,9 +320,9 @@ func (m *manager) Acquire(ctx context.Context, root string, lang Language) (*Cli
 		// cooldown would keep answering "restore needed" for two minutes after
 		// they ran the restore.
 		m.mu.Lock()
-		e.inflight--
-		if e.client == nil {
-			delete(m.entries, key)
+		if e := m.entries[key]; e != nil {
+			e.inflight--
+			m.forgetLocked(key)
 		}
 		m.mu.Unlock()
 		return nil, nil, unavailable("%s", launch.Problem)
@@ -319,8 +351,30 @@ func (m *manager) Acquire(ctx context.Context, root string, lang Language) (*Cli
 	}
 	e.client = client
 	e.fail = nil
+	finishStartLocked(e)
 	m.mu.Unlock()
 	return client, m.releaseFunc(key), nil
+}
+
+// finishStartLocked retires the start latch. Any caller waiting on it must be
+// released BEFORE the slot can change again or disappear: a waiter that wakes up
+// to a deleted entry re-reads the map and decides for itself, while one that is
+// never released sleeps until its own timeout — the exact failure the latch
+// exists to remove. The caller holds m.mu.
+func finishStartLocked(e *entry) {
+	if e.starting != nil {
+		close(e.starting)
+		e.starting = nil
+	}
+}
+
+// forgetLocked removes a slot, releasing anyone waiting on its start. The caller
+// holds m.mu.
+func (m *manager) forgetLocked(key string) {
+	if e := m.entries[key]; e != nil {
+		finishStartLocked(e)
+	}
+	delete(m.entries, key)
 }
 
 // evictForCapLocked frees a slot if the cap is reached, by closing the
@@ -347,7 +401,7 @@ func (m *manager) evictForCapLocked(keep string) error {
 			// better than stealing a server from a call that is using it.
 			return unavailable("too many language servers running (max %d)", m.max)
 		}
-		delete(m.entries, victimKey)
+		m.forgetLocked(victimKey)
 		victim.client.Close()
 		live--
 	}
@@ -389,13 +443,14 @@ func (m *manager) recordFail(key string, err error) {
 		}
 		e.fail = err
 		e.failAt = time.Now()
+		finishStartLocked(e)
 	}
 	m.mu.Unlock()
 }
 
 func (m *manager) dropEntry(key string) {
 	m.mu.Lock()
-	delete(m.entries, key)
+	m.forgetLocked(key)
 	m.mu.Unlock()
 }
 
@@ -575,7 +630,7 @@ func (m *manager) StopRoot(root string) {
 			continue
 		}
 		clients = append(clients, e.client)
-		delete(m.entries, key)
+		m.forgetLocked(key)
 	}
 	m.mu.Unlock()
 	for _, c := range clients {
@@ -598,7 +653,10 @@ func (m *manager) Shutdown() {
 		if e.client != nil {
 			clients = append(clients, e.client)
 		}
-		delete(m.entries, key)
+		// Release the start latch too: a caller blocked on a spawn that this
+		// shutdown just made pointless must wake up and see the empty map, not
+		// sit there until its own timeout.
+		m.forgetLocked(key)
 	}
 	m.mu.Unlock()
 	for _, c := range clients {

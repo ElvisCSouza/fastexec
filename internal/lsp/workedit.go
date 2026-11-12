@@ -674,6 +674,130 @@ func writePatch(dir, body string) (string, error) {
 	return path, nil
 }
 
+// RefreshPatch reescreve a seção de um patch de undo que pertence a um arquivo, para que ela continue batendo
+// com o que está no disco.
+//
+// Uma edição assistida aplica vários WorkspaceEdits em sequência (o rename do servidor, o quickfix de import,
+// a formatação do trecho) e cada um grava o patch a partir do plano que recebeu. O caminho anunciado depois do
+// primeiro apply descreve, então, um arquivo que os applies seguintes já mudaram: desfazer por ele não devolve
+// o original. Chamado no fim, com o texto que o arquivo tinha antes da transação inteira, isto reconstrói
+// aquela seção a partir dos bytes finais — e aí `git apply -R` volta ao conteúdo original, byte a byte.
+func RefreshPatch(patchPath, root, absPath, before string) error {
+	if patchPath == "" || absPath == "" {
+		return nil
+	}
+	patch, err := os.ReadFile(patchPath)
+	if err != nil {
+		return fmt.Errorf("lsp: undo patch: %w", err)
+	}
+	now, err := os.ReadFile(absPath)
+	if err != nil {
+		return fmt.Errorf("lsp: undo patch: %w", err)
+	}
+	// O patch é montado sobre o texto decodificado (é ele que o diff compara); comparar bytes crus faria o
+	// BOM e o CRLF virarem alteração de conteúdo.
+	oldText, _ := textenc.Decode(before)
+	newText, _ := textenc.Decode(string(now))
+	fresh := ""
+	if oldText != newText {
+		fresh = UnifiedDiff(relTo(root, absPath), splitLines(oldText), splitLines(newText))
+	}
+	out, ok := refreshPatchSection(string(patch), relTo(root, absPath), fresh)
+	if !ok || out == string(patch) {
+		return nil
+	}
+	// O patch termina em "\n" por construção; trocar os hunks não pode comer essa última quebra, senão o
+	// `git apply` lê a última linha sem terminador e recusa o arquivo inteiro como corrompido.
+	if strings.HasSuffix(string(patch), "\n") && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	// Um patch que o próprio Undo não conseguiria ler é pior que o patch velho: não é gravado.
+	if _, _, err := parsePatch(out); err != nil {
+		return fmt.Errorf("lsp: refreshed undo patch is not valid: %w", err)
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(patchPath); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	return writeFileAtomic(patchPath, []byte(out), mode)
+}
+
+// refreshPatchSection troca, num patch de UnifiedDiff, o diff do arquivo rel por fresh. O resto — os outros
+// arquivos, os comentários que registram encoding e movimentação — fica como está.
+//
+// O segundo retorno é false quando a troca deixaria um patch sem nada a aplicar; aí o chamador fica com o
+// arquivo original, que é o registro honesto da transação.
+func refreshPatchSection(patch, rel, fresh string) (string, bool) {
+	lines := strings.Split(patch, "\n")
+	header := "--- a/" + rel
+	var out []string
+	replaced := false
+	for i := 0; i < len(lines); {
+		if !strings.HasPrefix(lines[i], patchHeader) {
+			out = append(out, lines[i])
+			i++
+			continue
+		}
+		// Uma seção vai do seu cabeçalho até o próximo cabeçalho.
+		j := i + 1
+		for j < len(lines) && !strings.HasPrefix(lines[j], patchHeader) {
+			j++
+		}
+		block := lines[i:j]
+		if !patchBlockFor(block, header) {
+			out = append(out, block...)
+			i = j
+			continue
+		}
+		replaced = true
+		out = append(out, block[0])
+		out = append(out, patchComments(block)...)
+		if fresh != "" {
+			// O cabeçalho de fresh é descartado: o que já saiu é o do bloco.
+			out = append(out, patchLines(fresh)[1:]...)
+		}
+		i = j
+	}
+	if !replaced {
+		if fresh == "" {
+			return patch, false
+		}
+		out = append(out, patchLines(fresh)...)
+	}
+	text := strings.Join(out, "\n")
+	if !strings.Contains(text, "--- a/") && !strings.Contains(text, renamePrefix) {
+		return patch, false
+	}
+	return text, true
+}
+
+// patchBlockFor diz se o bloco é do arquivo procurado. As linhas de corpo do patch sempre começam com ' ',
+// '+' ou '-', então uma linha que começa exatamente com "--- a/" só pode ser cabeçalho.
+func patchBlockFor(block []string, header string) bool {
+	for _, l := range block {
+		if strings.HasPrefix(l, header) {
+			return true
+		}
+	}
+	return false
+}
+
+// patchComments são as linhas de registro do bloco (encoding, movimentação): não são diff, mas valem para o
+// Undo e por isso sobrevivem à troca dos hunks.
+func patchComments(block []string) []string {
+	var out []string
+	for _, l := range block[1:] {
+		if strings.HasPrefix(l, "# ") && !strings.HasPrefix(l, patchHeader) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func patchLines(diff string) []string {
+	return strings.Split(strings.TrimSuffix(diff, "\n"), "\n")
+}
+
 // ---------------------------------------------------------------------------
 // Text edit application
 // ---------------------------------------------------------------------------

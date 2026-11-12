@@ -183,3 +183,43 @@ func Exemplo() int {
 		t.Fatalf("o tipo de pedido não é o que o servidor resolveu: %q", out)
 	}
 }
+
+// TestDefEndLineUsesTheSymbolTree: o fim da faixa de uma declaração vem da árvore de símbolos do servidor, e
+// do nó MAIS INTERNO que cobre a âncora — a pergunta é onde o membro termina, não onde o tipo que o contém
+// termina. Sem árvore (servidor que não responde documentSymbol) devolve 0, e quem chamou fica com a âncora
+// do índice: a resposta de linha única de antes, que é o piso, não o alvo.
+func TestDefEndLineUsesTheSymbolTree(t *testing.T) {
+	tree := []lsp.DocumentSymbol{{
+		Name:      "Order",
+		Kind:      23,
+		Range:     lsp.Range{Start: lsp.Position{Line: 2}, End: lsp.Position{Line: 9}},
+		Selection: lsp.Range{Start: lsp.Position{Line: 2, Character: 5}, End: lsp.Position{Line: 2, Character: 10}},
+		Children: []lsp.DocumentSymbol{{
+			Name:      "Read",
+			Kind:      6,
+			Range:     lsp.Range{Start: lsp.Position{Line: 4}, End: lsp.Position{Line: 7}},
+			Selection: lsp.Range{Start: lsp.Position{Line: 4, Character: 15}, End: lsp.Position{Line: 4, Character: 19}},
+		}},
+	}}
+	cases := []struct {
+		name string
+		pos  lsp.Position
+		want int
+	}{
+		{"nome do método", lsp.Position{Line: 4, Character: 16}, 8},
+		{"corpo do método", lsp.Position{Line: 6, Character: 2}, 8},
+		{"nome do tipo", lsp.Position{Line: 2, Character: 6}, 10},
+		{"faixa do tipo, fora do nome", lsp.Position{Line: 3, Character: 0}, 10},
+		{"fora de tudo", lsp.Position{Line: 20, Character: 0}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := defEndLine(tree, tc.pos); got != tc.want {
+				t.Fatalf("defEndLine(%v) = %d, quer %d", tc.pos, got, tc.want)
+			}
+		})
+	}
+	if got := defEndLine(nil, lsp.Position{Line: 4, Character: 16}); got != 0 {
+		t.Fatalf("sem árvore o fim saiu %d, quer 0 (a âncora do índice)", got)
+	}
+}
