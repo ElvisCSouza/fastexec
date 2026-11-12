@@ -88,8 +88,33 @@ func baseProg(p string) string {
 	return strings.ToLower(strings.TrimSuffix(filepath.Base(p), ".exe"))
 }
 
-// parseSearchTokens lê flags e posicionais de um programa de busca (o padrão é o primeiro posicional, salvo -e).
+// parseSearchTokens é o ponto único de leitura dos argumentos de busca: cada ferramenta tem a sua sintaxe, então cada
+// uma tem o seu leitor, mas TODOS devolvem o mesmo searchFlags — a consulta interna é uma só e a resposta (definição,
+// chamadores, -l, -c) é a mesma para findstr, Select-String, rg ou grep. O padrão é o primeiro posicional, salvo -e.
 func parseSearchTokens(rest []string, prog string) (searchFlags, bool) {
+	var f searchFlags
+	var ok bool
+	switch prog {
+	case "findstr":
+		f, ok = parseFindstrTokens(rest)
+	case "select-string", "sls":
+		f, ok = parseSelectStringTokens(rest)
+	default:
+		f, ok = parseGrepTokens(rest)
+	}
+	if !ok {
+		return f, false
+	}
+	if f.pattern == "" && len(f.paths) > 0 {
+		f.pattern, f.paths = f.paths[0], f.paths[1:]
+	}
+	return f, true
+}
+
+// parseFindstrTokens: a sintaxe do findstr é '/flag' e '/c:literal'. '/s' é a recursão (sem ele o findstr varre uma
+// pasta só e o grafo poderia responder de menos) e '/m' pede a lista de arquivos (a mesma saída do -l). '/n', '/r',
+// '/l' e '/p' não mudam quais arquivos casam. '/i' e os demais ficam de fora: a busca crua acha outra coisa.
+func parseFindstrTokens(rest []string) (searchFlags, bool) {
 	var f searchFlags
 	for i := 0; i < len(rest); i++ {
 		t := rest[i]
@@ -98,7 +123,42 @@ func parseSearchTokens(rest []string, prog string) (searchFlags, bool) {
 		case t == "--":
 			f.paths = append(f.paths, rest[i+1:]...)
 			i = len(rest)
-		case (prog == "select-string" || prog == "sls") && strings.HasPrefix(t, "-"):
+		case strings.HasPrefix(t, "/"):
+			switch lt {
+			case "/s":
+				f.rec = true
+			case "/m":
+				f.list = true
+			case "/n", "/r", "/l", "/p":
+			case "/i":
+				return f, false // -i: a busca crua acha outra caixa; o grafo não promete isso
+			default:
+				if strings.HasPrefix(lt, "/c:") {
+					f.pattern = t[3:]
+				} else {
+					return f, false // /v, /x, /g: ...: saída diferente
+				}
+			}
+		default:
+			f.paths = append(f.paths, t)
+		}
+	}
+	return f, true
+}
+
+// parseSelectStringTokens: a sintaxe do Select-String é de cmdlet ('-Pattern valor', '-Pattern:valor', '-Path'),
+// com '-' no lugar de '/'. '-CaseSensitive' e '-SimpleMatch' não mudam quais arquivos casam; o resto é ignorado.
+// A recursividade vem do Get-ChildItem -Recurse que alimenta o pipeline, não daqui (parseIdentSearch a assume).
+func parseSelectStringTokens(rest []string) (searchFlags, bool) {
+	var f searchFlags
+	for i := 0; i < len(rest); i++ {
+		t := rest[i]
+		lt := strings.ToLower(t)
+		switch {
+		case t == "--":
+			f.paths = append(f.paths, rest[i+1:]...)
+			i = len(rest)
+		case strings.HasPrefix(t, "-"):
 			switch {
 			case lt == "-pattern":
 				if i+1 < len(rest) {
@@ -106,7 +166,7 @@ func parseSearchTokens(rest []string, prog string) (searchFlags, bool) {
 					f.pattern = rest[i]
 				}
 			case strings.HasPrefix(lt, "-pattern:"):
-				f.pattern = t[9:]
+				f.pattern = t[len("-pattern:"):]
 			case lt == "-path" || lt == "-literalpath":
 				if i+1 < len(rest) {
 					i++
@@ -118,20 +178,23 @@ func parseSearchTokens(rest []string, prog string) (searchFlags, bool) {
 			default:
 				// ignora flags desconhecidas sem valor
 			}
-		case prog == "findstr" && strings.HasPrefix(t, "/"):
-			switch lt {
-			case "/s":
-				f.rec = true
-			case "/n", "/r", "/l", "/p":
-			case "/i":
-				return f, false // -i: a busca crua acha outra caixa; o grafo não promete isso
-			default:
-				if strings.HasPrefix(lt, "/c:") {
-					f.pattern = t[3:]
-				} else {
-					return f, false // /v, /m, /x ...: saída diferente
-				}
-			}
+		default:
+			f.paths = append(f.paths, t)
+		}
+	}
+	return f, true
+}
+
+// parseGrepTokens: grep/egrep/fgrep/rg/'git grep'. Flag longa, flag curta agrupada ('-rn') e '--' passam por aqui.
+func parseGrepTokens(rest []string) (searchFlags, bool) {
+	var f searchFlags
+	for i := 0; i < len(rest); i++ {
+		t := rest[i]
+		lt := strings.ToLower(t)
+		switch {
+		case t == "--":
+			f.paths = append(f.paths, rest[i+1:]...)
+			i = len(rest)
 		case strings.HasPrefix(t, "--"):
 			name := strings.SplitN(lt, "=", 2)[0]
 			switch name {
@@ -188,9 +251,6 @@ func parseSearchTokens(rest []string, prog string) (searchFlags, bool) {
 		default:
 			f.paths = append(f.paths, t)
 		}
-	}
-	if f.pattern == "" && len(f.paths) > 0 {
-		f.pattern, f.paths = f.paths[0], f.paths[1:]
 	}
 	return f, true
 }
@@ -339,6 +399,13 @@ func isSearchableText(t string) bool {
 	return symbol || fileish
 }
 
+// isRawEscapable: o texto é uma leitura que o FastExec responde por conta própria (busca pelo grafo ou listagem
+// agrupada por diretório) e da qual o '--raw' faz sentido? Fora daí o token '--raw' é argumento de verdade do
+// comando e não pode ser arrancado dele.
+func isRawEscapable(t string) bool {
+	return isSearchableText(t) || parseListingKind(t) != listingNone
+}
+
 // stripRawEscape tira do comando o pedido de busca crua ('--raw' ou o prefixo 'raw:'). O '--raw' sai por posição
 // (o resto do comando não é reescrito); qualquer comando que não seja uma busca passa byte a byte.
 func stripRawEscape(args *ExecArgs) (label string, stripped bool) {
@@ -353,14 +420,14 @@ func stripRawEscape(args *ExecArgs) (label string, stripped bool) {
 			out = append(out, a)
 		}
 		label = strings.Join(args.Argv, " ")
-		if !hit || !isSearchableText(strings.Join(out, " ")) {
+		if !hit || !isRawEscapable(strings.Join(out, " ")) {
 			return label, false
 		}
 		args.Argv = out
 		return strings.Join(out, " "), true
 	}
 	out, hit := stripRawText(args.Command)
-	if !hit || !isSearchableText(out) {
+	if !hit || !isRawEscapable(out) {
 		return args.Command, false
 	}
 	args.Command = out
@@ -447,19 +514,32 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 			base = wd
 		}
 	}
-	target := base
 	if len(paths) > 1 {
 		return "", false, ""
 	}
-	if len(paths) == 1 && !strings.ContainsAny(paths[0], "*?") {
-		target = paths[0]
-		if !filepath.IsAbs(target) {
-			if base == "" {
+	// O caminho vira a pasta varrida. Com coringa ('src\*.cs', o caso do benchmark) a pasta é a do coringa e a
+	// extensão dele filtra a resposta; qualquer coringa fora desse molde roda o comando de verdade (globNarrow).
+	ext := ""
+	if len(paths) == 1 {
+		p := paths[0]
+		if strings.ContainsAny(p, "*?") {
+			dir, e, ok := globNarrow(p)
+			if !ok {
 				return "", false, ""
 			}
-			target = filepath.Join(base, target)
+			p, ext = dir, e
+		}
+		if p != "" {
+			if !filepath.IsAbs(p) {
+				if base == "" {
+					return "", false, ""
+				}
+				p = filepath.Join(base, p)
+			}
+			base = filepath.Clean(p)
 		}
 	}
+	target := base
 	if target == "" {
 		return "", false, ""
 	}
@@ -496,7 +576,7 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	if err != nil {
 		return "", false, announce
 	}
-	if defs = defsUnderSub(defs, sub); len(defs) == 0 {
+	if defs = defsUnderSub(defs, sub, ext); len(defs) == 0 {
 		return "", false, announce // não é símbolo do código (texto, chave de config, outro idioma): busca normal
 	}
 	key := fmt.Sprintf("search|%s|%s", strings.ToLower(args.Cwd), strings.ToLower(label)) // sem identidade: ver graph_first.go
@@ -504,7 +584,7 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 		return "", false, notes(announce, GraphMarkRepeat+": raw search output because this exact command was repeated.")
 	}
 	counts, _ := graph.CallerFileCounts(root, req.pattern)
-	counts = countsUnderSub(counts, sub)
+	counts = countsUnderSub(counts, sub, ext)
 	return buildSymbolAnswer(root, where, req, defs, counts, withRawEscape(label), announce), true, ""
 }
 
@@ -724,30 +804,54 @@ func capAnswer(body, footer string) string {
 	return strings.Join(keep, "\n") + "\n" + footer
 }
 
-func defsUnderSub(defs []graph.Def, sub string) []graph.Def {
-	if sub == "" {
+// globNarrow reduz um caminho com coringa à pasta que ele varre e à extensão exigida — só quando isso é inequívoco:
+// o coringa é o ÚLTIMO componente e é '*<ext>' de uma linguagem que o grafo indexa ('src\*.cs' -> "src", ".cs").
+// 'src\*' (sem extensão), '*.txt' (fora do índice) e 'src\F*.cs' devolvem ok=false: nesses a resposta do grafo
+// poderia ser menor que a do comando, e responder de menos numa busca custa caro — o comando roda de verdade.
+func globNarrow(p string) (dir, ext string, ok bool) {
+	sep := strings.LastIndexAny(p, `/\`)
+	dir, base := p[:sep+1], p[sep+1:]
+	if !strings.HasPrefix(base, "*.") || strings.ContainsAny(base[1:], "*?") {
+		return "", "", false
+	}
+	ext = base[1:]
+	if codescan.LangFor("x"+ext) == nil {
+		return "", "", false
+	}
+	return dir, ext, true
+}
+
+// defsUnderSub/countsUnderSub recortam a resposta para a pasta varrida e, quando o caminho tinha coringa, para a
+// extensão dele (ext vazio = todas): 'findstr /s /m /c:X src\*.cs' não pode citar um arquivo .py de src.
+func defsUnderSub(defs []graph.Def, sub, ext string) []graph.Def {
+	if sub == "" && ext == "" {
 		return defs
 	}
 	var out []graph.Def
 	for _, d := range defs {
-		if pathUnderSub(d.File, sub) {
+		if pathUnderSub(d.File, sub) && extMatches(d.File, ext) {
 			out = append(out, d)
 		}
 	}
 	return out
 }
 
-func countsUnderSub(counts map[string]int, sub string) map[string]int {
-	if sub == "" {
+func countsUnderSub(counts map[string]int, sub, ext string) map[string]int {
+	if sub == "" && ext == "" {
 		return counts
 	}
 	out := map[string]int{}
 	for f, n := range counts {
-		if pathUnderSub(f, sub) {
+		if pathUnderSub(f, sub) && extMatches(f, ext) {
 			out[f] = n
 		}
 	}
 	return out
+}
+
+// extMatches: o arquivo tem a extensão pedida pelo coringa (ext vazio aceita qualquer uma).
+func extMatches(file, ext string) bool {
+	return ext == "" || strings.EqualFold(filepath.Ext(file), ext)
 }
 
 func filesUnderSub(files []string, sub string) []string {
@@ -763,8 +867,9 @@ func filesUnderSub(files []string, sub string) []string {
 	return out
 }
 
+// pathUnderSub: sub vazio é a raiz do repositório (todo arquivo está sob ela).
 func pathUnderSub(file, sub string) bool {
-	return strings.HasPrefix(file, sub+"/")
+	return sub == "" || strings.HasPrefix(file, sub+"/")
 }
 
 // orderedFiles põe os arquivos que não são de teste na frente e, dentro de cada grupo, os mais citados primeiro.

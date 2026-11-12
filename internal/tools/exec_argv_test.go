@@ -85,6 +85,14 @@ func TestExecHintPowerShellComMensagemLegivel(t *testing.T) {
 	if strings.ContainsRune(out, '\ufffd') {
 		t.Errorf("mensagem corrompida: %q", out)
 	}
+	// Com pwsh no host a linha de cmdlet roda l\u00e1 (powershell_shell.go) e a mensagem j\u00e1 vem leg\u00edvel: a antiga dica de
+	// mensagem corrompida do cmd.exe deixa de ser necess\u00e1ria. Sem pwsh, tudo como antes.
+	if probePowerShellOnHost().path != "" {
+		if !strings.Contains(out, "PowerShell syntax detected") {
+			t.Errorf("linha de cmdlet deveria rodar no pwsh: %q", out)
+		}
+		return
+	}
 	if !strings.Contains(out, "[FastExec Hint]") {
 		t.Errorf("o hint do PowerShell deveria disparar: %q", out)
 	}
