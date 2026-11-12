@@ -76,6 +76,17 @@ Applied to stdout and stderr before the model sees them:
 5. Repeated lines fold into `<line> ×N`; known noise (package-manager update notices, git hints) is dropped.
 6. A line longer than 500 characters keeps its start and end, or 150 characters around the searched term.
 7. Output over 64 KB keeps the first 16 KB and says so. The capture itself is bounded (first 3 MiB, last 1 MiB).
+8. Build and test output (`go build|test|vet`, `dotnet build|test|...`, `npm|yarn|pnpm|bun test|build|lint`, `npx tsc`,
+   `cargo build|test|check|clippy`) is compacted on top of the above: build progress leaves, and every error and
+   warning with its `file:line` stays, including the context lines right below it (the `-->` of rust, the code frame
+   of jest). Full success becomes one summary line (`go test: 3 packages ok, 1 without tests, 0 failures.`); a failure
+   keeps all errors and only the scores. The compaction never runs if it would save fewer than 2 lines, if a failure
+   carries no recognisable error signal, or if any error line of the original would be missing from the result — in
+   those cases the full text is returned untouched.
+   It always announces itself in the reply: `[FastExec] output compacted (N lines → M); use --raw for the full text.`
+   `--raw` after a recognised build/test command (never after a `--`) and the `FASTEXEC_NO_OUTPUT_FILTER` environment
+   variable (`FASTEXEC_NO_BUILD_COMPACT` as an alias) turn the whole output filter back off. `npm start`, `vite --watch`,
+   `go run`, `dotnet run` and anything outside the list are never touched.
 
 ### Elapsed time
 

@@ -72,7 +72,7 @@ func shapeOrCap(s string) string {
 }
 
 func shapeOrCapInner(s string) string {
-	if os.Getenv("FASTEXEC_NO_SHAPE") != "" || len(s) <= execSoftCap() {
+	if os.Getenv("FASTEXEC_NO_SHAPE") != "" || outputFilterOff() || len(s) <= execSoftCap() {
 		return capOutput(s)
 	}
 	if out, ok := shapeBig(s, execSoftCap()); ok {
