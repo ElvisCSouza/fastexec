@@ -109,6 +109,7 @@ Each one tells the model what it did and what to do next time.
 | PowerShell cmdlet in `cmd.exe` | Hint to use `pwsh` |
 | child processes left running after the command | Killed, with a warning to use `job` |
 | edit by script (`Get-Content ... -replace ... Set-Content`, `sed -i`) | Hint to use `edit_file` with `edits` |
+| command that deletes code files (`rm`, `del`/`erase`, `Remove-Item`, `git rm`), on a repository that already has a graph index | After a successful run, one `[graph] <file> deleted: ... still used in N files: a.go:12, ...` line naming the symbols of the deleted file that other files still use — the index consulted is the one from **before** the deletion. Silent without an index, on a remote host, or when nothing uses those symbols (see `edit_file`) |
 | no `host`, remote `default_host`, Windows drive path in `command`/`argv`/`cwd` | Runs on host `local`, with a `[FastExec Auto-Remediation]` note telling the model to pass `host='local'` next time |
 | Unix-style line (`grep`/`wc`/`sort`/`sed`/`awk`/`cut`/`ls -la`, `$(...)`, single quotes, `/dev/null`, `find` with Unix flags, Git Bash path) with no cmd signal, on a Windows `local` host that has `bash` (Git for Windows) | `bash -lc <line>` is chosen **before** running: one execution, same cwd, same timeout, same guards. The output carries `[FastExec Auto-Remediation] Unix-style command ran in bash (<path>) instead of cmd.exe`, plus the path translation when one happened |
 | Line that starts with a POSIX assignment (`start=$(date +%s%N); …`), with a Unix signal, on a Windows `local` host | Goes to `bash -lc` even when the line also carries a `%NAME%`-looking token (`+%s%N` is not a cmd variable) or a program both shells know (`pwsh`). No valid `cmd.exe` line starts with `VAR=`, and the first token would become the `START` builtin, which swallows the rest of the line: the call would only answer on the timeout (measured: 300 s for a 50 s script) |
@@ -157,10 +158,42 @@ characters). One line per change, up to 5; beyond that the count says `(and N mo
 ending style kept by the file (`CRLF`, `LF`, `mixed` or `none`), plus the encoding when it is not plain UTF-8
 (`encoding kept: Windows-1252`, `UTF-16LE`, `UTF-8 BOM`). Nothing about what is written changes.
 
+### Callers of a symbol whose signature changed
+
+When the edit changes the **header** of a declared symbol (its signature) or removes/renames it, and other files
+use that name, the reply adds one line naming them — so the model edits the callers in the same turn instead of
+spending a turn finding out who calls it:
+
+```
+[edit_file] 1 change(s) applied (18 -> 27 bytes) in W:\src\Fetch.cs.
+L3: public static async Task<Item> Fetch(int id, CancellationToken ct) {
+[graph] Fetch signature changed: 3 use(s) in 3 file(s) may need update: a.go:12, b.go:40, +4 more (tests: 2). By name, not type-checked.
+```
+
+- Fires only on signature change or removal/rename. A body-only edit, a comment, formatting or a **new** symbol
+  changes nothing in the reply.
+- The name is matched by name, not by type: treat the list as "look here", not as a compile error. A name declared
+  in more than one place is not listed at all — the line says `name is ambiguous (K definitions): check callers with
+  code_graph` instead, because the graph cannot tell which one the use belongs to.
+- The edited file itself is never in the list; test files are counted apart (`tests: N`), and at most 5 locations
+  are quoted before `+K more`. One warning per symbol, at most 3 per call (a batch edit can touch several).
+- Requires the repository to already have a graph index (a `.git` and a `graph.db` from a previous `code_graph`
+  use). Nothing is indexed on demand and no database is created: without an index the reply is exactly what it was
+  before. The query is capped at ~150 ms; past that the line is dropped rather than delay the edit.
+- Files whose language has no parseable declarations (`.json`, `.md`, images …) never trigger it.
+
+The same list comes back for `write_file` with `overwrite: true` over an existing file, and with `exec` when the
+command deletes code files (`rm`, `del`/`erase`, `Remove-Item`, `git rm`):
+
+```
+[graph] old/parser.go deleted: Fetch, Parse still used in 2 files: b.go:12, c.go:40, +2 more.
+```
+
 ## write_file
 
 Creates a file, optionally `atomic` (temp file + rename). An existing non-empty file is refused unless
-`overwrite: true`, so a model cannot wipe a file by accident when it meant to edit it.
+`overwrite: true`, so a model cannot wipe a file by accident when it meant to edit it. Overwriting a file that
+exists can bring the caller list above.
 
 ## file_ops
 
