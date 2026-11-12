@@ -215,6 +215,106 @@ func TestExecListagemRecursivaAgrupada(t *testing.T) {
 	}
 }
 
+// TestRegroupListingOmiteRuido: num repositório o interior de '.git', 'node_modules' e afins é a maior parte das
+// linhas e não tem código; o agrupamento os deixa de fora e o rodapé diz quantos itens saíram e de quais pastas.
+func TestRegroupListingOmiteRuido(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 90; i++ {
+		fmt.Fprintf(&b, `src\Core\Arquivo%d.cs`+"\n", i)
+	}
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, `W:\repo\.git\objects\a%d`+"\n", i)
+	}
+	for i := 0; i < 10; i++ {
+		fmt.Fprintf(&b, `W:\repo\node_modules\pkg%d\index.js`+"\n", i)
+	}
+	out, note, ok := regroupListing(`dir /s /b`, b.String())
+	if !ok {
+		t.Fatalf("a listagem deveria ser reagrupada")
+	}
+	if !strings.Contains(note, "210 item(s) omitted in .git, node_modules") {
+		t.Errorf("rodapé sem a contagem do que foi omitido: %q", note)
+	}
+	if !strings.Contains(note, "--raw returns everything") {
+		t.Errorf("o rodapé deveria ensinar o caminho de volta: %q", note)
+	}
+	if strings.Contains(out, ".git") || strings.Contains(out, "node_modules") {
+		t.Errorf("o interior das pastas de ruído apareceu no agrupamento: %q", out)
+	}
+	if !strings.Contains(out, `src\Core\ (90):`) {
+		t.Errorf("o grupo de código sumiu: %q", out)
+	}
+	if got := strings.Count(out, "Arquivo"); got != 90 {
+		t.Errorf("o agrupamento perdeu arquivos de código: achei %d de 90", got)
+	}
+	// o --raw e o FASTEXEC_NO_LISTING_GROUP continuam devolvendo tudo
+	t.Setenv("FASTEXEC_NO_LISTING_GROUP", "1")
+	if _, _, ok := regroupListing(`dir /s /b`, b.String()); ok {
+		t.Errorf("FASTEXEC_NO_LISTING_GROUP deveria devolver a saída completa")
+	}
+}
+
+// TestRegroupListingRaizRuidosaNaoOmite: pedir a listagem DENTRO de uma pasta de ruído é pedir justamente aquele
+// interior ('dir /s /b node_modules'), então ali nada é omitido.
+func TestRegroupListingRaizRuidosaNaoOmite(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&b, `node_modules\pkg\f%d.js`+"\n", i)
+	}
+	for _, cmd := range []string{`dir /s /b node_modules`, `dir /s /b node_modules\*.js`, `find node_modules -name '*.js'`} {
+		out, note, ok := regroupListing(cmd, b.String())
+		if !ok {
+			t.Fatalf("%q deveria ser reagrupado", cmd)
+		}
+		if note != listingGroupNote {
+			t.Errorf("%q: nada deveria ser omitido, rodapé veio %q", cmd, note)
+		}
+		if !strings.Contains(out, "f0.js") || !strings.Contains(out, "f99.js") {
+			t.Errorf("%q: a lista pedida foi perdida: %q", cmd, out)
+		}
+	}
+}
+
+// TestRegroupListingLsRecursiveOmiteRuido: no 'ls -R' quem diz a pasta é o cabeçalho; o bloco inteiro de uma pasta de
+// ruído sai da resposta e é contado no rodapé.
+func TestRegroupListingLsRecursiveOmiteRuido(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(".:\nleia.md\n")
+	fmt.Fprintf(&b, "\n%s:\n", "./src")
+	for i := 0; i < 45; i++ {
+		fmt.Fprintf(&b, "f%d.go\n", i)
+	}
+	fmt.Fprintf(&b, "\n%s:\n", "./node_modules/dep")
+	for i := 0; i < 60; i++ {
+		fmt.Fprintf(&b, "dep%d.js\n", i)
+	}
+	out, note, ok := regroupListing(`ls -R`, b.String())
+	if !ok {
+		t.Fatalf("'ls -R' deveria ser reagrupado")
+	}
+	if !strings.Contains(note, "60 item(s) omitted in node_modules") {
+		t.Errorf("rodapé sem a contagem do bloco omitido: %q", note)
+	}
+	if strings.Contains(out, "dep0.js") {
+		t.Errorf("o bloco de node_modules apareceu: %q", out)
+	}
+	if !strings.Contains(out, "./src/ (45):") || !strings.Contains(out, "leia.md") {
+		t.Errorf("o resto da listagem se perdeu: %q", out)
+	}
+}
+
+// TestRegroupListingSoRuidoDevolveTudo: se a listagem inteira está dentro de pastas de ruído, omitir deixaria a
+// resposta vazia — melhor devolver as linhas do que uma resposta sem nada.
+func TestRegroupListingSoRuidoDevolveTudo(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&b, `W:\repo\.git\objects\a%d`+"\n", i)
+	}
+	if _, _, ok := regroupListing(`dir /s /b`, b.String()); ok {
+		t.Errorf("listagem só de ruído deveria passar intacta")
+	}
+}
+
 // TestDetectListCommandRecursivaVaiParaOShell: 'ls -R' e 'dir /s' NÃO podem ser respondidos pelo file_ops 'list'
 // (que lê um diretório só) — responder a pasta de cima como se fosse a árvore seria pior que rodar o comando.
 func TestDetectListCommandRecursivaVaiParaOShell(t *testing.T) {

@@ -757,7 +757,9 @@ func handleEditFile(args EditFileArgs) (string, error) {
 
 	// todas as trocas em memória, em ordem; qualquer target ausente aborta sem gravar nada
 	newContent := content
-	oldBytes, newBytes := 0, 0
+	// oldLines/newLines: as linhas que a edição tirou e pôs — é isso que a resposta conta ('+A -R lines'), e não o
+	// tamanho em bytes, que o modelo não usa para nada.
+	oldLines, newLines := 0, 0
 	var notes []string
 	// applied: em que posição do conteúdo final cada troca começou (a prova citada na resposta)
 	applied := make([]int, 0, len(ops))
@@ -811,8 +813,8 @@ func handleEditFile(args EditFileArgs) (string, error) {
 			}
 		}
 		applied = append(applied, at)
-		oldBytes += len(t)
-		newBytes += len(r)
+		oldLines += editLineCount(t)
+		newLines += editLineCount(r)
 	}
 
 	ae := autoEditBegin(host, args.Path, content, newContent)
@@ -835,7 +837,9 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
 	}
 
-	msg := fmt.Sprintf("[edit_file] %d change(s) applied (%d -> %d bytes) in %s.", len(ops), oldBytes, newBytes, args.Path)
+	// Resposta mínima: arquivo, linhas que entraram e saíram, número de trechos trocados — e só isso antes dos avisos
+	// automáticos (prova da edição, [graph], [lsp]). O arquivo e o diff inteiro nunca voltam.
+	msg := editSummary(args.Path, newLines, oldLines, len(ops))
 	msg += proof
 	if impact != "" {
 		msg += "\n" + impact
@@ -848,6 +852,21 @@ func handleEditFile(args EditFileArgs) (string, error) {
 	}
 	msg += ae.Finish() // fase B: import que faltou, erro novo, formatação do trecho
 	return msg, nil
+}
+
+// editSummary é a primeira frase da resposta do edit_file: o arquivo, as linhas que entraram e saíram e quantos
+// trechos foram trocados. É a resposta inteira do caso comum — o conteúdo do arquivo nunca volta.
+func editSummary(path string, added, removed, hunks int) string {
+	return fmt.Sprintf("[edit_file] %s: +%d -%d lines, %d hunk(s).", path, added, removed, hunks)
+}
+
+// editLineCount conta as linhas de um trecho trocado, sem contar a quebra que fecha a última (trecho vazio é 0).
+func editLineCount(s string) int {
+	s = strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r")
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
 
 // unescapeLiteral troca as sequencias literais \r\n, \n e \t (duas letras) por quebra de linha e tab reais.

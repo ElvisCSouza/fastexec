@@ -2,9 +2,13 @@ package tools
 
 // listing_group.go: listagem recursiva de arquivos é o outro jeito caro de a LLM descobrir onde está o código
 // ('dir /s /b src\Serilog\*.cs' devolveu 8 KB numa tacada; 'ls -R', 'find . -name "*.ext"' idem nas 40 execuções
-// do benchmark). Nada é omitido aqui: o texto original é todo reaproveitado, só reagrupado por diretório
-// ('src\Serilog\Core\ (12): A.cs B.cs ...'), o que troca N linhas de caminho repetido por uma linha por pasta. Um
-// rodapé diz o que aconteceu e como pedir as linhas originais de volta ('--raw').
+// do benchmark). O texto original é reaproveitado, só reagrupado por diretório ('src\Serilog\Core\ (12): A.cs B.cs
+// ...'), o que troca N linhas de caminho repetido por uma linha por pasta. Um rodapé diz o que aconteceu e como
+// pedir as linhas originais de volta ('--raw').
+//
+// Ao reagrupar, o interior das pastas que quase nunca são a resposta (.git, node_modules, bin, obj, ...) é omitido:
+// num repositório elas costumam ser a maior parte das linhas e nenhum arquivo de código está lá dentro. O rodapé diz
+// quantos itens saíram e de quais pastas, e continuar a receber tudo é uma linha de comando ('--raw').
 //
 // Só age no que é inequivocamente listagem recursiva de arquivos: 'dir' com '/s' E '/b', 'ls' com '-R', 'find' com
 // '-name' (mesmo molde que o grafo já lê, para as duas leituras nunca discordarem). Antes de reagrupar, TODA linha
@@ -27,6 +31,21 @@ const (
 )
 
 func listingGroupOff() bool { return os.Getenv("FASTEXEC_NO_LISTING_GROUP") != "" }
+
+// listingNoiseDirs: pastas cujo interior quase nunca é o que se procurou — o repositório do git, dependências
+// baixadas e saída de build. A comparação ignora maiúscula/minúscula ('.VS' no Windows).
+var listingNoiseDirs = []string{".git", "node_modules", "bin", "obj", "__pycache__", ".vs", "target", "dist"}
+
+// listingNoise: nome de pasta que o reagrupamento omite; devolve o nome canônico, para o aviso citar sempre a mesma
+// grafia.
+func listingNoise(name string) (string, bool) {
+	for _, d := range listingNoiseDirs {
+		if strings.EqualFold(d, name) {
+			return d, true
+		}
+	}
+	return "", false
+}
 
 // listingKind: como as linhas da saída viram grupos.
 type listingKind int
@@ -131,6 +150,100 @@ type listingGroup struct {
 	names []string
 }
 
+// listingRoot: a pasta que o comando mandou listar ("" = diretório atual). É ela que decide se uma pasta de ruído
+// pode ser omitida: 'dir /s /b node_modules' pede exatamente aquele interior, e aí nada é omitido.
+func listingRoot(label string) string {
+	segs := shellSegments(label)
+	if len(segs) != 1 {
+		return ""
+	}
+	w := shellWords(segs[0])
+	if len(w) > 1 && baseProg(w[0]) == "cmd" && strings.EqualFold(w[1], "/c") {
+		w = w[2:]
+	}
+	if len(w) == 0 {
+		return ""
+	}
+	switch baseProg(w[0]) {
+	case "dir", "ls":
+		for _, a := range w[1:] {
+			if strings.HasPrefix(a, "-") || strings.HasPrefix(a, "/") {
+				continue
+			}
+			return listingRootPath(a)
+		}
+	case "find":
+		if len(w) > 1 && !strings.HasPrefix(w[1], "-") {
+			return listingRootPath(w[1])
+		}
+	}
+	return ""
+}
+
+// listingRootPath: o token pode ser a pasta pedida ('src') ou um glob de arquivo dentro dela ('src\*.cs'); o que vale
+// para a raiz é a pasta.
+func listingRootPath(tok string) string {
+	tok = strings.Trim(tok, `"'`)
+	if strings.ContainsAny(tok, "*?") {
+		dir, _ := splitDirName(tok)
+		return dir
+	}
+	return tok
+}
+
+// splitSegs: os nomes de pasta de um caminho, sem separadores nem os '.' do caminho relativo.
+func splitSegs(p string) []string {
+	var out []string
+	for _, s := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if s != "" && s != "." {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// noiseSegment: o diretório do grupo cai dentro de uma pasta de ruído? Devolve o nome canônico dela. Os segmentos que
+// o próprio comando pedia são descartados antes: pedir a raiz 'node_modules\' não é pedir ruído, é pedir o interior.
+func noiseSegment(dir string, rootSegs []string) (string, bool) {
+	segs := splitSegs(dir)
+	i := 0
+	for i < len(segs) && i < len(rootSegs) && strings.EqualFold(segs[i], rootSegs[i]) {
+		i++
+	}
+	for _, s := range segs[i:] {
+		if canon, ok := listingNoise(s); ok {
+			return canon, true
+		}
+	}
+	return "", false
+}
+
+// listingOmitted: quantos itens o reagrupamento deixou de fora e em que pastas (o rodapé conta isso).
+type listingOmitted struct {
+	dirs  []string
+	count int
+}
+
+func (o *listingOmitted) add(dir string) {
+	o.count++
+	for _, d := range o.dirs {
+		if d == dir {
+			return
+		}
+	}
+	o.dirs = append(o.dirs, dir)
+}
+
+// listingNote: o rodapé do reagrupamento. Sem nada omitido é o texto de sempre; com omissão ele diz quantos itens
+// saíram, de quais pastas e como pedir tudo de volta.
+func listingNote(o *listingOmitted) string {
+	if o == nil || o.count == 0 {
+		return listingGroupNote
+	}
+	return fmt.Sprintf("[FastExec] listing grouped by directory; %d item(s) omitted in %s (--raw returns everything).",
+		o.count, strings.Join(o.dirs, ", "))
+}
+
 // regroupListing reagrupa a saída quando ela é uma listagem recursiva reconhecida e grande. ok=false: devolva a saída
 // como veio. 'note' é o rodapé que ensina o caminho de volta ('--raw').
 func regroupListing(label, stdout string) (text, note string, ok bool) {
@@ -145,24 +258,41 @@ func regroupListing(label, stdout string) (text, note string, ok bool) {
 	if body == "" {
 		return "", "", false
 	}
-	groups, order, total, ok := collectListing(kind, strings.Split(body, "\n"))
-	if !ok || total < listingGroupMinLines {
+	res, ok := collectListing(kind, strings.Split(body, "\n"), listingRoot(label))
+	if !ok || res.seen() < listingGroupMinLines {
 		return "", "", false
 	}
-	out := renderListing(groups, order)
+	if len(res.order) == 0 {
+		// só havia pastas de ruído: omitir deixaria a resposta vazia, então a lista sai inteira
+		return "", "", false
+	}
+	out := renderListing(res.groups, res.order)
 	if out == "" {
 		return "", "", false
 	}
-	return out, listingGroupNote, true
+	return out, listingNote(res.omitted), true
 }
 
-// collectListing monta os grupos e devolve também o total de nomes vistos (o critério de tamanho é o número de
-// arquivos, não o de linhas: no 'ls -R' os cabeçalhos também ocupam linha).
-func collectListing(kind listingKind, lines []string) (map[string][]string, []string, int, bool) {
-	groups := map[string][]string{}
-	var order []string
-	total := 0
+// listingResult: o que saiu do reagrupamento — os grupos que ficaram e o que foi omitido como ruído.
+type listingResult struct {
+	groups  map[string][]string
+	order   []string
+	total   int
+	omitted *listingOmitted
+}
+
+// seen: tudo o que a listagem trazia, contado ou omitido. O critério de tamanho é esse (arquivos, não linhas): uma
+// listagem grande cujo miolo é só '.git' ainda é grande, e é justamente a que interessa reagrupar.
+func (r listingResult) seen() int { return r.total + r.omitted.count }
+
+// collectListing monta os grupos, omite o interior das pastas de ruído e conta o total de nomes vistos (o critério de
+// tamanho é o número de arquivos, não o de linhas: no 'ls -R' os cabeçalhos também ocupam linha).
+func collectListing(kind listingKind, lines []string, root string) (listingResult, bool) {
+	res := listingResult{groups: map[string][]string{}, omitted: &listingOmitted{}}
+	rootSegs := splitSegs(root)
 	current := ""
+	skipping := false
+	noiseDir := ""
 	for _, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
 		if strings.TrimSpace(line) == "" {
@@ -171,46 +301,59 @@ func collectListing(kind listingKind, lines []string) (map[string][]string, []st
 		// Linha com espaços duplicados, tabulação ou espaço nas pontas é saída em colunas (ou aviso do shell): não é
 		// listagem de caminho puro, e reagrupar isso destruiria informação.
 		if line != strings.TrimSpace(line) || strings.Contains(line, "\t") || strings.Contains(line, "  ") {
-			return nil, nil, 0, false
+			return listingResult{}, false
 		}
 		switch kind {
 		case listingPathLines:
 			dir, name := splitDirName(line)
 			if dir == "" {
-				if len(order) > 0 {
+				if len(res.order) > 0 {
 					// caminho solto sem pasta depois de outros com pasta (mistura de formatos): não mexe
-					return nil, nil, 0, false
+					return listingResult{}, false
 				}
 				dir = "."
 			}
-			if _, seen := groups[dir]; !seen {
-				order = append(order, dir)
+			if noise, isNoise := noiseSegment(dir, rootSegs); isNoise {
+				res.omitted.add(noise)
+				continue
 			}
-			groups[dir] = append(groups[dir], name)
-			total++
+			if _, seen := res.groups[dir]; !seen {
+				res.order = append(res.order, dir)
+			}
+			res.groups[dir] = append(res.groups[dir], name)
+			res.total++
 		case listingLsRecursive:
 			if dir, isHeader := lsHeaderDir(line); isHeader {
-				current = dir
+				current, skipping = dir, false
+				if noise, isNoise := noiseSegment(dir, rootSegs); isNoise {
+					// bloco inteiro sob uma pasta de ruído: o cabeçalho fica fora, os nomes abaixo contam como omitidos
+					current, skipping = "", true
+					noiseDir = noise
+				}
+				continue
+			}
+			if skipping {
+				res.omitted.add(noiseDir)
 				continue
 			}
 			if current == "" {
-				return nil, nil, 0, false
+				return listingResult{}, false
 			}
 			if strings.ContainsAny(line, `/\`) {
 				// '-R' junto de uma flag que imprime caminho: formato diferente do esperado, não mexe
-				return nil, nil, 0, false
+				return listingResult{}, false
 			}
-			if _, seen := groups[current]; !seen {
-				order = append(order, current)
+			if _, seen := res.groups[current]; !seen {
+				res.order = append(res.order, current)
 			}
-			groups[current] = append(groups[current], line)
-			total++
+			res.groups[current] = append(res.groups[current], line)
+			res.total++
 		}
 	}
-	if total == 0 {
-		return nil, nil, 0, false
+	if res.total == 0 && res.omitted.count == 0 {
+		return listingResult{}, false
 	}
-	return groups, order, total, true
+	return res, true
 }
 
 // splitDirName separa um caminho impresso na pasta e no nome, preservando o separador como ele saiu ('\' no Windows,

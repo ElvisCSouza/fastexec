@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,11 +29,50 @@ func editLine(t *testing.T, name, content, target, replacement string) (string, 
 	return out, string(b)
 }
 
+// TestEditFileRespostaCurta: a resposta de sucesso é o resumo — arquivo, linhas que entraram e saíram e trechos
+// trocados — mais os avisos automáticos. Nem o arquivo nem o diff inteiro voltam, e a resposta não cresce com o
+// tamanho do arquivo.
+func TestEditFileRespostaCurta(t *testing.T) {
+	var sb strings.Builder
+	for i := 0; i < 500; i++ {
+		fmt.Fprintf(&sb, "linha %d de enchimento do arquivo grande\n", i)
+	}
+	sb.WriteString("ALVO1\nALVO2\n")
+	p := writeFile(t, "grande.txt", sb.String())
+
+	out, err := HandleEditFile(EditFileArgs{Path: p, Edits: []EditOp{
+		{Target: "ALVO1\nALVO2\n", Replacement: "TROCADO\n"},
+	}})
+	if err != nil {
+		t.Fatalf("HandleEditFile falhou: %v", err)
+	}
+	if !strings.HasPrefix(out, "[edit_file] "+p+": +1 -2 lines, 1 hunk(s).\n") {
+		t.Errorf("resumo fora do formato: %q", out)
+	}
+	if len(out) > 400 {
+		t.Errorf("resposta com %d caracteres para uma troca: %q", len(out), out)
+	}
+	for _, enchimento := range []string{"linha 0 de enchimento", "linha 250 de enchimento", "linha 499 de enchimento"} {
+		if strings.Contains(out, enchimento) {
+			t.Errorf("a resposta devolveu o arquivo (%q): %q", enchimento, out)
+		}
+	}
+	if b, _ := os.ReadFile(p); !strings.Contains(string(b), "TROCADO") || !strings.Contains(string(b), "linha 499") {
+		t.Errorf("edição não caiu no disco: %q", b)
+	}
+
+	// a falha continua vindo inteira: é ali que o modelo precisa do texto para se corrigir
+	_, err = HandleEditFile(EditFileArgs{Path: p, Target: "NAO_EXISTE_EM_LUGAR_NENHUM", Replacement: "x"})
+	if err == nil || !strings.Contains(err.Error(), "not found in '"+p+"'") || !strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("a mensagem de erro deveria continuar completa: %v", err)
+	}
+}
+
 func TestEditFileProofCRLF(t *testing.T) {
 	content := "l1\r\nl2\r\nl3\r\nl4\r\nMaxRetries = 3;\r\nl6\r\nl7\r\n"
 	out, disk := editLine(t, "Config.cs", content, "MaxRetries = 3;", "MaxRetries = 5;")
 
-	if !strings.HasPrefix(out, "[edit_file] 1 change(s) applied (15 -> 15 bytes) in ") {
+	if !strings.HasPrefix(out, "[edit_file] ") || !strings.Contains(out, "Config.cs: +1 -1 lines, 1 hunk(s).\n") {
 		t.Errorf("primeira frase mudou: %q", out)
 	}
 	if !strings.Contains(out, "\nL5: MaxRetries = 5;\n") {
@@ -71,7 +111,7 @@ func TestEditFileProofEdicaoEmLote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile falhou: %v", err)
 	}
-	if !strings.Contains(out, "2 change(s) applied") {
+	if !strings.Contains(out, ": +3 -2 lines, 2 hunk(s).") {
 		t.Errorf("contagem inesperada: %q", out)
 	}
 	if !strings.Contains(out, "\nL2: A1\n") {
@@ -99,7 +139,7 @@ func TestEditFileProofMaisDeCincoTrocas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile falhou: %v", err)
 	}
-	if !strings.Contains(out, "7 change(s) applied") {
+	if !strings.Contains(out, ": +7 -7 lines, 7 hunk(s).") {
 		t.Errorf("contagem inesperada: %q", out)
 	}
 	for _, want := range []string{"\nL1: U1", "\nL5: U5", "\n(and 2 more)\n"} {

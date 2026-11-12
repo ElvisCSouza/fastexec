@@ -155,7 +155,7 @@ func TestHandleEditFileWithExplicitSymbol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile com Symbol explícito falhou: %v", err)
 	}
-	if !strings.Contains(msg, "replaced symbol 'helper'") {
+	if !strings.Contains(msg, `: +2 -2 lines, 1 hunk(s). Replaced symbol "helper" (func`) {
 		t.Errorf("mensagem de sucesso incorreta: %s", msg)
 	}
 

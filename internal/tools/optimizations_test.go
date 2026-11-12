@@ -27,7 +27,7 @@ func TestEditFileSynonyms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile com old_string falhou: %v", err)
 	}
-	if !strings.Contains(out1, "change(s) applied") {
+	if !strings.Contains(out1, "1 hunk(s).") {
 		t.Errorf("saída inesperada: %s", out1)
 	}
 
@@ -41,7 +41,7 @@ func TestEditFileSynonyms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile com search/replace falhou: %v", err)
 	}
-	if !strings.Contains(out2, "change(s) applied") {
+	if !strings.Contains(out2, "1 hunk(s).") {
 		t.Errorf("saída inesperada: %s", out2)
 	}
 
@@ -55,7 +55,7 @@ func TestEditFileSynonyms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleEditFile com find/content falhou: %v", err)
 	}
-	if !strings.Contains(out3, "change(s) applied") {
+	if !strings.Contains(out3, "1 hunk(s).") {
 		t.Errorf("saída inesperada: %s", out3)
 	}
 
@@ -167,7 +167,7 @@ func TestEditFileVariasTrocasAtomicas(t *testing.T) {
 		{Target: "return 1", Replacement: "return 10"},
 		{Target: "return 2", Replacement: "return 20"},
 	}})
-	if err != nil || !strings.Contains(out, "2 change(s) applied") {
+	if err != nil || !strings.Contains(out, "2 hunk(s).") {
 		t.Fatalf("duas trocas: %v %s", err, out)
 	}
 	if b, _ := os.ReadFile(p); !strings.Contains(string(b), "return 10") || !strings.Contains(string(b), "return 20") {

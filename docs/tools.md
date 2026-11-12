@@ -119,7 +119,7 @@ Each one tells the model what it did and what to do next time.
 | Git Bash path (`/w/Data/x`, `/c/tmp/a.sh`) in `command` or `cwd` on the Windows `local` host | Translated to the Windows drive (`W:\Data\x`) before running, with a `[FastExec Auto-Remediation]` note showing what changed; skipped when the line hands the text to `bash`/`sh`/`wsl`, and skipped for the `command` when the line is bash-bound (there the POSIX path is the right one and only `cwd` is translated) |
 | Windows drive path (`W:\Data\x`) in a bash-bound line | Translated the other way (`/w/Data/x`) before running, because unquoted `W:\x` loses its backslashes in bash; noted on the output |
 | Line with unambiguous PowerShell syntax (`$env:X=...`, `$x = ...` starting a stage, the call operator `& '...'`/`& "..."`, `-ErrorAction` and friends, or a cmdlet like `Get-*`/`Set-*`/`Select-String`/`ForEach-Object`) on the Windows `local` host | `pwsh -NoProfile -Command <line>` is chosen **before** running — and before the bash plan, because `$env:X=1; & "C:\...\x.exe" build` looks Unix enough to die in bash with `syntax error near unexpected token '&'`. Same cwd, timeout, exit code and stderr. The output carries `[FastExec Auto-Remediation] PowerShell syntax detected: ran in pwsh. Next time pass argv ['pwsh','-NoProfile','-Command','<line>'].` A mixed line (any stage using a Unix-only tool, like `grep x . \| Select-Object -First 5`) is left on its old path. `powershell` is used when `pwsh` is not installed; with neither, nothing changes |
-| Recursive file listing (`dir /s /b <glob>`, `ls -R`, `find . -name '<glob>'`) of more than 80 files | Only reformatted, never shortened: one line per directory with its count and every name kept — `src\Serilog\Core\ (12): A.cs B.cs ...` — plus the footer `[FastExec] listing grouped by directory; --raw returns the original lines.` See *Grouped listings* |
+| Recursive file listing (`dir /s /b <glob>`, `ls -R`, `find . -name '<glob>'`) of more than 80 files | Regrouped, one line per directory with its count and every name of code kept — `src\Serilog\Core\ (12): A.cs B.cs ...` — plus the footer `[FastExec] listing grouped by directory; --raw returns the original lines.` Inside `.git`, `node_modules`, `bin`, `obj`, `__pycache__`, `.vs`, `target` and `dist` the paths are counted instead of printed, and the footer names them and the count: `4218 item(s) omitted in .git, node_modules (--raw returns everything).` Nothing is omitted when the listing was asked *inside* one of those folders, or when it would leave the answer empty. See *Grouped listings* |
 
 `FASTEXEC_NO_SEARCH_GUARD=1` disables the search and broad-root guards.
 
@@ -143,8 +143,8 @@ works verbatim.
 
 Listing a directory recursively is the other expensive way of asking where the code is: `dir /s /b src\Serilog\*.cs`
 answered 8 KB in one call, and in the same benchmark run `ls -R`, `find . -name '*.ext'` and 15 plain `ls` did the same
-in smaller pieces. Nothing is omitted and nothing is summarised — the original text is only regrouped, one line per
-directory:
+in smaller pieces. No file of code is dropped and no file of code is summarised — the original text is regrouped, one
+line per directory:
 
 ```
 src\Serilog\Core\ (12): Casing.cs LevelOutputFormat.cs Logger.cs PropertyBag.cs ...
@@ -156,6 +156,23 @@ a command that is unambiguously a recursive listing (`dir` with both `/s` and `/
 `find` with `-name`/`-iname` and no `-exec`/`-delete`), on more than 80 files, and only if **every** line of the output
 looks like a plain path — one line in columns, with a tab or with padded spaces aborts it and the original text is
 returned untouched. `--raw` in the line, or `FASTEXEC_NO_LISTING_GROUP=1`, returns the original lines.
+
+**Generated and dependency folders are left out.** In a real repository the bulk of a recursive listing is not code:
+`.git` internals (`hooks`, `objects`, `refs`), `node_modules`, `bin`, `obj`, `__pycache__`, `.vs`, `target`, `dist`.
+Those paths are counted, not printed, and the footer says what was left out:
+
+```
+src\Serilog\Core\ (12): Casing.cs LevelOutputFormat.cs Logger.cs PropertyBag.cs ...
+[FastExec] listing grouped by directory; 4218 item(s) omitted in .git, node_modules (--raw returns everything).
+```
+
+- The list is matched by **segment**: a path is dropped when one of its folders is named like that, so `.git` is
+  dropped wherever it sits, not only at the requested root.
+- Asking for the inside of one of them is asking for exactly that listing: `dir /s /b node_modules`,
+  `dir /s /b node_modules\*.js`, `find node_modules -name '*.js'` omit nothing and print every name.
+- When **everything** found is inside those folders, nothing is omitted — an empty answer is worse than the full list.
+- A listing below the 80-file threshold is untouched, and so is any listing with no such folder in it: the footer is
+  byte-identical to before, and `--raw` (or `FASTEXEC_NO_LISTING_GROUP=1`) returns the complete output.
 
 ### Graph-first search answers
 
@@ -254,10 +271,16 @@ nothing). LF/CRLF line endings are matched to the file. Use it for any change to
 The reply proves the edit, so there is no reason to re-read the file to check it:
 
 ```
-[edit_file] 1 change(s) applied (15 -> 15 bytes) in W:\src\Config.cs.
+[edit_file] W:\src\Config.cs: +1 -1 lines, 1 hunk(s).
 L305: MaxRetries = 5;
 line endings kept: CRLF
 ```
+
+The first line is the whole summary of the call — file, how many lines the replacements put in and took out, and how
+many hunks were applied — followed by the automatic notes (`[graph]`, `[lsp]`, `line endings kept: …`). Neither the
+file nor the diff comes back, and the reply does not grow with the size of the file: 500 lines or 5, the summary line
+is the same shape. A **failure** is the one case that still returns the full message (the target that was not found,
+the closest text, `nothing was written`), because that is where the text is needed to fix the call.
 
 `L<n>` is the 1-based line of the final content where the replacement landed, followed by that line (cut at ~120
 characters). One line per change, up to 5; beyond that the count says `(and N more)`. The last line names the line
@@ -271,7 +294,7 @@ use that name, the reply adds one line naming them — so the model edits the ca
 spending a turn finding out who calls it:
 
 ```
-[edit_file] 1 change(s) applied (18 -> 27 bytes) in W:\src\Fetch.cs.
+[edit_file] W:\src\Fetch.cs: +1 -1 lines, 1 hunk(s).
 L3: public static async Task<Item> Fetch(int id, CancellationToken ct) {
 [graph] Fetch signature changed: 3 use(s) in 3 file(s) may need update: a.go:12, b.go:40, +4 more (tests: 2). By name, not type-checked.
 ```
@@ -314,7 +337,7 @@ automatically, without asking, and the reply says what was done. Every line is m
 of the previous section is not repeated for names the server already answered for.
 
 ```
-[edit_file] 1 change(s) applied (31 -> 33 bytes) in W:\src\a.go.
+[edit_file] W:\src\a.go: +1 -1 lines, 1 hunk(s).
 L3: func ParseRecord() {}
 [lsp] ParseLine -> ParseRecord: 8 uses in 5 files updated (exact): a.go:3, b.go:40, +3 more; undo: git apply -R C:\Users\me\AppData\Local\fastexec\undo\20261112-101520.118.patch
 [lsp] files changed: callers.go, main.go; re-read before editing them

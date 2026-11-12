@@ -345,6 +345,6 @@ func editSymbol(path, content, symbol, replacement string) (string, string, erro
 	}
 
 	newContent := content[:startByte] + r + content[endByte:]
-	msg := fmt.Sprintf("[edit_file] replaced symbol '%s' (%s, lines %d-%d, %d -> %d bytes) in %s.", match.Name, match.Kind, match.Line, match.EndLine, len(oldBlock), len(r), path)
+	msg := fmt.Sprintf("%s Replaced symbol %q (%s, lines %d-%d).", editSummary(path, editLineCount(r), editLineCount(oldBlock), 1), match.Name, match.Kind, match.Line, match.EndLine)
 	return newContent, msg, nil
 }
