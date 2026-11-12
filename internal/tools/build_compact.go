@@ -212,7 +212,7 @@ func stripBuildRawEscape(args *ExecArgs) (label string, stripped bool) {
 // ---- classificação das linhas ------------------------------------------------------------------------------
 
 // buildErrRe é o sinal de erro/aviso: o que casa aqui NUNCA é descartado.
-var buildErrRe = regexp.MustCompile(`(?i)(\berror\b|\berrors\b|\bwarning\b|\bwarn\b|\bfail(ed|ure|ing|s)?\b|\bpanic\b|traceback|\bexception\b|cannot (find|use|resolve)|not (found|recognized|defined)|\bno such file\b|undefined:|\bunresolved\b|\bassert|\bexpected\b|\bunexpected\b|✕|✗|●)`)
+var buildErrRe = regexp.MustCompile(`(?i)(\berror\b|\berrors\b|\berros?\b|\bfalha\w*|\bfalhou\b|\bwarning\b|\baviso\b|\bwarn\b|\bfail(ed|ure|ing|s)?\b|\bpanic\b|traceback|\bexception\b|cannot (find|use|resolve)|not (found|recognized|defined)|\bno such file\b|undefined:|\bunresolved\b|\bassert|\bexpected\b|\bunexpected\b|✕|✗|●)`)
 
 // codeLocRe é o segundo sinal forte: linha de diagnóstico com arquivo:linha (ou arquivo(linha,col)).
 var codeLocRe = regexp.MustCompile(`[\w./\\-]+\.(go|cs|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|rb|py|c|h|cpp|hpp|swift)\b[:(]\d+`)
@@ -222,7 +222,14 @@ func isBuildErrorLine(trimmed string) bool {
 }
 
 var goTestNoiseRe = regexp.MustCompile(`^(ok\s|\?\s|PASS$|---\sPASS:|---\sSKIP:|===\s(RUN|PAUSE|CONT|NAME))`)
-var dotnetNoiseRe = regexp.MustCompile(`(?i)^(MSBuild version|Determining projects to restore|All projects are up-to-date for restore|Restored |\d+ of \d+ projects|NuGet package restore|Waiting for|Build started)`)
+var dotnetNoiseRe = regexp.MustCompile(`(?i)^(MSBuild version|Determining projects to restore|All projects are up-to-date for restore|Restored |\d+ of \d+ projects|NuGet package restore|Waiting for|Build started|(Passed|Aprovado)\s+\S+.*\[[^\]]*\]\s*$|\d+ (test )?(files?|arquivos? de teste) .*(matched|corresponderam)|Tempo total|Total time)`)
+
+// sourceLinkWarnRe: o aviso do SourceLink/Git quando a pasta não é um repositório (cópia de trabalho, zip). Sai uma vez por
+// projeto e por TFM, centenas de linhas iguais que não dizem nada sobre o código; viram uma linha só.
+var sourceLinkWarnRe = regexp.MustCompile(`(?i)Microsoft\.(Build\.Tasks\.Git|SourceLink\.\w+)\.targets\(\d+,\d+\): warning`)
+
+// diagTailRe: o sufixo "[projeto.csproj::TargetFramework=...]" que o MSBuild repete em cada TFM do mesmo aviso.
+var diagTailRe = regexp.MustCompile(`\s*\[[^\]]*\.(cs|vb|fs)proj[^\]]*\]\s*$`)
 
 // nodeNoiseRe: cabeçalho do script ('> app@1.0.0 test', '> jest'), uma linha por suíte que passou, banner do vite,
 // download do registry. O '>' do code frame do jest ("> 11 | expect(...)") NÃO entra: ele aponta a linha que falhou.
@@ -330,12 +337,34 @@ func compactBuildOutput(label string, exitCode int, stdout, stderr string) (stri
 	blocks := splitBuildBlocks(fam, raw)
 	var kept []string
 	droppedLines := 0
+	// avisos repetidos (o mesmo texto em cada TFM) e o aviso de SourceLink/Git viram contagem; o que sai entra em
+	// `covered` para a checagem de segurança saber que não foi esquecido.
+	covered := map[string]bool{}
+	seenDiag := map[string]bool{}
+	sourceLink, dupDiag := 0, 0
 	for _, b := range blocks {
 		// O bloco é a unidade de leitura, não a de descarte: cai só a linha de RUÍDO (uma por pacote que passou,
 		// barra de progresso, banner, restore). Erro, aviso, resumo e linha neutra ficam — e é nas neutras que
 		// vive o contexto do erro (o '-->' do rust, a seta e o code frame do jest, o '|' do vazamento).
 		for _, l := range b.lines {
 			if l.err {
+				if fam == buildDotnet {
+					trimmed := strings.TrimSpace(l.text)
+					if sourceLinkWarnRe.MatchString(trimmed) {
+						sourceLink++
+						covered[trimmed] = true
+						continue
+					}
+					if strings.Contains(strings.ToLower(trimmed), "warning") && !strings.Contains(strings.ToLower(trimmed), "error") {
+						key := diagTailRe.ReplaceAllString(trimmed, "")
+						if seenDiag[key] {
+							dupDiag++
+							covered[trimmed] = true
+							continue
+						}
+						seenDiag[key] = true
+					}
+				}
 				kept = append(kept, l.text)
 				continue
 			}
@@ -347,12 +376,18 @@ func compactBuildOutput(label string, exitCode int, stdout, stderr string) (stri
 		}
 	}
 
+	if sourceLink > 0 {
+		kept = append(kept, fmt.Sprintf("(%d SourceLink/Git warnings collapsed: this folder is not a git repository; harmless for the build)", sourceLink))
+	}
+	if dupDiag > 0 {
+		kept = append(kept, fmt.Sprintf("(%d repeated warnings collapsed: same text for another target framework)", dupDiag))
+	}
 	// Segurança 1: falha sem nenhum sinal de erro reconhecido não é compactada (nada é escondido às cegas).
 	if exitCode != 0 && len(kept) == 0 {
 		return "", "", false
 	}
 	// Segurança 2: nenhuma linha de erro do original pode faltar no texto comprimido.
-	if !keptCoversErrors(blocks, kept) {
+	if !keptCoversErrors(blocks, kept, covered) {
 		return "", "", false
 	}
 
@@ -386,10 +421,13 @@ func compactBuildOutput(label string, exitCode int, stdout, stderr string) (stri
 
 // keptCoversErrors confere que todo bloco marcado como erro no original tem as suas linhas presentes no texto
 // comprimido. É a garantia mecânica do "nenhum erro some": se falhar, quem chama devolve o texto original.
-func keptCoversErrors(blocks []buildBlock, kept []string) bool {
+func keptCoversErrors(blocks []buildBlock, kept []string, covered map[string]bool) bool {
 	present := make(map[string]int, len(kept))
 	for _, l := range kept {
 		present[strings.TrimSpace(l)]++
+	}
+	for l := range covered {
+		present[l]++
 	}
 	for _, b := range blocks {
 		if !b.err {
