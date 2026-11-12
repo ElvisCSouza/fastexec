@@ -1,57 +1,56 @@
 {
-  "wire_bytes": 11227,
+  "wire_bytes": 8511,
   "result": {
     "tools": [
       {
         "name": "exec",
-        "description": "Run a command on a host and return its output as soon as the process exits (default limit 45 s). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['pwsh','-NoProfile','-Command','-'] on Windows hosts, ['bash','-s'] or ['python3','-'] on Linux, with the script in 'input'. Prefer read_file to read files, code_outline/code_graph to locate code (not recursive grep/Select-String over a repo), and the 'job' tool for anything over ~30 s. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
+        "description": "Run a command on a host and return its output (default limit 45 s). 'command' is a shell line (cmd.exe on Windows 'local'); 'argv' runs with no shell, nothing interpreted. Use 'job' for anything over ~30 s.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "argv": {
               "type": "array",
-              "description": "No-shell alternative: [program, arg1, ...]; no metacharacter is interpreted. Give argv OR command",
+              "description": "No shell: [program, arg1, ...]",
               "items": {
-                "type": "string",
-                "description": ""
+                "type": "string"
               }
             },
             "command": {
               "type": "string",
-              "description": "Shell line (artificial sleep/timeout is blocked). Give command OR argv"
+              "description": "Shell line"
             },
             "cwd": {
               "type": "string",
-              "description": "Working directory (relative paths resolve from the host default, e.g. 'app/config')"
+              "description": "Working directory (relative: from the host cwd)"
             },
             "host": {
               "type": "string",
-              "description": "Target: 'server' (default; cwd ~/workspace, never prefix 'cd ~/workspace \u0026\u0026'), 'local', 'router' or 'ssh:\u003chost\u003e'"
+              "description": "'server' (default; cwd ~/workspace, never prefix 'cd ~/workspace \u0026\u0026'), 'local', 'router'"
             },
             "input": {
               "type": "string",
-              "description": "Content sent to the process stdin"
+              "description": "Sent to the process stdin"
             },
             "timeout_ms": {
               "type": "integer",
-              "description": "Limit in ms (default 45000, max 50000 to stay under the client's 60 s cut); longer work goes to 'job'"
+              "description": "Limit in ms (default 45000, max 50000); longer work goes to 'job'"
             }
           }
         }
       },
       {
         "name": "read_file",
-        "description": "Read a local or remote file, whole or a slice (byte offset/limit start_line/end_line, ranges 'a-b,c-d', or pattern+context). Reads are capped at 32 KB: the footer gives the call that continues; use code_outline first. Decodes Windows-1252 and UTF-16 text itself (no script needed). Use it instead of cat, type or head through exec.",
+        "description": "Read a file on a host: whole, or a slice ('offset'/'limit' bytes, 'start_line'/'end_line', 'ranges', 'pattern', 'symbol'). One call returns at most 32 KB; the footer carries the call that continues.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "context": {
               "type": "integer",
-              "description": "Lines around each pattern match (default 2)"
+              "description": "Lines around a match"
             },
             "end_line": {
               "type": "integer",
-              "description": "Last line (inclusive)"
+              "description": "Last line"
             },
             "host": {
               "type": "string",
@@ -59,35 +58,33 @@
             },
             "limit": {
               "type": "integer",
-              "description": "Max bytes to read"
+              "description": "Max bytes"
             },
             "numbered": {
-              "type": "boolean",
-              "description": "Prefix lines with their number"
+              "type": "boolean"
             },
             "offset": {
               "type": "integer",
-              "description": "Byte offset"
+              "description": "Bytes"
             },
             "path": {
-              "type": "string",
-              "description": "File path"
+              "type": "string"
             },
             "pattern": {
               "type": "string",
-              "description": "Regex (case-insensitive): return matching lines with context, numbered; if it matches many repeated lines (logs), returns counts per distinct message with first/last line"
+              "description": "Regex (case-insensitive); repeated log lines come back as counts"
             },
             "ranges": {
               "type": "string",
-              "description": "Several line ranges in one call, e.g. '10-40,90-120' (numbered)"
+              "description": "Line ranges, e.g. '10-40,90-120'"
             },
             "start_line": {
               "type": "integer",
-              "description": "First line (1-based)"
+              "description": "First line"
             },
             "symbol": {
               "type": "string",
-              "description": "Read only the declaration and body of this symbol via AST (e.g. 'FunctionName' or 'ClassName') without reading the rest of the file"
+              "description": "Read only this declaration/body via AST"
             }
           },
           "required": [
@@ -97,7 +94,7 @@
       },
       {
         "name": "code_outline",
-        "description": "List a source file's declarations (funcs, types, classes, methods, routes) as 'L\u003cline\u003e: \u003csignature\u003e', or find where a symbol is declared across a whole repo: path=repo root, symbol='fee' matches every declaration whose name contains it, in one call (skips .git, node_modules, dist, vendor...). Use it instead of recursive grep/Select-String to locate code, then read_file the lines. Go, C/C++, TS/JS, Python, shell, PowerShell.",
+        "description": "Declarations of a source file as 'L\u003cline\u003e: \u003csignature\u003e'; with a directory as 'path' plus 'symbol', every declaration whose name contains it, repo-wide, in one call - instead of recursive grep.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -107,7 +104,7 @@
             },
             "max": {
               "type": "integer",
-              "description": "Max results (default 200)"
+              "description": "Max results"
             },
             "path": {
               "type": "string",
@@ -115,7 +112,7 @@
             },
             "symbol": {
               "type": "string",
-              "description": "Name or part of it (case-insensitive); omit for the full outline"
+              "description": "Name or part of it; omit for the whole outline"
             }
           },
           "required": [
@@ -125,29 +122,29 @@
       },
       {
         "name": "code_graph",
-        "description": "Code graph of a local repository (incremental index, built on first use, refreshed on every call): 'callers' = where a symbol is called or referenced; 'def' = where it is declared (line range, signature); 'impact' = files that use what a file or symbol defines (check before refactoring). Go via go/ast; C/C++, TS/JS, Python, shell by line scanners; matched by name, no type resolution.",
+        "description": "Code graph of a local repo, refreshed on each call: 'callers' (where a symbol is used), 'def' (where declared), 'impact' (files that use what a file or symbol defines; check before refactoring), 'index' (rebuild). Matched by name, no type resolution.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "action": {
               "type": "string",
-              "description": "'callers', 'def', 'impact' or 'index' (full rebuild)"
+              "description": "'callers', 'def', 'impact' or 'index'"
             },
             "max": {
               "type": "integer",
-              "description": "Max lines (default 200)"
+              "description": "Max lines"
             },
             "repo_path": {
               "type": "string",
-              "description": "Repository root or any path inside it (host 'local')"
+              "description": "Repo root or a path inside it"
             },
             "symbol": {
               "type": "string",
-              "description": "Symbol name (pkg.Name accepted) for callers/def/impact"
+              "description": "Symbol name ('pkg.Name' accepted)"
             },
             "target": {
               "type": "string",
-              "description": "File (relative to repo or absolute) for impact"
+              "description": "File for 'impact'"
             }
           },
           "required": [
@@ -158,16 +155,15 @@
       },
       {
         "name": "edit_file",
-        "description": "Change an existing file (local or remote) by exact text replacement: 'target' -\u003e 'replacement', or several changes in one call with 'edits' (applied in order, all or nothing). Line endings (LF/CRLF) are matched automatically. Prefer this over write_file for any change to an existing file.",
+        "description": "Change an existing file by exact text replacement: 'target' -\u003e 'replacement', or several at once with 'edits' (in order, all or nothing). LF/CRLF matched automatically. Use this, not write_file.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "edits": {
               "type": "array",
-              "description": "Several changes: [{target, replacement}, ...]",
+              "description": "[{target, replacement}, ...]",
               "items": {
-                "type": "object",
-                "description": "{target, replacement}"
+                "type": "object"
               }
             },
             "host": {
@@ -175,20 +171,19 @@
               "description": "'local' (default) or a configured host"
             },
             "path": {
-              "type": "string",
-              "description": "File to change"
+              "type": "string"
             },
             "replacement": {
               "type": "string",
-              "description": "New text (empty deletes the target)"
+              "description": "New text ('' deletes)"
             },
             "symbol": {
               "type": "string",
-              "description": "Symbol name to replace (replaces its entire declaration/body via AST without needing target text)"
+              "description": "Replace this symbol via AST (no 'target')"
             },
             "target": {
               "type": "string",
-              "description": "Exact text to replace (first occurrence)"
+              "description": "Exact text to replace"
             }
           },
           "required": [
@@ -198,17 +193,16 @@
       },
       {
         "name": "write_file",
-        "description": "Create a file (local or remote). An existing non-empty file is refused unless overwrite is true; to change parts of a file use edit_file.",
+        "description": "Create a file on a host. An existing non-empty file is refused unless 'overwrite' is true; to change part of a file use edit_file.",
         "inputSchema": {
           "type": "object",
           "properties": {
             "atomic": {
               "type": "boolean",
-              "description": "Write to a temp file and rename it into place"
+              "description": "Temp file + rename"
             },
             "content": {
-              "type": "string",
-              "description": "File content"
+              "type": "string"
             },
             "host": {
               "type": "string",
@@ -216,11 +210,10 @@
             },
             "overwrite": {
               "type": "boolean",
-              "description": "Replace an existing non-empty file entirely"
+              "description": "Replace an existing non-empty file"
             },
             "path": {
-              "type": "string",
-              "description": "Destination file"
+              "type": "string"
             }
           },
           "required": [
@@ -231,7 +224,7 @@
       },
       {
         "name": "job",
-        "description": "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait. For a command that ends (build, test, script) start with await=true: it returns the output if the job finishes within 40 s.",
+        "description": "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s). 'wait' blocks up to 40 s and returns only the log lines new since the last wait. For a command that ends, start with await=true: it returns the output if it finishes within 40 s.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -241,23 +234,22 @@
             },
             "argv": {
               "type": "array",
-              "description": "No-shell alternative for 'start': [program, arg1, ...]",
+              "description": "No-shell alternative: [program, arg1, ...]",
               "items": {
-                "type": "string",
-                "description": ""
+                "type": "string"
               }
             },
             "await": {
               "type": "boolean",
-              "description": "'start' only: wait up to 40 s for the job to finish and return its output"
+              "description": "'start' only: wait up to 40 s and return the output"
             },
             "command": {
               "type": "string",
-              "description": "Shell line for 'start' (command OR argv)"
+              "description": "Shell line for 'start'"
             },
             "cwd": {
               "type": "string",
-              "description": "Working directory for 'start'"
+              "description": "Working directory"
             },
             "host": {
               "type": "string",
@@ -265,11 +257,11 @@
             },
             "job_id": {
               "type": "string",
-              "description": "Job id for wait/status/tail/stop"
+              "description": "Job id"
             },
             "lines": {
               "type": "integer",
-              "description": "Lines for 'tail' (default 30)"
+              "description": "Lines for 'tail'"
             }
           },
           "required": [
@@ -279,7 +271,7 @@
       },
       {
         "name": "tool_manage",
-        "description": "On-demand tool modules ('files' = file_ops copy/move/delete/mkdir/list, 'handoff' = session memory, 'sql', 'hosts', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
+        "description": "On-demand tool modules: 'search' by keyword, 'list', 'enable'/'disable' a module (updates the tool list), or 'call' a module tool without loading it. Modules: files, handoff, sql, hosts, docker.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -289,19 +281,18 @@
             },
             "module": {
               "type": "string",
-              "description": "Module name, e.g. 'sql'"
+              "description": "Module name"
             },
             "params": {
               "type": "string",
-              "description": "JSON arguments for 'call'"
+              "description": "JSON arguments for the call"
             },
             "query": {
               "type": "string",
-              "description": "Keyword for 'search'"
+              "description": "Search keyword"
             },
             "tool": {
-              "type": "string",
-              "description": "Tool name for 'call'"
+              "type": "string"
             }
           },
           "required": [

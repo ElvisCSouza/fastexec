@@ -11,6 +11,27 @@ was a failed turn plus a retry with `host='local'` (measured in the `ds-full2` b
 conservative: a drive letter followed by `:` and a slash at the start of a token or after a shell separator — URLs
 (`http://`) and loose text never trigger it.
 
+## Tool descriptions
+
+The `tools/list` schema is charged on **every turn**, so it is written as a budget, not as documentation. A tool
+description carries only what changes the model's decision: what the tool does, when to use it instead of another
+one, and the parameter whose name is not enough. Examples, long explanations and warnings stay here and come back
+in the response only when they are relevant, through the mechanisms that already existed:
+
+- `[FastExec FastHint]` on a call that used the wrong tool (`internal/tools/search_guard.go: cat`, `grep`, `find`)
+- `[FastExec Auto-Remediation]` on a call that was fixed or refused (wrong host, wrong parameter, refusing shell)
+- `tool_manage search`, whose match uses the module tools' own descriptions
+
+A parameter whose name already says it all goes **without** a `description` (`omitempty` in `PropertyDef`). Tool
+and parameter names never change for size, and no guard or remediation was removed: the protected facts stay in the
+schema — the default `host` may be remote, `{job_over}` is where `exec` stops and `job` begins, `read_file` returns
+at most 32 KB, `write_file` refuses an existing non-empty file, and `edit_file` is the tool for changing a file.
+
+`internal/mcp/tools_list_size_test.go` serializes the real `tools/list` and fails if it passes the ceiling (bytes
+and tokens = bytes/4); `go test ./internal/mcp -run TestToolsListSize -v` prints the per-tool table. In 2026-11-12
+the core list went from 8796 to 6060 bytes (2199 -> 1515 tokens, -31%); the on-demand modules (`sql`, `hosts`,
+`docker`) are not part of the per-turn tax and have their own ceiling.
+
 ## Parameter names
 
 Before a tool runs, its arguments are matched against the tool's own fields (`internal/mcp/argnorm.go`); no

@@ -2,133 +2,141 @@ package mcp
 
 // tool_schemas.go: schemas das tools nativas (o que o LLM vê no tools/list). Só dados: o handler de cada uma está
 // em tool_handlers.go e os goldens em testdata/golden travam o conteúdo.
+//
+// POLÍTICA DE TAMANHO (ver docs/tools.md, "Tool descriptions"): este texto é imposto fixo em TODO turno e o teste
+// tools_list_size_test.go trava o orçamento. Aqui mora só o que muda a decisão do modelo: o que a tool faz, quando
+// usá-la no lugar de outra, e o parâmetro cujo nome não basta. Exemplos, explicação longa e aviso ficam na
+// documentação (docs/tools.md) e voltam na resposta só quando são relevantes, pelos mecanismos de sempre:
+// "[FastExec FastHint]" (internal/tools/search_guard.go), "[FastExec Auto-Remediation]" e tool_manage.
+// Nome de tool e de parâmetro nunca muda por causa de tamanho, e parâmetro cujo nome já diz tudo vai sem
+// 'description' (omitempty em PropertyDef).
 
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Run a command on a host and return its output as soon as the process exits ({exec_default}). Two modes: 'command' (a shell line; on Windows host 'local' it runs in cmd.exe) or 'argv' (no shell: each item reaches the program exactly as given; use it for code and text with metacharacters). Long code goes through 'input' (stdin): argv ['pwsh','-NoProfile','-Command','-'] on Windows hosts, ['bash','-s'] or ['python3','-'] on Linux, with the script in 'input'. Prefer read_file to read files, code_outline/code_graph to locate code (not recursive grep/Select-String over a repo), and the 'job' tool for anything over {job_over}. On timeout the partial output is returned and the process tree is killed (on Windows 'local' it keeps running as a background job instead); stdin without 'input' is an immediate EOF.",
+		Description: "Run a command on a host and return its output ({exec_default}). 'command' is a shell line (cmd.exe on Windows 'local'); 'argv' runs with no shell, nothing interpreted. Use 'job' for anything over {job_over}.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"host":       {Type: "string", Description: "Target: {hosts_cd} or 'ssh:<host>'"},
-				"command":    {Type: "string", Description: "Shell line (artificial sleep/timeout is blocked). Give command OR argv"},
-				"argv":       {Type: "array", Description: "No-shell alternative: [program, arg1, ...]; no metacharacter is interpreted. Give argv OR command", Items: &PropertyDef{Type: "string"}},
-				"cwd":        {Type: "string", Description: "Working directory (relative paths resolve from the host default, e.g. 'app/config')"},
-				"input":      {Type: "string", Description: "Content sent to the process stdin"},
+				"host":       {Type: "string", Description: "{hosts_cd}"},
+				"command":    {Type: "string", Description: "Shell line"},
+				"argv":       {Type: "array", Description: "No shell: [program, arg1, ...]", Items: &PropertyDef{Type: "string"}},
+				"cwd":        {Type: "string", Description: "Working directory (relative: from the host cwd)"},
+				"input":      {Type: "string", Description: "Sent to the process stdin"},
 				"timeout_ms": {Type: "integer", Description: "{exec_timeout_arg}"},
 			},
 		},
 	},
 	{
 		Name:        "read_file",
-		Description: "Read a local or remote file, whole or a slice (byte offset/limit start_line/end_line, ranges 'a-b,c-d', or pattern+context). Reads are capped at 32 KB: the footer gives the call that continues; use code_outline first. Decodes Windows-1252 and UTF-16 text itself (no script needed). Use it instead of cat, type or head through exec.",
+		Description: "Read a file on a host: whole, or a slice ('offset'/'limit' bytes, 'start_line'/'end_line', 'ranges', 'pattern', 'symbol'). One call returns at most 32 KB; the footer carries the call that continues.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":       {Type: "string", Description: "'local' (default) or a configured host"},
-				"path":       {Type: "string", Description: "File path"},
-				"offset":     {Type: "integer", Description: "Byte offset"},
-				"limit":      {Type: "integer", Description: "Max bytes to read"},
-				"start_line": {Type: "integer", Description: "First line (1-based)"},
-				"end_line":   {Type: "integer", Description: "Last line (inclusive)"},
-				"ranges":     {Type: "string", Description: "Several line ranges in one call, e.g. '10-40,90-120' (numbered)"},
-				"pattern":    {Type: "string", Description: "Regex (case-insensitive): return matching lines with context, numbered; if it matches many repeated lines (logs), returns counts per distinct message with first/last line"},
-				"context":    {Type: "integer", Description: "Lines around each pattern match (default 2)"},
-				"symbol":     {Type: "string", Description: "Read only the declaration and body of this symbol via AST (e.g. 'FunctionName' or 'ClassName') without reading the rest of the file"},
-				"numbered":   {Type: "boolean", Description: "Prefix lines with their number"},
+				"path":       {Type: "string"},
+				"offset":     {Type: "integer", Description: "Bytes"},
+				"limit":      {Type: "integer", Description: "Max bytes"},
+				"start_line": {Type: "integer", Description: "First line"},
+				"end_line":   {Type: "integer", Description: "Last line"},
+				"ranges":     {Type: "string", Description: "Line ranges, e.g. '10-40,90-120'"},
+				"pattern":    {Type: "string", Description: "Regex (case-insensitive); repeated log lines come back as counts"},
+				"context":    {Type: "integer", Description: "Lines around a match"},
+				"symbol":     {Type: "string", Description: "Read only this declaration/body via AST"},
+				"numbered":   {Type: "boolean"},
 			},
 			Required: []string{"path"},
 		},
 	},
 	{
 		Name:        "code_outline",
-		Description: "List a source file's declarations (funcs, types, classes, methods, routes) as 'L<line>: <signature>', or find where a symbol is declared across a whole repo: path=repo root, symbol='fee' matches every declaration whose name contains it, in one call (skips .git, node_modules, dist, vendor...). Use it instead of recursive grep/Select-String to locate code, then read_file the lines. Go, C/C++, TS/JS, Python, shell, PowerShell.",
+		Description: "Declarations of a source file as 'L<line>: <signature>'; with a directory as 'path' plus 'symbol', every declaration whose name contains it, repo-wide, in one call - instead of recursive grep.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":   {Type: "string", Description: "'local' (default) or a remote host; directories only on 'local'"},
 				"path":   {Type: "string", Description: "File or directory"},
-				"symbol": {Type: "string", Description: "Name or part of it (case-insensitive); omit for the full outline"},
-				"max":    {Type: "integer", Description: "Max results (default 200)"},
+				"symbol": {Type: "string", Description: "Name or part of it; omit for the whole outline"},
+				"max":    {Type: "integer", Description: "Max results"},
 			},
 			Required: []string{"path"},
 		},
 	},
 	{
 		Name:        "code_graph",
-		Description: "Code graph of a local repository (incremental index, built on first use, refreshed on every call): 'callers' = where a symbol is called or referenced; 'def' = where it is declared (line range, signature); 'impact' = files that use what a file or symbol defines (check before refactoring). Go via go/ast; C/C++, TS/JS, Python, shell by line scanners; matched by name, no type resolution.",
+		Description: "Code graph of a local repo, refreshed on each call: 'callers' (where a symbol is used), 'def' (where declared), 'impact' (files that use what a file or symbol defines; check before refactoring), 'index' (rebuild). Matched by name, no type resolution.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
-				"action":    {Type: "string", Description: "'callers', 'def', 'impact' or 'index' (full rebuild)"},
-				"symbol":    {Type: "string", Description: "Symbol name (pkg.Name accepted) for callers/def/impact"},
-				"target":    {Type: "string", Description: "File (relative to repo or absolute) for impact"},
-				"repo_path": {Type: "string", Description: "Repository root or any path inside it (host 'local')"},
-				"max":       {Type: "integer", Description: "Max lines (default 200)"},
+				"action":    {Type: "string", Description: "'callers', 'def', 'impact' or 'index'"},
+				"symbol":    {Type: "string", Description: "Symbol name ('pkg.Name' accepted)"},
+				"target":    {Type: "string", Description: "File for 'impact'"},
+				"repo_path": {Type: "string", Description: "Repo root or a path inside it"},
+				"max":       {Type: "integer", Description: "Max lines"},
 			},
 			Required: []string{"action", "repo_path"},
 		},
 	},
 	{
 		Name:        "edit_file",
-		Description: "Change an existing file (local or remote) by exact text replacement: 'target' -> 'replacement', or several changes in one call with 'edits' (applied in order, all or nothing). Line endings (LF/CRLF) are matched automatically. Prefer this over write_file for any change to an existing file.",
+		Description: "Change an existing file by exact text replacement: 'target' -> 'replacement', or several at once with 'edits' (in order, all or nothing). LF/CRLF matched automatically. Use this, not write_file.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":        {Type: "string", Description: "'local' (default) or a configured host"},
-				"path":        {Type: "string", Description: "File to change"},
-				"target":      {Type: "string", Description: "Exact text to replace (first occurrence)"},
-				"replacement": {Type: "string", Description: "New text (empty deletes the target)"},
-				"symbol":      {Type: "string", Description: "Symbol name to replace (replaces its entire declaration/body via AST without needing target text)"},
-				"edits":       {Type: "array", Description: "Several changes: [{target, replacement}, ...]", Items: &PropertyDef{Type: "object", Description: "{target, replacement}"}},
+				"path":        {Type: "string"},
+				"target":      {Type: "string", Description: "Exact text to replace"},
+				"replacement": {Type: "string", Description: "New text ('' deletes)"},
+				"symbol":      {Type: "string", Description: "Replace this symbol via AST (no 'target')"},
+				"edits":       {Type: "array", Description: "[{target, replacement}, ...]", Items: &PropertyDef{Type: "object"}},
 			},
 			Required: []string{"path"},
 		},
 	},
 	{
 		Name:        "write_file",
-		Description: "Create a file (local or remote). An existing non-empty file is refused unless overwrite is true; to change parts of a file use edit_file.",
+		Description: "Create a file on a host. An existing non-empty file is refused unless 'overwrite' is true; to change part of a file use edit_file.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":      {Type: "string", Description: "'local' (default) or a configured host"},
-				"path":      {Type: "string", Description: "Destination file"},
-				"content":   {Type: "string", Description: "File content"},
-				"atomic":    {Type: "boolean", Description: "Write to a temp file and rename it into place"},
-				"overwrite": {Type: "boolean", Description: "Replace an existing non-empty file entirely"},
+				"path":      {Type: "string"},
+				"content":   {Type: "string"},
+				"atomic":    {Type: "boolean", Description: "Temp file + rename"},
+				"overwrite": {Type: "boolean", Description: "Replace an existing non-empty file"},
 			},
 			Required: []string{"path", "content"},
 		},
 	},
 	{
 		Name:        "job",
-		Description: "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over {job_over}): systemd-run on Linux hosts, a named Job Object with a log file on Windows 'local' (max 12 active, 12 h lifetime; 'stop' kills the whole tree). 'wait' blocks up to 45 s per call and returns only the log lines that are new since the previous wait. For a command that ends (build, test, script) start with await=true: it returns the output if the job finishes within {await_s}.",
+		Description: "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over {job_over}). 'wait' blocks up to {await_s} and returns only the log lines new since the last wait. For a command that ends, start with await=true: it returns the output if it finishes within {await_s}.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"host":    {Type: "string", Description: "{hosts}"},
 				"action":  {Type: "string", Description: "'start', 'wait', 'status', 'list', 'tail' or 'stop'"},
-				"command": {Type: "string", Description: "Shell line for 'start' (command OR argv)"},
-				"argv":    {Type: "array", Description: "No-shell alternative for 'start': [program, arg1, ...]", Items: &PropertyDef{Type: "string"}},
-				"cwd":     {Type: "string", Description: "Working directory for 'start'"},
-				"job_id":  {Type: "string", Description: "Job id for wait/status/tail/stop"},
-				"lines":   {Type: "integer", Description: "Lines for 'tail' (default 30)"},
-				"await":   {Type: "boolean", Description: "'start' only: wait up to {await_s} for the job to finish and return its output"},
+				"command": {Type: "string", Description: "Shell line for 'start'"},
+				"argv":    {Type: "array", Description: "No-shell alternative: [program, arg1, ...]", Items: &PropertyDef{Type: "string"}},
+				"cwd":     {Type: "string", Description: "Working directory"},
+				"job_id":  {Type: "string", Description: "Job id"},
+				"lines":   {Type: "integer", Description: "Lines for 'tail'"},
+				"await":   {Type: "boolean", Description: "'start' only: wait up to {await_s} and return the output"},
 			},
 			Required: []string{"action"},
 		},
 	},
 	{
 		Name:        "tool_manage",
-		Description: "On-demand tool modules ('files' = file_ops copy/move/delete/mkdir/list, 'handoff' = session memory, 'sql', 'hosts', 'docker'), kept out of the schema to save tokens: 'search' tools by keyword, 'list' modules, 'enable'/'disable' a module (sends list_changed), or 'call' a module tool directly without loading it.",
+		Description: "On-demand tool modules: 'search' by keyword, 'list', 'enable'/'disable' a module (updates the tool list), or 'call' a module tool without loading it. Modules: files, handoff, sql, hosts, docker.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
 				"action": {Type: "string", Description: "'search', 'list', 'enable', 'disable' or 'call'"},
-				"module": {Type: "string", Description: "Module name, e.g. 'sql'"},
-				"query":  {Type: "string", Description: "Keyword for 'search'"},
-				"tool":   {Type: "string", Description: "Tool name for 'call'"},
-				"params": {Type: "string", Description: "JSON arguments for 'call'"},
+				"module": {Type: "string", Description: "Module name"},
+				"query":  {Type: "string", Description: "Search keyword"},
+				"tool":   {Type: "string"},
+				"params": {Type: "string", Description: "JSON arguments for the call"},
 			},
 			Required: []string{"action"},
 		},

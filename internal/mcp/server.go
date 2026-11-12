@@ -60,8 +60,10 @@ type InputSchema struct {
 }
 
 type PropertyDef struct {
-	Type        string       `json:"type"`
-	Description string       `json:"description"`
+	Type string `json:"type"`
+	// omitempty: parâmetro cujo nome já diz tudo vai sem 'description' (o schema é imposto fixo por turno; ver
+	// tool_schemas.go). A descrição é opcional no MCP e nada no código a lê.
+	Description string       `json:"description,omitempty"`
 	Items       *PropertyDef `json:"items,omitempty"`
 }
 

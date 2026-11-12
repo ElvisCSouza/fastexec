@@ -47,7 +47,7 @@ func TimeoutTextsFor(clientName string) ClientTimeoutTexts {
 	}
 	return ClientTimeoutTexts{
 		ExecDefault:    "default limit 45 s",
-		ExecTimeoutArg: "Limit in ms (default 45000, max 50000 to stay under the client's 60 s cut); longer work goes to 'job'",
+		ExecTimeoutArg: "Limit in ms (default 45000, max 50000); longer work goes to 'job'",
 		JobOver:        "~30 s",
 		AwaitSeconds:   "40 s",
 	}
