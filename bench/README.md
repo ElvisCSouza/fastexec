@@ -16,7 +16,7 @@ o substitui na prática: é versionado, usa só dados sintéticos e um repositó
 ```powershell
 cd bench
 pwsh -NoProfile -File .\Initialize-Bench.ps1      # compila o medidor, baixa o cobra (ref fixa), congela o FastExec
-pwsh -NoProfile -File .\Run-Bench.ps1 -DryRun     # valida as 24 tarefas e os oráculos, sem gastar nada
+pwsh -NoProfile -File .\Run-Bench.ps1 -DryRun     # valida as 30 tarefas e os oráculos, sem gastar nada
 ```
 
 `Initialize-Bench.ps1` **congela** uma cópia do `fastexec.exe` pelo SHA256: um deploy no meio da rodada não troca o binário
@@ -28,7 +28,7 @@ medido. Para testar outro build: `.\Initialize-Bench.ps1 -FastExec C:\caminho\fa
 # fumaça barata (≈ US$ 0,13): confere que tudo mede
 pwsh -NoProfile -Command "& .\Run-Bench.ps1 -Tasks T0,T2 -Reps 1 -Tag smoke -MaxRunUsd 0.3 -MaxTotalUsd 0.6"
 
-# rodada completa: 24 tarefas x 2 braços x 5 repetições
+# rodada completa: 30 tarefas x 2 braços x 5 repetições
 pwsh -NoProfile -Command "& .\Run-Bench.ps1 -Reps 5 -Tag full1"
 
 pwsh -NoProfile -File .\Report.ps1 -Tag full1     # relatório em results\report-full1.md
@@ -56,6 +56,10 @@ As execuções usam a sua conta do Claude Code e contam no seu uso. Tarefas e br
 | M1–M2 | edição-multi | Go: renomear função em 8 arquivos; passar `context.Context` por 6 chamadas em 4 arquivos (compila e testa) |
 | M3–M4 | edição-multi | Python: parâmetro keyword-only e usos marcados; JS: `var`→`const`/`let` e `require`→`import` |
 | M5–M6 | edição-multi | 12 arquivos CRLF trocando 3 constantes byte a byte; `API_TIMEOUT` em JSON/YAML/.env preservando formato |
+| C1–C2 | contexto | **code2test**: quais testes alcançam uma função exportada (direto ou 1 nível indireto) |
+| C3 | contexto | **trace2code**: dada a pilha de um panic dentro do `cobra`, o arquivo:linha onde ele nasceu |
+| C4–C5 | contexto | **edit2ripple**: arquivos não-teste que precisam mudar junto com a assinatura de uma função |
+| C6 | contexto | **comment2context**: símbolos exportados do próprio arquivo citados num comentário `TODO`/`Deprecated` |
 
 Cada tarefa tem **oráculo objetivo** calculado na hora por programa independente das duas ferramentas, e o `-DryRun` prova que
 o oráculo aceita o gabarito e rejeita resposta errada. Adicionar tarefa: crie uma entrada `$TaskTable['Xn']` em `tasks\*.ps1`
@@ -65,6 +69,13 @@ A suíte **`edicao-multi`** (`tasks\edicao.ps1`, tarefas M1–M6) é auto-contid
 diretório temporário, sem rede. Onde o host tem a ferramenta da linguagem, o oráculo a executa de verdade (`go build`/`go
 test`/`go vet`, `node --check`, `pytest`); onde não tem, cai para o oráculo estrutural e avisa `[edicao-multi] … oráculo só
 estrutural`. Detalhes em [`docs/bench/spec-edicao.md`](../docs/bench/spec-edicao.md).
+
+A suíte **`contexto`** (`tasks\contexto.ps1`, tarefas C1–C6) é só leitura e cobre os quatro tipos de recuperação de contexto do
+Agent Retrieval Bench (code2test, trace2code, edit2ripple, comment2context) nos fixtures `cobra` e `hugo` de ref fixa. O
+gabarito sai de programa independente em `tools\contexto` (`go/ast`, sem heurística textual) e o alvo de cada tarefa é
+escolhido por regra determinista documentada no topo do arquivo, então o gabarito é estável entre execuções. A resposta é
+sempre uma lista (um item por linha) pontuada por conjunto (precisão e recall; `correct` exige os dois em 1,0). Detalhes em
+[`docs/bench/spec-contexto.md`](../docs/bench/spec-contexto.md).
 
 ## O que é medido por execução
 
