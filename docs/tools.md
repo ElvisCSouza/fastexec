@@ -77,6 +77,15 @@ Applied to stdout and stderr before the model sees them:
 6. A line longer than 500 characters keeps its start and end, or 150 characters around the searched term.
 7. Output over 64 KB keeps the first 16 KB and says so. The capture itself is bounded (first 3 MiB, last 1 MiB).
 
+### Elapsed time
+
+A command that takes 3 s or more ends with a short `[elapsed 50.3s]` line, past 2 minutes `[elapsed 2m05s]`. The line
+comes last: after `[exit N]`, after the guard/remediation notes and after any spilled output. The model no longer has to
+repeat the command wrapped in `date +%s%N` to learn how long it took (measured in the `P3` task of bench ciclo1b: two
+execs, 106 s and 12.9 k–28 k tokens, against one call and 54 s for the same work). Below 3 s nothing changes — the reply
+is byte for byte the one from before. A timeout keeps its own `[timeout after Xs]`, and a command promoted to a
+background job already says how long it ran.
+
 A search that finds nothing (exit 1, no output at all) answers `no result (exit 1)` instead of looking like a failure.
 If the same search wrote anything to stderr, that message is shown instead: `no result` is only for real silence.
 A non-zero exit is reported with its code and the first meaningful error line.
@@ -126,6 +135,10 @@ structure (headings, top-level keys, sections, with line numbers) so the next ca
 Big source files asked whole (or with a very large range) answer with their outline first; repeating that exact call
 returns the text, still inside the cap.
 
+A folder is not a file: the call is refused saying which tool to use instead (`file_ops` `list`, `code_outline`, or a
+search line through `exec`) — `pattern` looks inside a single file only. Before, the raw OS error came back, and on
+Windows that is the localized `Função incorreta`, which tells the model nothing.
+
 ## edit_file
 
 Exact text replacement: `target` → `replacement`, or several changes at once in `edits` (applied in order, all or
@@ -165,6 +178,10 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
   and left a short log (< 1 KB). When the exit code says the program does not exist (`python`, `pip`, `node`, `go`…),
   the reply carries the same `[FastExec FastHint]` the `exec` tool already gives. A job that is still running answers
   exactly as before, and `stop`ped jobs keep the old `STOPPED` reply.
+- A finished job says how long it lived: `ran 50.3s` in the `status`/`tail` header and in `list` (`LOCAL`) or in the
+  `[job] EXITED` line of a Linux job that ended after the fast-failure window. Before, `status`/`list` showed `up ...`
+  counted from the creation — still growing long after the process was gone — and the raw `systemctl` text never named
+  the duration. `start`/`wait` keep their existing `after Xs` wording.
 - Windows (`local`): a named Job Object per job, log file in `<data_dir>/jobs`, at most 12 running, 12 h lifetime,
   finished jobs kept 7 days; `stop` kills the whole tree.
 - Linux (local or remote): `systemd-run --user` units; logs from `journalctl`. Needs a systemd user instance.

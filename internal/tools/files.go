@@ -362,6 +362,12 @@ func readFileText(args ReadFileArgs, decode bool) (string, error) {
 		}
 		data, err := os.ReadFile(filePath)
 		if err != nil {
+			// Pasta não é arquivo, e o erro do SO não diz isso de forma útil (no Windows sai a string localizada do
+			// ERROR_INVALID_FUNCTION: "Função incorreta" — visto no M6 do ciclo2, onde o modelo pediu read_file de uma
+			// pasta com pattern e gastou um turno para descobrir que precisava de outro tool).
+			if st, serr := os.Stat(filePath); serr == nil && st.IsDir() {
+				return "", fmt.Errorf("%s is a folder, not a file: read_file opens one file. Use file_ops(op='list', path=...) for its entries, code_outline(path=...) for declarations, or exec with a search line (grep -rn, Select-String) to look inside it — 'pattern' searches within a single file", filePath)
+			}
 			return "", notFoundWithSuggestions(filePath, err)
 		}
 		text, note := string(data), ""

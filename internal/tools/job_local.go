@@ -23,9 +23,28 @@ func human(d time.Duration) string {
 	return d.Round(time.Second).String()
 }
 
+// jobAgeText: "up 4s" enquanto o job roda, "ran 50.3s" depois que ele terminou. O "up" vinha sempre do relógio da
+// criação, então um job que morreu em 3 s aparecia como "up 12m" meia hora depois — e nenhuma linha do status/list
+// dizia quanto ele tinha durado (o modelo ia procurar isso no log ou reexecutava o comando para medir).
+func jobAgeText(j *transport.LocalJobInfo) string {
+	if j.State == jobStateRunning {
+		return "up " + human(time.Since(j.Meta.CreatedAt))
+	}
+	life, _ := jobLife(j)
+	return ranText(life)
+}
+
+// ranSuffix: " | ran 50.3s" quando a vida do job é conhecida, para os cabeçalhos curtos que antes traziam só o rc.
+func ranSuffix(j *transport.LocalJobInfo) string {
+	if life, finished := jobLife(j); finished {
+		return " | " + ranText(life)
+	}
+	return ""
+}
+
 func statusLine(j *transport.LocalJobInfo) string {
-	return fmt.Sprintf("%s | id=%s | processes=%d | up %s | last log %s ago | log %d B | %s",
-		j.State, j.Meta.ID, j.Active, human(time.Since(j.Meta.CreatedAt)), human(time.Since(j.LastActivity)), j.LogSize, jobLabel(j.Meta))
+	return fmt.Sprintf("%s | id=%s | processes=%d | %s | last log %s ago | log %d B | %s",
+		j.State, j.Meta.ID, j.Active, jobAgeText(j), human(time.Since(j.LastActivity)), j.LogSize, jobLabel(j.Meta))
 }
 
 // handleLocalJob atende a tool `job` no host local (Windows): Job Object nomeado + log em arquivo (transport/localjob_windows.go).
@@ -88,7 +107,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		}
 		out = cleanOutput(out)
 		if j, jerr := transport.LocalJobStatus(args.JobID); jerr == nil && isQuickExit(j) {
-			head := fmt.Sprintf("%s rc=%s | id=%s | log %d B\n", j.State, rcText(j.Meta.ExitCode), j.Meta.ID, j.LogSize)
+			head := fmt.Sprintf("%s rc=%s | id=%s | log %d B\n", j.State, rcText(j.Meta.ExitCode)+ranSuffix(j), j.Meta.ID, j.LogSize)
 			if out == "" {
 				out = "(empty log)"
 			}
@@ -137,7 +156,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 				fmt.Fprintf(&b, "… +%d mais antigos\n", len(jobs)-maxRows)
 				break
 			}
-			fmt.Fprintf(&b, "%s | %s | %s | %s\n", j.Meta.ID, j.State, human(time.Since(j.Meta.CreatedAt)), jobLabel(j.Meta))
+			fmt.Fprintf(&b, "%s | %s | %s | %s\n", j.Meta.ID, j.State, jobAgeText(&j), jobLabel(j.Meta))
 		}
 		return strings.TrimRight(b.String(), "\n"), nil
 	}

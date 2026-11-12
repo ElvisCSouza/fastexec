@@ -263,6 +263,15 @@ func handleExec(args ExecArgs) (string, error) {
 	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
 		out = dedupExecOutput(args, label, out)
 	}
+	// Rodapé do tempo (elapsed.go) por ÚLTIMO: depois do '[exit N]', das notas de remediação e do dedup — se ele
+	// entrasse antes, o texto do tempo mudaria o hash a cada execução e o dedup de saídas idênticas nunca casaria.
+	if ft := elapsedFooter(time.Duration(res.Duration)*time.Millisecond, res.TimedOut); ft != "" {
+		out = strings.TrimRight(out, "\r\n")
+		if out != "" {
+			out += "\n"
+		}
+		out += ft
+	}
 	return withHostNote(bashNote, out, ferr), ferr
 }
 

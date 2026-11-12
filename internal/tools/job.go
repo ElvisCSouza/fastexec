@@ -103,6 +103,17 @@ func linuxExitHead(rc *int, life time.Duration, hasLife bool) string {
 	return head
 }
 
+// linuxExitRan: cabeçalho de um job Linux que terminou DEPOIS da largada. Fora da janela de falha rápida a resposta era
+// só o texto cru do systemctl/journalctl: o rc aparecia no meio do texto e a vida, em lugar nenhum — quem quisesse
+// saber quanto o job durou tinha de ler o log ou repetir o comando.
+func linuxExitRan(rc *int, life time.Duration, hasLife bool) string {
+	head := fmt.Sprintf("[job] EXITED rc=%s", rcText(rc))
+	if hasLife {
+		head += " | " + ranText(life)
+	}
+	return head + "\n"
+}
+
 // linuxExitTail: rc, vida e log de um job Linux que morreu na largada.
 func linuxExitTail(rc *int, life time.Duration, hasLife bool, label, log string) string {
 	var b strings.Builder
@@ -253,6 +264,10 @@ func handleJob(args JobArgs) (string, error) {
 			// terminou na largada: rc e log junto do status, sem precisar de 'tail'
 			return strings.TrimRight(before, "\n") + "\n" + linuxExitTail(rc, life, hasLife, args.Command, log), nil
 		}
+		if state == "EXITED" {
+			// terminou depois da largada: o rc e a vida vêm na frente, do texto cru do systemctl
+			return linuxExitRan(rc, life, hasLife) + before, nil
+		}
 		return before, nil
 
 	case "list", "ls":
@@ -294,6 +309,10 @@ func handleJob(args JobArgs) (string, error) {
 				rep += "\n" + h
 			}
 			return rep, nil
+		}
+		if state == "EXITED" {
+			// terminou depois da largada: mesmo cabeçalho do status, com a vida que o log não diz
+			return linuxExitRan(rc, life, hasLife) + before, nil
 		}
 		return before, nil
 

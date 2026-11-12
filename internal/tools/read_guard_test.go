@@ -34,3 +34,21 @@ func TestEditFileOnBigFileKeepsEverything(t *testing.T) {
 		t.Fatalf("pattern read must reach the end of the file: %q", out)
 	}
 }
+
+// TestReadFileFolderTellsWhatToUse: read_file de uma pasta respondia o erro cru do SO — no Windows, a string
+// localizada "Função incorreta" (ERROR_INVALID_FUNCTION), que não diz nada ao modelo. Visto no M6 do ciclo2: o modelo
+// pediu read_file de uma pasta com pattern e gastou um turno até cair no exec grep.
+func TestReadFileFolderTellsWhatToUse(t *testing.T) {
+	_, err := HandleReadFile(ReadFileArgs{Path: t.TempDir(), Pattern: "x"})
+	if err == nil {
+		t.Fatal("read_file de pasta deveria falhar")
+	}
+	if !strings.Contains(err.Error(), "is a folder, not a file") {
+		t.Fatalf("erro sem orientação: %v", err)
+	}
+	for _, want := range []string{"file_ops", "code_outline", "exec"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("mensagem deveria citar %s: %v", want, err)
+		}
+	}
+}
