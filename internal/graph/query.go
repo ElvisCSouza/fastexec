@@ -50,10 +50,20 @@ func lastName(sym string) string {
 }
 
 func indexNote(st Stats) string {
+	return IndexNote("", st)
+}
+
+// IndexNote é o rodapé de indexação compartilhado por tool e CLI; com a raiz, os Markdown rastreados aparecem na
+// contagem (é o que explica uma linha "docs:" aparecer depois).
+func IndexNote(root string, st Stats) string {
 	if st.Changed == 0 && st.Removed == 0 {
 		return ""
 	}
-	return fmt.Sprintf("\n[index] %d file(s) reindexed, %d removed in %d ms (%d files tracked)", st.Changed, st.Removed, st.Took.Milliseconds(), st.Files)
+	docs := ""
+	if root != "" && st.Docs > 0 {
+		docs = fmt.Sprintf(", %d docs", st.Docs)
+	}
+	return fmt.Sprintf("\n[index] %d file(s) reindexed, %d removed in %d ms (%d files tracked%s)", st.Changed, st.Removed, st.Took.Milliseconds(), st.Files, docs)
 }
 
 func ready(root string) (*sql.DB, Stats, error) {
@@ -165,8 +175,9 @@ func Callers(root, symbol string, max, depth int) (string, error) {
 			fmt.Fprintf(&b, "- %s:%d%s%s (%s)\n", f, line, label, via, rel)
 		}
 	}
+	docs := docMentionsOf(d, repoKey(root), name, st.Docs > 0)
 	if total == 0 {
-		return fmt.Sprintf("(no callers of '%s' in %d indexed files)", name, st.Files) + indexNote(st), nil
+		return fmt.Sprintf("(no callers of '%s' in %d indexed files)", name, st.Files) + docs + indexNote(st), nil
 	}
 	if total > max {
 		fmt.Fprintf(&b, "... %d more (raise 'max')\n", total-max)
@@ -193,7 +204,7 @@ func Callers(root, symbol string, max, depth int) (string, error) {
 	if total > 0 {
 		tail += deepHint(d, root, name, max, tests, others)
 	}
-	return head + b.String() + tail + indexNote(st), nil
+	return head + b.String() + tail + docs + indexNote(st), nil
 }
 
 // Definition mostra arquivo, intervalo de linhas e assinatura de cada declaração com esse nome.
@@ -223,7 +234,9 @@ func Definition(root, symbol string) (string, error) {
 	}
 	rows.Close()
 	if n > 0 {
-		return fmt.Sprintf("=== definition of '%s' ===\n%s", name, strings.TrimRight(b.String(), "\n")) + indexNote(st), nil
+		// documentação que cita o símbolo: a resposta a "onde isso é documentado" sem abrir MD nenhum
+		docs := docMentionsOf(d, key, name, st.Docs > 0)
+		return fmt.Sprintf("=== definition of '%s' ===\n%s", name, strings.TrimRight(b.String(), "\n")) + docs + indexNote(st), nil
 	}
 	var similar []string
 	if r2, err := d.Query(`SELECT DISTINCT name FROM code_symbols WHERE repo_root = ? AND name LIKE ? LIMIT 8`, key, "%"+name+"%"); err == nil {
@@ -263,8 +276,13 @@ func Impact(root, target string, max int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// documentação que cita o arquivo (link, wikilink ou menção de caminho)
+	docs := ""
+	if isFile {
+		docs = docCitedBy(d, key, rel, st.Docs > 0)
+	}
 	if len(uses) == 0 {
-		return fmt.Sprintf("(nothing in %d indexed files depends on '%s')", st.Files, rel) + indexNote(st), nil
+		return fmt.Sprintf("(nothing in %d indexed files depends on '%s')", st.Files, rel) + docs + indexNote(st), nil
 	}
 	files := make([]string, 0, len(uses))
 	for f := range uses {
@@ -279,7 +297,7 @@ func Impact(root, target string, max int) (string, error) {
 		}
 		fmt.Fprintf(&b, "- %s (%s)\n", f, strings.Join(uses[f], ", "))
 	}
-	return fmt.Sprintf("=== impact of '%s' ===\n%sTotal: %d files.", rel, b.String(), len(files)) + indexNote(st), nil
+	return fmt.Sprintf("=== impact of '%s' ===\n%sTotal: %d files.", rel, b.String(), len(files)) + docs + indexNote(st), nil
 }
 
 // fileTarget diz se target é um arquivo indexado do repositório e devolve o caminho relativo.
@@ -321,7 +339,9 @@ func symbolImpact(d *sql.DB, key, name string) (map[string][]string, error) {
 
 func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 	exported := map[string]bool{}
-	rows, err := d.Query(`SELECT name, is_exported FROM code_symbols WHERE repo_root = ? AND file_path = ? AND kind != 'route'`, key, rel)
+	// seções de documentação não são símbolos do arquivo: quem cita um Markdown aparece pela linha "docs:", não
+	// como "uses:" de cabeçalho
+	rows, err := d.Query(`SELECT name, is_exported FROM code_symbols WHERE repo_root = ? AND file_path = ? AND kind NOT IN ('route', '`+KindDocSection+`')`, key, rel)
 	if err != nil {
 		return nil, err
 	}
