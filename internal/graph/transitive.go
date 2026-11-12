@@ -96,7 +96,7 @@ func levelSites(d *sql.DB, root string, targets []string, declCache map[string][
 					AND t.start_line <= e.source_line AND t.end_line >= e.source_line
 				ORDER BY t.end_line - t.start_line LIMIT 1), '')
 		FROM code_edges e
-		WHERE e.repo_root = ? AND e.target_symbol IN (`+ph+`) AND e.relation_type IN ('calls','references')
+		WHERE e.repo_root = ? AND e.target_symbol IN (`+ph+`) AND e.relation_type IN ('calls','references','renders')
 		ORDER BY e.source_file, e.source_line`, args...)
 	if err != nil {
 		return nil, err

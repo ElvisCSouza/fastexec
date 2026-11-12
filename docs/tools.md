@@ -223,8 +223,10 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
 ## code_outline
 
 Declarations of a source file as `L<line>: <signature>`, or, for a folder, where a `symbol` is declared (skips
-dependency and build folders). Go, C/C++, C#, TypeScript/JavaScript, Python, shell, PowerShell. Use it before reading a
-file to jump to the right lines.
+dependency and build folders). Go, C/C++, C#, TypeScript/JavaScript, Python, shell, PowerShell, CSS/SCSS/LESS, HTML
+and Razor (`.razor`/`.cshtml`). In a stylesheet a declaration is a class or id selector (one per name, so `.a, .b`
+gives two) and each `--var`; in HTML/Razor it is an `id`, and in JSX/TSX a component or a custom hook. Use it before
+reading a file to jump to the right lines.
 
 Markdown is accepted too: the output is its sections, one per heading, named by the heading path (`README.md > Install >
 Linux`) and rendered as `L<start>-L<end>: <heading>`. When the file has a reference that no longer lands — a link to a
@@ -277,6 +279,26 @@ Go is parsed with `go/ast`; C/C++, C#, TypeScript/JavaScript, Python, shell and 
 matched by name without type resolution (in C/C++: function and method definitions, classes, structs, unions,
 enums, `#define`, `using` aliases, `#include`; prototypes are not declarations).
 
+Front-end, all deterministic (no LLM, no guessing at a value that is not a literal):
+
+- in `.tsx`/`.jsx`, a function or arrow whose name starts with a capital and whose body returns JSX is a `component`
+  (its signature carries the props when they are typed), and `useX` with a capital X is a `hook`; `<Card />`,
+  `<Card.Sub />` and `<My.Ns.Widget />`
+  create a `renders` edge towards the last name segment, so `callers` of `Card` lists what renders it next to what
+  imports it. `className="a b"` / `className={'a b'}` (and `class=` in Preact/SVG) reference the classes; a template
+  literal or a `clsx()` call is skipped rather than invented;
+- in `.css`/`.scss`/`.less`, every `.class` and `#id` selector is a node (line range = its block) and every `--x` is a
+  `css_var` node; `var(--x)` and `className` are the edges. A stylesheet name is global (it is bound by `<link>` or by
+  `className`, not by an import), so `impact` of the file lists whoever uses a class it declares even without
+  importing it, and `callers` of `card` lists the files using that class;
+- in `.html`/`.htm`, ids are nodes, classes are references, and a local `<script src>`/`<link href>` is a `html_ref`
+  edge towards the file (URL, `data:` and interpolated paths are dropped), so `impact` of `app.js` names the page
+  that loads it;
+- in `.razor`/`.cshtml`, `<Component>` tags give `renders` edges (Blazor) and the `@code`/`@functions` body is ignored
+  as markup (it is C#).
+
+`node_modules`, `dist`, `build`, `vendor`, `.next` and `*.min.*` are never indexed.
+
 For C# (`.cs`, plus `.csproj` and `.sln`) the scanner reads namespaces (file-scoped and block), classes, structs,
 interfaces, records, enums and delegates, methods, constructors, properties and `const`/`static` fields; attributes,
 comments, strings (verbatim, raw and interpolated) and expression bodies yield no symbol. Edges: `Name(`/`.Name(`,
@@ -284,6 +306,7 @@ comments, strings (verbatim, raw and interpolated) and expression bodies yield n
 `Project` of a `.sln`) is a `projref` edge, so `impact` on a project lists the projects that depend on it. `bin/`,
 `obj/`, `*.g.cs`, `*.Designer.cs` and `*.AssemblyInfo.cs` stay out of the index. `impact` on a `.cs` file only brings
 a file from another namespace when that file has a `using` for it — the same namespace always counts.
+
 Only repositories (a `.git` folder) are indexed, each in isolation, up to 10 000 files. Index:
 `<data_dir>/telemetry/graph.db`. CLI: `fastexec graph clean` and `fastexec graph repos`.
 
