@@ -24,7 +24,26 @@
     },
     "hugo": {
       "url": "https://github.com/gohugoio/hugo",
-      "ref": "v0.139.5" }
+      "ref": "v0.139.5" },
+    "serilog": {
+      "url": "https://github.com/serilog/serilog",
+      "ref": "v3.1.1" },
+    "fluentvalidation": {
+      "url": "https://github.com/FluentValidation/FluentValidation",
+      "ref": "11.9.2" }
+  },
+  "dotnet": {
+    "exe": "W:\\Data\\dotnet-sdk\\sdk\\dotnet.exe",
+    "root": "W:\\Data\\dotnet-sdk\\sdk",
+    "sdk_version": "8.0.428",
+    "nuget_packages": "W:\\nuget\\packages",
+    "projects": {
+      "serilog": { "project": "src\\Serilog\\Serilog.csproj", "tfm": "netstandard2.0", "assembly": "Serilog", "lib": "src\\Serilog" },
+      "fluentvalidation": { "project": "src\\FluentValidation\\FluentValidation.csproj", "tfm": "netstandard2.0", "assembly": "FluentValidation", "lib": "src\\FluentValidation" }
+    }
+  },
+  "generated": {
+    "docs": "docs"
   }
 }
 
