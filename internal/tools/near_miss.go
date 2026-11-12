@@ -85,9 +85,12 @@ func nearMiss(content, target string) string {
 
 func collapseSpaces(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-func clip(s string) string {
-	if r := []rune(s); len(r) > 120 {
-		return string(r[:120]) + "…"
+func clip(s string) string { return clipAt(s, 120) }
+
+// clipAt corta em n runas (nunca no meio de um caractere) e marca o corte com "…".
+func clipAt(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
 	}
 	return s
 }

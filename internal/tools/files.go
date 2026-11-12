@@ -723,6 +723,8 @@ func handleEditFile(args EditFileArgs) (string, error) {
 	newContent := content
 	oldBytes, newBytes := 0, 0
 	var notes []string
+	// applied: em que posição do conteúdo final cada troca começou (a prova citada na resposta)
+	applied := make([]int, 0, len(ops))
 	for i, op := range ops {
 		label := "target"
 		if len(ops) > 1 {
@@ -761,11 +763,23 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		if n > 1 {
 			notes = append(notes, fmt.Sprintf("%s matched %d times; only the first was changed", label, n))
 		}
-		newContent = strings.Replace(newContent, t, r, 1)
+		at := strings.Index(newContent, t)
+		newContent = newContent[:at] + r + newContent[at+len(t):]
+		// as posições já anotadas andam junto quando a troca muda o tamanho do que vem antes delas
+		if d := len(r) - len(t); d != 0 {
+			end := at + len(t)
+			for j := range applied {
+				if applied[j] >= end {
+					applied[j] += d
+				}
+			}
+		}
+		applied = append(applied, at)
 		oldBytes += len(t)
 		newBytes += len(r)
 	}
 
+	proof := editProof(newContent, applied, enc)
 	if newContent, err = encodeForWrite(newContent, enc); err != nil {
 		return "", err
 	}
@@ -781,6 +795,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 	}
 
 	msg := fmt.Sprintf("[edit_file] %d change(s) applied (%d -> %d bytes) in %s.", len(ops), oldBytes, newBytes, args.Path)
+	msg += proof
 	if len(notes) > 0 {
 		msg += " Note: " + strings.Join(notes, "; ") + "."
 	}

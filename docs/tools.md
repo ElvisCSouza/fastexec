@@ -130,6 +130,19 @@ returns the text, still inside the cap.
 Exact text replacement: `target` → `replacement`, or several changes at once in `edits` (applied in order, all or
 nothing). LF/CRLF line endings are matched to the file. Use it for any change to an existing file.
 
+The reply proves the edit, so there is no reason to re-read the file to check it:
+
+```
+[edit_file] 1 change(s) applied (15 -> 15 bytes) in W:\src\Config.cs.
+L305: MaxRetries = 5;
+line endings kept: CRLF
+```
+
+`L<n>` is the 1-based line of the final content where the replacement landed, followed by that line (cut at ~120
+characters). One line per change, up to 5; beyond that the count says `(and N more)`. The last line names the line
+ending style kept by the file (`CRLF`, `LF`, `mixed` or `none`), plus the encoding when it is not plain UTF-8
+(`encoding kept: Windows-1252`, `UTF-16LE`, `UTF-8 BOM`). Nothing about what is written changes.
+
 ## write_file
 
 Creates a file, optionally `atomic` (temp file + rename). An existing non-empty file is refused unless
