@@ -59,7 +59,7 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		if doc {
 			return outlineDoc("", args.Path, []byte(content), args.Symbol, max), nil
 		}
-		return outlineSource([]byte(content), lang, args.Symbol, max), nil
+		return outlineSource(args.Path, []byte(content), lang, args.Symbol, max), nil
 	}
 
 	path := expandHome(args.Path)
@@ -88,7 +88,7 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		out := outlineSource(src, lang, args.Symbol, max)
+		out := outlineSource(path, src, lang, args.Symbol, max)
 		if args.Symbol != "" && strings.HasPrefix(out, "(no declaration matching") {
 			out += outlineElsewhere(path, args.Symbol, max)
 		}
@@ -174,7 +174,7 @@ func scanFileFor(path string, lang *codescan.Lang, symbol string) ([]codescan.De
 	if symbol != "" && !bytes.Contains(bytes.ToLower(src), []byte(strings.ToLower(symbol))) {
 		return nil, nil
 	}
-	decls, _ := codescan.Scan(src, lang)
+	decls := outlineDecls(path, src, lang)
 	return decls, nil
 }
 
@@ -192,12 +192,29 @@ func filterDecls(decls []codescan.Decl, symbol string) []codescan.Decl {
 	return out
 }
 
+// outlineDecls: declarações de um arquivo para o code_outline. C#/.csproj/.sln têm parser próprio no internal/graph
+// (namespace, propriedades, campos, projeto); as demais linguagens seguem nos scanners do codescan.
+func outlineDecls(path string, src []byte, lang *codescan.Lang) []codescan.Decl {
+	if graph.IsCSharp(path) {
+		if decls, ok := graph.ParseCSharp(path, src); ok {
+			return decls
+		}
+	}
+	decls, _ := codescan.Scan(src, lang)
+	return decls
+}
+
 // outlineSource renders one file as "L<start>-L<end>: <declaration>". The end
 // comes from the scanner (balanced braces, or indentation in Python); when the
 // scanner has none, the line before the next declaration is used.
-func outlineSource(src []byte, lang *codescan.Lang, symbol string, max int) string {
-	decls, _ := codescan.Scan(src, lang)
-	ends := declEnds(src, decls)
+func outlineSource(path string, src []byte, lang *codescan.Lang, symbol string, max int) string {
+	decls := outlineDecls(path, src, lang)
+	var ends map[int]int
+	if graph.IsCSharp(path) {
+		ends = map[int]int{} // o parser de C# carimba o fim de cada bloco; o palpite pelo vizinho só piora
+	} else {
+		ends = declEnds(src, decls)
+	}
 	for _, d := range decls {
 		if d.EndLine > d.Line {
 			ends[d.Line] = d.EndLine
@@ -275,7 +292,7 @@ func outlineTree(root, symbol string, max int) (string, error) {
 			}
 			return nil
 		}
-		if codescan.LangFor(p) == nil || isNoiseFile(d.Name()) {
+		if codescan.LangFor(p) == nil || isNoiseFile(d.Name()) || codescan.IsNoiseCSharp(p) {
 			return nil
 		}
 		if info, err := d.Info(); err != nil || info.Size() > outlineMaxFileSize {

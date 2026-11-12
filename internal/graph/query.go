@@ -354,19 +354,40 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 	}
 	rows.Close()
 
+	isGo := strings.HasSuffix(rel, ".go")
+	isCS := strings.HasSuffix(rel, ".cs")
+
 	importers := map[string]bool{}
-	rows, err = d.Query(`SELECT DISTINCT source_file, target_symbol FROM code_edges
-		WHERE repo_root = ? AND relation_type = 'imports' AND source_file != ?`, key, rel)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var src, imp string
-		if rows.Scan(&src, &imp) == nil && importResolves(src, imp, rel) {
-			importers[src] = true
+	if !isCS { // em C# o import é o NAMESPACE do arquivo, não um caminho: a visibilidade sai de loadCSScopes
+		rows, err = d.Query(`SELECT DISTINCT source_file, target_symbol FROM code_edges
+			WHERE repo_root = ? AND relation_type = 'imports' AND source_file != ?`, key, rel)
+		if err != nil {
+			return nil, err
 		}
+		for rows.Next() {
+			var src, imp string
+			if rows.Scan(&src, &imp) == nil && importResolves(src, imp, rel) {
+				importers[src] = true
+			}
+		}
+		rows.Close()
 	}
-	rows.Close()
+
+	var cs *csScopes
+	targetNS := globalNS
+	if isCS {
+		if cs, err = loadCSScopes(d, key); err != nil {
+			return nil, err
+		}
+		targetNS = cs.namespacesOf(rel)
+	}
+
+	// Em C# o uso de um tipo costuma ser a herança/interface (`: Base, IFoo`), e não uma chamada: sem essas arestas o
+	// impact de um arquivo de tipos sairia vazio.
+	rels := "'calls','references'"
+	if isCS {
+		rels = "'calls','references','inherits','implements'"
+	}
 
 	used := map[string]map[string]bool{}
 	if len(exported) > 0 {
@@ -378,20 +399,22 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 			marks = append(marks, "?")
 		}
 		rows, err = d.Query(`SELECT DISTINCT source_file, target_symbol FROM code_edges WHERE repo_root = ? AND source_file != ?
-			AND relation_type IN ('calls','references') AND target_symbol IN (`+strings.Join(marks, ",")+`)`, names...)
+			AND relation_type IN (`+rels+`) AND target_symbol IN (`+strings.Join(marks, ",")+`)`, names...)
 		if err != nil {
 			return nil, err
 		}
-		isGo := strings.HasSuffix(rel, ".go")
 		for rows.Next() {
 			var src, sym string
 			if rows.Scan(&src, &sym) != nil {
 				continue
 			}
 			visible := importers[src]
-			if isGo {
+			switch {
+			case isGo:
 				samePkg := strings.HasSuffix(src, ".go") && path.Dir(src) == path.Dir(rel)
 				visible = samePkg || (importers[src] && exported[sym])
+			case isCS:
+				visible = cs.visible(src, exported[sym], targetNS)
 			}
 			if !visible {
 				continue
@@ -413,14 +436,157 @@ func fileImpact(d *sql.DB, key, rel string) (map[string][]string, error) {
 		sort.Strings(list)
 		out[src] = []string{"uses: " + strings.Join(list, ", ")}
 	}
-	if !strings.HasSuffix(rel, ".go") {
+	if !isGo && !isCS {
 		for src := range importers {
 			if _, ok := out[src]; !ok {
 				out[src] = []string{"imports"}
 			}
 		}
 	}
+	deps, err := projectDependents(d, key, rel)
+	if err != nil {
+		return nil, err
+	}
+	for src, why := range deps {
+		if _, ok := out[src]; !ok {
+			out[src] = []string{why}
+		}
+	}
 	return out, nil
+}
+
+// csScopes reúne, por arquivo, os namespaces que ele declara e os que importa (`using`). É o que substitui a
+// resolução de import por caminho: em C# o `using` aponta para um namespace, nunca para um arquivo.
+type csScopes struct {
+	ns      map[string]map[string]bool
+	imports map[string]map[string]bool
+}
+
+// globalNS: arquivo sem namespace declarado vive no namespace global, que é um namespace como outro qualquer
+// (dois arquivos sem namespace se enxergam).
+var globalNS = map[string]bool{"": true}
+
+func loadCSScopes(d *sql.DB, key string) (*csScopes, error) {
+	cs := &csScopes{ns: map[string]map[string]bool{}, imports: map[string]map[string]bool{}}
+	rows, err := d.Query(`SELECT file_path, name FROM code_symbols WHERE repo_root = ? AND kind = 'namespace'`, key)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var f, n string
+		if rows.Scan(&f, &n) == nil {
+			addSet(cs.ns, f, n)
+		}
+	}
+	rows.Close()
+	if rows, err = d.Query(`SELECT source_file, target_symbol FROM code_edges
+		WHERE repo_root = ? AND relation_type = 'imports'`, key); err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var f, n string
+		if rows.Scan(&f, &n) == nil {
+			addSet(cs.imports, f, n)
+		}
+	}
+	return cs, nil
+}
+
+func addSet(m map[string]map[string]bool, k, v string) {
+	if m[k] == nil {
+		m[k] = map[string]bool{}
+	}
+	m[k][v] = true
+}
+
+func (c *csScopes) namespacesOf(file string) map[string]bool {
+	if s := c.ns[file]; len(s) > 0 {
+		return s
+	}
+	return globalNS
+}
+
+// visible: o mesmo namespace enxerga tudo (internal incluído); de fora, só o que é público — e só se o namespace do
+// alvo estiver entre os usings do arquivo (é a regra do C#, sem resolução de tipos).
+func (c *csScopes) visible(src string, exported bool, target map[string]bool) bool {
+	if intersects(c.namespacesOf(src), target) {
+		return true
+	}
+	return exported && intersects(c.imports[src], target)
+}
+
+func intersects(a, b map[string]bool) bool {
+	for k := range a {
+		if b[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// projectDependents: projetos .csproj/.sln que referenciam o projeto dono do alvo. A aresta 'projref' vai do projeto
+// que referencia para o NOME do projeto referenciado, então basta reduzir o alvo ao nome do projeto que o contém.
+func projectDependents(d *sql.DB, key, rel string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, owner := range projectOwners(d, key, rel) {
+		rows, err := d.Query(`SELECT DISTINCT source_file FROM code_edges
+			WHERE repo_root = ? AND relation_type = 'projref' AND target_symbol = ?`, key, owner)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var f string
+			if rows.Scan(&f) == nil && f != rel {
+				out[f] = "projref: " + owner
+			}
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
+// projectOwners: nome do projeto de um arquivo — ele mesmo, se for .csproj/.sln, senão o projeto do diretório mais
+// próximo acima dele (o que contém o arquivo). Vazio para arquivo fora de projeto.
+func projectOwners(d *sql.DB, key, rel string) []string {
+	base := path.Base(rel)
+	switch strings.ToLower(path.Ext(base)) {
+	case ".csproj", ".sln":
+		return []string{strings.TrimSuffix(base, path.Ext(base))}
+	case ".cs":
+	default:
+		return nil
+	}
+	dir := path.Dir(rel)
+	if dir == "." {
+		dir = ""
+	}
+	rows, err := d.Query(`SELECT file_path, name FROM code_symbols WHERE repo_root = ? AND kind = 'project'`, key)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	best, owners := -1, []string{}
+	for rows.Next() {
+		var f, n string
+		if rows.Scan(&f, &n) != nil {
+			continue
+		}
+		pd := path.Dir(f)
+		if pd == "." {
+			pd = ""
+		}
+		if dir != pd && pd != "" && !strings.HasPrefix(dir, pd+"/") {
+			continue
+		}
+		switch {
+		case len(pd) > best:
+			best, owners = len(pd), []string{n}
+		case len(pd) == best:
+			owners = append(owners, n)
+		}
+	}
+	return owners
 }
 
 // importResolves diz se o import imp, feito em src, aponta para o arquivo f (caminhos relativos ao repositório).

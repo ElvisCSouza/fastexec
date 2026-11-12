@@ -223,8 +223,8 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
 ## code_outline
 
 Declarations of a source file as `L<line>: <signature>`, or, for a folder, where a `symbol` is declared (skips
-dependency and build folders). Go, C/C++, TypeScript/JavaScript, Python, shell, PowerShell. Use it before reading a file
-to jump to the right lines.
+dependency and build folders). Go, C/C++, C#, TypeScript/JavaScript, Python, shell, PowerShell. Use it before reading a
+file to jump to the right lines.
 
 Markdown is accepted too: the output is its sections, one per heading, named by the heading path (`README.md > Install >
 Linux`) and rendered as `L<start>-L<end>: <heading>`. When the file has a reference that no longer lands — a link to a
@@ -273,9 +273,17 @@ The line is absent — and the rest of the output is byte for byte what it alway
 documentation, so nothing grows for the code-only case. Only Markdown inside a Git repository is indexed
 (`node_modules`, `vendor`, `.git` and the like are skipped, as is any file over 512 KB).
 
-Go is parsed with `go/ast`; C/C++, TypeScript/JavaScript, Python, shell and PowerShell with line scanners,
+Go is parsed with `go/ast`; C/C++, C#, TypeScript/JavaScript, Python, shell and PowerShell with line scanners,
 matched by name without type resolution (in C/C++: function and method definitions, classes, structs, unions,
 enums, `#define`, `using` aliases, `#include`; prototypes are not declarations).
+
+For C# (`.cs`, plus `.csproj` and `.sln`) the scanner reads namespaces (file-scoped and block), classes, structs,
+interfaces, records, enums and delegates, methods, constructors, properties and `const`/`static` fields; attributes,
+comments, strings (verbatim, raw and interpolated) and expression bodies yield no symbol. Edges: `Name(`/`.Name(`,
+`new Type(`, `using` and the base list (`: Base, IFoo` → `inherits`/`implements`). `<ProjectReference>` (and each
+`Project` of a `.sln`) is a `projref` edge, so `impact` on a project lists the projects that depend on it. `bin/`,
+`obj/`, `*.g.cs`, `*.Designer.cs` and `*.AssemblyInfo.cs` stay out of the index. `impact` on a `.cs` file only brings
+a file from another namespace when that file has a `using` for it — the same namespace always counts.
 Only repositories (a `.git` folder) are indexed, each in isolation, up to 10 000 files. Index:
 `<data_dir>/telemetry/graph.db`. CLI: `fastexec graph clean` and `fastexec graph repos`.
 

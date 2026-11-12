@@ -94,6 +94,50 @@ func TestCodeOutlinePythonShellPS(t *testing.T) {
 	}
 }
 
+func TestCodeOutlineCSharp(t *testing.T) {
+	src := strings.Join([]string{
+		"using Core.Models;",
+		"",
+		"namespace MyApp.Services;",
+		"",
+		"public partial class PedidoService : IRepositorio<Pedido>",
+		"{",
+		"    public int Id { get; set; }",
+		"",
+		"    public void Salvar(Pedido item)",
+		"    {",
+		"        // Comentario: Falso();",
+		"        Gravar();",
+		"    }",
+		"",
+		"    private void Gravar() { }",
+		"}",
+		"",
+	}, "\n")
+	got := outlineOf(t, "PedidoService.cs", src, "")
+	for _, want := range []string{
+		"L3-L16: namespace MyApp.Services",
+		"L5-L16: public partial class PedidoService : IRepositorio<Pedido>",
+		"L7: public int Id { get; set; }",
+		"L9-L13: public void Salvar(Pedido item)",
+		"L15: private void Gravar() { }",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("outline cs: faltou %q em:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Falso") {
+		t.Errorf("outline cs: comentário virou declaração:\n%s", got)
+	}
+	if got := outlineOf(t, "PedidoService.cs", src, "salvar"); got != "L9-L13: public void Salvar(Pedido item)" {
+		t.Errorf("outline cs com filtro: %q", got)
+	}
+	proj := outlineOf(t, "Core.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>", "")
+	if !strings.HasPrefix(proj, "L1-L5: csproj ") || !strings.HasSuffix(proj, "Core.csproj") {
+		t.Errorf("outline csproj: %q", proj)
+	}
+}
+
 func TestCodeOutlineSymbolFilterAndErrors(t *testing.T) {
 	src := "package x\nfunc HandleReadFile() {}\nfunc HandleWriteFile() {}\nfunc other() {}\n"
 	if got := outlineOf(t, "a.go", src, "readfile"); got != "L2: func HandleReadFile() {}" {

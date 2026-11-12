@@ -15,6 +15,9 @@ import (
 
 // ParseFile devolve declarações e referências; ok=false para linguagem não suportada ou Go ilegível.
 func ParseFile(rel string, src []byte) ([]codescan.Decl, []codescan.Ref, bool) {
+	if IsCSharp(rel) {
+		return parseCSharp(rel, src) // C# tem parser próprio (csharp.go): léxico e escopos são outros
+	}
 	l := codescan.LangFor(rel)
 	if l == nil {
 		return nil, nil, false
