@@ -97,7 +97,7 @@ Each one tells the model what it did and what to do next time.
 | Pattern | What happens |
 |---|---|
 | `cat file`, `type file`, `Get-Content file` | Served by `read_file` (no process) |
-| `ls`, `dir` of a folder | Served by `file_ops list` |
+| `ls`, `dir` of a folder | Served by `file_ops list` — except the recursive forms (`ls -R`, `dir /s`), which run and come back grouped (see *Grouped listings*) |
 | `sleep N` / `timeout N` | Up to 15 s: done with a native timer. Longer: refused, with a pointer to `job` |
 | `cd <host default cwd> && ...` | The redundant `cd` is removed |
 | `grep`, `rg`, `findstr`, `Select-String` (also inside `pwsh -Command`) | Treated as searches by the rows below |
@@ -118,8 +118,44 @@ Each one tells the model what it did and what to do next time.
 | `find`/`sort` from System32 used with Unix flags (`-printf`, `-name`, `-rn`) | Same hint, saying the binary that ran is the Windows one and takes different flags |
 | Git Bash path (`/w/Data/x`, `/c/tmp/a.sh`) in `command` or `cwd` on the Windows `local` host | Translated to the Windows drive (`W:\Data\x`) before running, with a `[FastExec Auto-Remediation]` note showing what changed; skipped when the line hands the text to `bash`/`sh`/`wsl`, and skipped for the `command` when the line is bash-bound (there the POSIX path is the right one and only `cwd` is translated) |
 | Windows drive path (`W:\Data\x`) in a bash-bound line | Translated the other way (`/w/Data/x`) before running, because unquoted `W:\x` loses its backslashes in bash; noted on the output |
+| Line with unambiguous PowerShell syntax (`$env:X=...`, `$x = ...` starting a stage, the call operator `& '...'`/`& "..."`, `-ErrorAction` and friends, or a cmdlet like `Get-*`/`Set-*`/`Select-String`/`ForEach-Object`) on the Windows `local` host | `pwsh -NoProfile -Command <line>` is chosen **before** running — and before the bash plan, because `$env:X=1; & "C:\...\x.exe" build` looks Unix enough to die in bash with `syntax error near unexpected token '&'`. Same cwd, timeout, exit code and stderr. The output carries `[FastExec Auto-Remediation] PowerShell syntax detected: ran in pwsh. Next time pass argv ['pwsh','-NoProfile','-Command','<line>'].` A mixed line (any stage using a Unix-only tool, like `grep x . \| Select-Object -First 5`) is left on its old path. `powershell` is used when `pwsh` is not installed; with neither, nothing changes |
+| Recursive file listing (`dir /s /b <glob>`, `ls -R`, `find . -name '<glob>'`) of more than 80 files | Only reformatted, never shortened: one line per directory with its count and every name kept — `src\Serilog\Core\ (12): A.cs B.cs ...` — plus the footer `[FastExec] listing grouped by directory; --raw returns the original lines.` See *Grouped listings* |
 
 `FASTEXEC_NO_SEARCH_GUARD=1` disables the search and broad-root guards.
+
+### Reading the command, per tool
+
+Every text search the graph can answer is read the same way, whatever the tool: `grep`/`egrep`/`fgrep`, `rg`, `git grep`,
+`findstr` and `Select-String`/`sls` each have their own flag reader and all of them feed one internal query, so the
+answer above is produced by one path instead of one per tool. Things that do not survive the reading fall back to the
+real command, on purpose:
+
+- `findstr` without `/s` (a single directory), or with `/i`, `/v`, `/x` or `/g:` — a different set of lines than the
+  identifier;
+- a wildcard that is not exactly `*.<extension the index covers>` (`*.cs` in a Go repository, `Foo*.go`, `*Bar*`): the
+  answered set could be smaller than the asked set;
+- a path or glob outside the indexed part of the repository, `rg` with a regex, or a repository over the file limit.
+
+`--raw` (or a `raw:` prefix) skips all of it and is stripped from the command *and* from `argv`, so the footer hint
+works verbatim.
+
+### Grouped listings
+
+Listing a directory recursively is the other expensive way of asking where the code is: `dir /s /b src\Serilog\*.cs`
+answered 8 KB in one call, and in the same benchmark run `ls -R`, `find . -name '*.ext'` and 15 plain `ls` did the same
+in smaller pieces. Nothing is omitted and nothing is summarised — the original text is only regrouped, one line per
+directory:
+
+```
+src\Serilog\Core\ (12): Casing.cs LevelOutputFormat.cs Logger.cs PropertyBag.cs ...
+src\Serilog\Sinks\ (7): ConsoleSink.cs FileSink.cs SeqSink.cs ...
+```
+
+followed by `[FastExec] listing grouped by directory; --raw returns the original lines.` The regrouping only happens on
+a command that is unambiguously a recursive listing (`dir` with both `/s` and `/b`, `ls` with `-R`/`--recursive`,
+`find` with `-name`/`-iname` and no `-exec`/`-delete`), on more than 80 files, and only if **every** line of the output
+looks like a plain path — one line in columns, with a tab or with padded spaces aborts it and the original text is
+returned untouched. `--raw` in the line, or `FASTEXEC_NO_LISTING_GROUP=1`, returns the original lines.
 
 ### Graph-first search answers
 

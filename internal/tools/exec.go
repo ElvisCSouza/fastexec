@@ -118,7 +118,11 @@ func handleExec(args ExecArgs) (string, error) {
 	rawEscape := false
 	if newLabel, stripped := stripRawEscape(&args); stripped {
 		label, rawEscape = newLabel, true
-		graphNote = GraphMarkRaw + ": raw text search as asked (the code graph was skipped)."
+		if parseListingKind(label) != listingNone {
+			graphNote = GraphMarkRaw + ": raw listing as asked (grouping by directory was skipped)."
+		} else {
+			graphNote = GraphMarkRaw + ": raw text search as asked (the code graph was skipped)."
+		}
 	}
 	if out, handled, note := tryGraphSearch(args, label, rawEscape); handled {
 		if cdHint != "" {
@@ -178,12 +182,20 @@ func handleExec(args ExecArgs) (string, error) {
 	// com aviso na saída. Acontece depois de todas as guardas, para o comando que chega ao shell ser exatamente o que
 	// as guardas avaliaram, e é uma execução só — nada de rodar no cmd e reenviar depois. 'label' continua sendo a
 	// linha original (dicas, dedup e telemetria falam do comando da LLM, não do argv montado aqui).
-	bashNote := ""
+	shellNote := ""
 	unixLbl := unixLabel(label, hasArgv, args.Argv)
 	if hasCmd {
-		if argv, note, ok := bashPlanFor(args.Host, args.Command); ok {
-			args.Argv, args.Command, hasArgv, bashNote = argv, "", true, note
-			// No bash o PATH é o do Git, não o do processo: a nota de "ferramenta não instalada" seria falsa.
+		// PowerShell antes do bash: '$env:X=1; & "C:\...\dotnet.exe" build' tem aspas suficientes para parecer
+		// Unix e morria nos dois shells ("syntax error near unexpected token '&'"). A precisão é a mesma das duas
+		// detecções: cada plano só age no seu sinal forte, e o de PowerShell cede quando há ferramenta Unix.
+		argv, note, ok := powershellPlanFor(args.Host, args.Command)
+		if !ok {
+			argv, note, ok = bashPlanFor(args.Host, args.Command)
+		}
+		if ok {
+			args.Argv, args.Command, hasArgv, shellNote = argv, "", true, note
+			// No shell do plano o PATH é outro (o do Git, o do PowerShell): a nota de "ferramenta não instalada"
+			// seria falsa.
 			unixLbl = ""
 		}
 	}
@@ -201,7 +213,7 @@ func handleExec(args ExecArgs) (string, error) {
 		return "", err
 	}
 	if res.JobID != "" {
-		return withHostNote(bashNote, handoffResult(*res, timeout), nil), nil
+		return withHostNote(shellNote, handoffResult(*res, timeout), nil), nil
 	}
 
 	searchHint := ""
@@ -211,9 +223,20 @@ func handleExec(args ExecArgs) (string, error) {
 		}
 	}
 
+	listingHint := ""
+	if !rawEscape && !res.TimedOut && res.ExitCode == 0 {
+		// Listagem recursiva grande vira uma linha por diretório (listing_group.go). Nenhum arquivo é omitido: o
+		// texto é o mesmo, reagrupado. O '--raw' (rawEscape) desliga.
+		if grouped, note, ok := regroupListing(label, res.Stdout); ok {
+			res.Stdout, listingHint = strings.TrimRight(grouped, "\r\n")+"\n", note
+		}
+	}
+
 	out, ferr := formatExecResult(label, *res)
 	if searchHint != "" {
 		out = strings.TrimRight(out, "\r\n") + "\n" + searchHint
+	} else if listingHint != "" {
+		out = strings.TrimRight(out, "\r\n") + "\n" + listingHint
 	} else if excluded && out == NoResultText {
 		out += "\n" + searchExcludedNote
 	}
@@ -285,7 +308,7 @@ func handleExec(args ExecArgs) (string, error) {
 		}
 		out += ft
 	}
-	return withHostNote(bashNote, out, ferr), ferr
+	return withHostNote(shellNote, out, ferr), ferr
 }
 
 // unixLabel: rótulo em que a detecção de ferramenta Unix (unix_shell.go) se apoia. Num 'command' a linha inteira é
@@ -727,6 +750,16 @@ func detectListCommand(args ExecArgs) (cmdName string, candidatePath string) {
 	case "ls", "dir":
 		cmdName = exe
 	default:
+		return "", ""
+	}
+
+	// Listagem recursiva ('ls -R', 'dir /s') não é o que o file_ops 'list' devolve: ele lê um diretório só. Deixar
+	// passar por aqui responderia a pasta de cima como se fosse a árvore inteira — falso negativo caro. O comando
+	// segue para o shell e a saída é reagrupada por listing_group.go.
+	if exe == "ls" && lsHasRecursive(fields[1:]) {
+		return "", ""
+	}
+	if exe == "dir" && dirHasFlag(fields[1:], "s") {
 		return "", ""
 	}
 

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"homelab/fastexec/internal/graph"
 )
 
 // writeFiles cria a árvore de arquivos a partir de caminho->conteúdo.
@@ -392,6 +394,137 @@ func TestGraphSearchThroughExec(t *testing.T) {
 	}
 	if strings.Contains(argvOut, GraphMarkSearch) || !strings.Contains(argvOut, GraphMarkRaw) {
 		t.Errorf("o escape por argv tem de valer também:\n%s", argvOut)
+	}
+}
+
+// TestParsersPorFerramenta: a MESMA consulta interna sai de findstr, Select-String, rg e grep. Cada ferramenta tem o
+// seu leitor (a sintaxe é diferente), mas o resultado é um searchReq só — é isso que faz o findstr e o Select-String
+// do benchmark caírem no mesmo caminho do grep inteligente. '/m' do findstr é a lista de arquivos, como o '-l'.
+func TestParsersPorFerramenta(t *testing.T) {
+	casos := []struct {
+		cmd  string
+		want searchReq
+	}{
+		{`findstr /s /m /c:"CalcTotal" src\*.cs`, searchReq{pattern: "CalcTotal", paths: []string{`src\*.cs`}, list: true}},
+		{`findstr /s /n CalcTotal src\Sub\*.cs`, searchReq{pattern: "CalcTotal", paths: []string{`src\Sub\*.cs`}}},
+		{`Select-String -Path src\*.cs -Pattern CalcTotal`, searchReq{pattern: "CalcTotal", paths: []string{`src\*.cs`}}},
+		{`Select-String -Path:src\*.cs -Pattern:CalcTotal`, searchReq{pattern: "CalcTotal", paths: []string{`src\*.cs`}}},
+		{`rg -l CalcTotal src`, searchReq{pattern: "CalcTotal", paths: []string{"src"}, list: true}},
+		{`grep -rn -c CalcTotal src`, searchReq{pattern: "CalcTotal", paths: []string{"src"}, count: true}},
+	}
+	for _, c := range casos {
+		got, ok := parseIdentSearch(c.cmd)
+		if !ok {
+			t.Errorf("%q: devia ser uma busca por identificador", c.cmd)
+			continue
+		}
+		if got.pattern != c.want.pattern || got.list != c.want.list || got.count != c.want.count ||
+			strings.Join(got.paths, "|") != strings.Join(c.want.paths, "|") {
+			t.Errorf("%q: got %+v, want %+v", c.cmd, got, c.want)
+		}
+	}
+
+	// Negativos: o comando roda de verdade. Sem /s o findstr varre uma pasta só (o grafo responderia de menos),
+	// /i muda quais linhas casam, /g tira os padrões de um arquivo e a regex não é identificador.
+	no := []string{
+		`findstr /n /m CalcTotal *.go`,
+		`findstr /s /i /m CalcTotal *.go`,
+		`findstr /s /m /g:padroes.txt CalcTotal`,
+		`findstr /s /m /x CalcTotal *.go`,
+		`Select-String -Path src -Pattern 'Calc.*'`,
+	}
+	for _, cmd := range no {
+		if r, ok := parseIdentSearch(cmd); ok {
+			t.Errorf("%q não pode virar resposta do grafo: %+v", cmd, r)
+		}
+	}
+}
+
+// TestGlobNarrow: um caminho com coringa só estreita a busca quando o coringa é o último componente e é '*<ext>' de
+// uma linguagem indexada; fora disso a resposta do grafo poderia ser menor que a do comando e o comando roda.
+func TestGlobNarrow(t *testing.T) {
+	sim := map[string][2]string{
+		`src\*.cs`:         {`src\`, ".cs"},
+		`src/Serilog/*.cs`: {`src/Serilog/`, ".cs"},
+		`*.go`:             {"", ".go"},
+		`src\*.py`:         {`src\`, ".py"},
+		`src\*.TS`:         {`src\`, ".TS"},
+	}
+	for in, want := range sim {
+		dir, ext, ok := globNarrow(in)
+		if !ok || dir != want[0] || ext != want[1] {
+			t.Errorf("%q: got dir=%q ext=%q ok=%v, want dir=%q ext=%q", in, dir, ext, ok, want[0], want[1])
+		}
+	}
+	nao := []string{
+		`src\*`,        // sem extensão: o findstr acharia também o que o grafo não indexa
+		`src\F*.cs`,    // coringa no meio do nome
+		`src\*.txt`,    // extensão fora do índice
+		`src\*.csx`,    // idem
+		`src\*.cs.bak`, // idem
+		`?oo.go`,       // interrogação
+		`src\Foo.cs`,   // sem coringa: é o caminho de sempre
+	}
+	for _, in := range nao {
+		if dir, ext, ok := globNarrow(in); ok {
+			t.Errorf("%q não pode estreitar: dir=%q ext=%q", in, dir, ext)
+		}
+	}
+}
+
+// TestExtFiltroDaResposta: quando o caminho tinha coringa, a resposta fica na extensão dele — 'src\*.cs' não pode
+// citar um arquivo .py de src.
+func TestExtFiltroDaResposta(t *testing.T) {
+	defs := []graph.Def{{File: "pkg/a.go"}, {File: "pkg/notes.py"}, {File: "pkg/sub/b.go"}, {File: "outra/c.go"}}
+	files := func(ds []graph.Def) string {
+		var names []string
+		for _, d := range ds {
+			names = append(names, d.File)
+		}
+		return strings.Join(names, "|")
+	}
+	if got := files(defsUnderSub(defs, "pkg", ".go")); got != "pkg/a.go|pkg/sub/b.go" {
+		t.Errorf("ext .go sob pkg: got %q", got)
+	}
+	if got := files(defsUnderSub(defs, "pkg", "")); got != "pkg/a.go|pkg/notes.py|pkg/sub/b.go" {
+		t.Errorf("sem extensão sob pkg: got %q", got)
+	}
+	if got := files(defsUnderSub(defs, "", "")); got != "pkg/a.go|pkg/notes.py|pkg/sub/b.go|outra/c.go" {
+		t.Errorf("raiz sem filtro tem de aceitar tudo: got %q", got)
+	}
+	counts := map[string]int{"pkg/a.go": 2, "pkg/notes.py": 1, "outra/c.go": 3}
+	got := countsUnderSub(counts, "pkg", ".go")
+	if len(got) != 1 || got["pkg/a.go"] != 2 {
+		t.Errorf("contagens com ext .go sob pkg: got %v", got)
+	}
+}
+
+// TestGraphSearchCaminhoComCoringa: 'findstr /s /m /c:"X" pkg\*.go' (o comando do benchmark) responde pelo grafo,
+// restrito à pasta do coringa e à extensão dele.
+func TestGraphSearchCaminhoComCoringa(t *testing.T) {
+	repo := newTestRepo(t, map[string]string{
+		"pkg/a.go":   "package pkg\n\nfunc CalcTotal(x int) int {\n\treturn x * 2\n}\n",
+		"pkg/z.py":   "def CalcTotal():\n    pass\n",
+		"main.go":    "package main\n\nfunc main() {\n\tpkg.CalcTotal(3)\n}\n",
+		"outra/d.go": "package outra\n\nfunc D() {\n\tpkg.CalcTotal(1)\n}\n",
+	})
+	out, handled, _ := tryGraphSearch(ExecArgs{Host: "local", Command: `findstr /s /m /c:"CalcTotal" pkg\*.go`, Cwd: repo, Caller: "test#glob1"}, `findstr /s /m /c:"CalcTotal" pkg\*.go`, false)
+	if !handled {
+		t.Fatalf("o findstr com coringa tinha de ser respondido pelo grafo:\n%s", out)
+	}
+	if !strings.Contains(out, "pkg/a.go") {
+		t.Errorf("a resposta tem de citar a definição em pkg/a.go:\n%s", out)
+	}
+	for _, fora := range []string{"main.go", "outra/d.go", "pkg/z.py"} {
+		if strings.Contains(out, fora) {
+			t.Errorf("a resposta não pode sair da pasta/extensão do coringa (%s):\n%s", fora, out)
+		}
+	}
+
+	// Coringa que o grafo não cobre (pasta inteira, sem extensão): o comando roda de verdade.
+	cmd := `findstr /s /m /c:"CalcTotal" pkg\*`
+	if _, handled, _ := tryGraphSearch(ExecArgs{Host: "local", Command: cmd, Cwd: repo, Caller: "test#glob2"}, cmd, false); handled {
+		t.Errorf("%q: coringa sem extensão não pode ser respondido pelo grafo", cmd)
 	}
 }
 
