@@ -106,6 +106,33 @@ func DefSites(root, symbol string) []DefSite {
 	return out
 }
 
+// SymbolFiles devolve os arquivos do índice que DECLARAM name (sem diferenciar maiúsculas), como caminhos relativos
+// à raiz. Não atualiza o índice: quem chama é uma sugestão para um caminho que não existe — um read_file que já
+// falhou não pode pagar por um Refresh. Índice velho só pode sugerir arquivo a mais, e quem chama confere no disco.
+func SymbolFiles(root, name string, max int) []string {
+	if root == "" || name == "" || max <= 0 || !exists() {
+		return nil
+	}
+	d, err := store()
+	if err != nil {
+		return nil
+	}
+	rows, err := d.Query(`SELECT DISTINCT file_path FROM code_symbols
+		WHERE repo_root = ? AND name = ? COLLATE NOCASE ORDER BY file_path LIMIT ?`, repoKey(root), name, max)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var f string
+		if rows.Scan(&f) == nil {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // RefInfo é o rótulo de uma referência, no mesmo vocabulário que o grafo já usa na saída.
 type RefInfo struct {
 	Label    string // símbolo que contém a referência, no formato do grafo ("Alpha.Do"); "" se o índice não sabe

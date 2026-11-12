@@ -229,32 +229,138 @@ func TestIsolamentoEntreRepos(t *testing.T) {
 	}
 }
 
-func TestForaDeRepositorioGitNaoIndexa(t *testing.T) {
+// pastaSolta cria uma pasta que não está dentro de nenhum repositório git (senão o teste não se aplica) e devolve
+// o caminho do arquivo escrito. É o cenário M2/M3: o agente chama o grafo numa pasta avulsa.
+func pastaSolta(t *testing.T, rel, src string) (dir, file string) {
+	t.Helper()
 	SetDBPath(filepath.Join(t.TempDir(), "graph.db"))
 	t.Cleanup(func() { SetDBPath("") })
-	solto := t.TempDir() // sem .git em nenhum ancestral de um TempDir
-	p := filepath.Join(solto, "script.go")
-	_ = os.WriteFile(p, []byte("package x\nfunc A() {}\n"), 0o644)
-
-	if root, ok := ResolveRepoRoot(p); ok {
+	dir = t.TempDir()
+	file = filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if root, ok := ResolveRepoRoot(file); ok {
 		t.Skipf("ambiente com .git acima do TempDir (%s): teste não se aplica", root)
 	}
-	if _, err := Refresh(solto); err == nil || !strings.Contains(err.Error(), "not inside a git repository") {
-		t.Errorf("Refresh fora de repo deveria recusar: %v", err)
+	return dir, file
+}
+
+func TestPastaAvulsaIndexaEAtualiza(t *testing.T) {
+	dir, file := pastaSolta(t, "script.go", "package x\n\nfunc A() {}\n\nfunc B() { A() }\n")
+
+	root, ok := ResolveStandaloneRoot(file) // o caminho é um arquivo: a pasta avulsa é a que o contém
+	if !ok || root != dir {
+		t.Fatalf("ResolveStandaloneRoot(%s) = %q,%v", file, root, ok)
 	}
-	if _, err := Reindex(solto); err == nil {
-		t.Error("Reindex fora de repo deveria recusar")
+	st, err := Refresh(root)
+	if err != nil {
+		t.Fatalf("pasta avulsa pequena deveria indexar: %v", err)
 	}
-	if err := ReindexFile(solto, p); err == nil {
-		t.Error("ReindexFile fora de repo deveria recusar")
+	if st.Files != 1 || st.Changed != 1 || st.Fresh || st.OverBudget {
+		t.Fatalf("passada inicial: %+v", st)
 	}
-	Touch(p)
-	time.Sleep(touchDebounce + 200*time.Millisecond)
+	got, err := Callers(root, "A", 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "script.go:5") {
+		t.Errorf("callers na pasta avulsa:\n%s", got)
+	}
+	if n := TrackedFiles(root); n != 1 {
+		t.Errorf("TrackedFiles = %d", n)
+	}
+
+	// Sem git não há estado barato: o frescor é a comparação (mtime, hash) de cada arquivo, e a segunda passada sem
+	// mudança não reindexa nada.
+	if st, err := Refresh(root); err != nil || st.Changed != 0 || !st.Fresh {
+		t.Fatalf("segunda passada sem mudança: %+v %v", st, err)
+	}
+
+	// Arquivo editado: reindexa na passada seguinte, sem tocar em git (mtime forçado à frente porque o relógio do
+	// Windows tem granularidade grossa e o teste roda em milissegundos).
+	novo := "package x\n\nfunc A() {}\n\nfunc B() { A() }\n\nfunc C() { A() }\n"
+	if err := os.WriteFile(file, []byte(novo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(file, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := Refresh(root); err != nil || st.Changed != 1 {
+		t.Fatalf("arquivo mudado deveria reindexar: %+v %v", st, err)
+	}
+	if got, _ := Callers(root, "A", 0, 1); !strings.Contains(got, "script.go:7") {
+		t.Errorf("nova chamada não apareceu:\n%s", got)
+	}
+
+	// Um arquivo apagado sai do índice, e ReindexFile também age na pasta avulsa.
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := Refresh(root); err != nil || st.Removed != 1 {
+		t.Fatalf("arquivo apagado deveria sair: %+v %v", st, err)
+	}
+	if err := ReindexFile(root, file); err != nil {
+		t.Fatalf("ReindexFile na pasta avulsa: %v", err)
+	}
+	Touch(file) // o hook de gravação nunca cria índice: aqui o índice existe, mas o arquivo sumiu — não pode explodir
+	time.Sleep(touchDebounce + 100*time.Millisecond)
+}
+
+func TestPastaAvulsaAcimaDoLimiteRecusa(t *testing.T) {
+	dir, _ := pastaSolta(t, "a.go", "package x\n\nfunc A() {}\n")
+	for _, n := range []string{"b.go", "c.go"} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("package x\n\nfunc B() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := maxStandaloneFiles
+	maxStandaloneFiles = 2
+	t.Cleanup(func() { maxStandaloneFiles = old })
+
+	_, err := Refresh(dir)
+	if err == nil || !strings.Contains(err.Error(), "not inside a git repository") || !IsNotInRepo(err) {
+		t.Fatalf("pasta avulsa acima do limite deveria recusar: %v", err)
+	}
+	if _, err := Reindex(dir); err == nil || !IsNotInRepo(err) {
+		t.Errorf("Reindex também deveria recusar: %v", err)
+	}
+	if err := ReindexFile(dir, filepath.Join(dir, "a.go")); err == nil || !IsNotInRepo(err) {
+		t.Errorf("ReindexFile também deveria recusar: %v", err)
+	}
 	d, _ := store()
 	var n int
 	_ = d.QueryRow(`SELECT COUNT(*) FROM code_files`).Scan(&n)
 	if n != 0 {
-		t.Errorf("algo fora de repo foi indexado (%d arquivos)", n)
+		t.Errorf("pasta recusada não pode deixar arquivo no índice (%d)", n)
+	}
+
+	// O teto de bytes vale pelo mesmo motivo (a varredura sem .gitignore lê o disco inteiro).
+	maxStandaloneFiles = old
+	oldB := maxStandaloneBytes
+	maxStandaloneBytes = 8
+	t.Cleanup(func() { maxStandaloneBytes = oldB })
+	if _, err := Refresh(dir); err == nil || !strings.Contains(err.Error(), "not inside a git repository") {
+		t.Fatalf("pasta acima do teto de bytes deveria recusar: %v", err)
+	}
+}
+
+// TestRepositorioGitNaoMuda: dentro de git o caminho é o de sempre — a raiz achada pelo .git nunca é "avulsa" e o
+// estado (HEAD, porcelano) continua dispensando a varredura.
+func TestRepositorioGitNaoMuda(t *testing.T) {
+	root := fixture(t)
+	if _, ok := ResolveStandaloneRoot(root); ok {
+		t.Errorf("raiz de repositório git não pode ser tratada como pasta avulsa")
+	}
+	if st, err := Refresh(root); err != nil || st.Changed == 0 {
+		t.Fatalf("primeira passada: %+v %v", st, err)
+	}
+	if st, err := Refresh(root); err != nil || !st.Fresh {
+		t.Fatalf("repositório git sem mudança deveria responder do estado: %+v %v", st, err)
 	}
 }
 

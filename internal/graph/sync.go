@@ -61,20 +61,30 @@ func gitState(root string) (head, work string, ok bool) {
 	return head, contentHash(b), true
 }
 
-// Sync deixa o índice em dia dentro do teto budget (0 = sem teto, o comportamento de sempre). Devolve Fresh=true
+// Sync aceita repositório git (o comportamento de sempre) e pasta avulsa: fora de git, a varredura do disco É o
+// frescor, e a pasta acima de maxStandaloneFiles/maxStandaloneBytes é recusada com a mensagem de sempre.
+// Deixa o índice em dia dentro do teto budget (0 = sem teto, o comportamento de sempre). Devolve Fresh=true
 // quando o estado do repositório era o mesmo da última passada (nada foi varrido) e OverBudget=true quando o teto
 // estourou (o índice pode estar incompleto: não responda dele).
 func Sync(root string, budget time.Duration) (Stats, error) {
 	start := time.Now()
-	if !isRepoRoot(root) {
-		return Stats{}, ErrNotInRepo(root)
+	// Fora de repositório git a pasta é indexada como avulsa (chave própria, o caminho normalizado): sem HEAD e sem
+	// git status, o frescor vem só da comparação (mtime, hash) de cada arquivo — que é o que a varredura já faz.
+	standalone := !isRepoRoot(root)
+	if standalone {
+		if _, ok := ResolveStandaloneRoot(root); !ok {
+			return Stats{}, ErrNotInRepo(root)
+		}
 	}
 	d, err := store()
 	if err != nil {
 		return Stats{}, err
 	}
 	key := repoKey(root)
-	head, work, have := gitState(root)
+	head, work, have := "", "", false
+	if !standalone {
+		head, work, have = gitState(root)
+	}
 	if have {
 		// O estado só é gravado no fim de uma passada completa (que inclui a segunda passada das arestas de doc),
 		// então estado igual dispensa a varredura sem deixar Markdown pendente para trás. O estado carrega também a
@@ -96,9 +106,19 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 		return Stats{Files: files, OverBudget: true, Took: time.Since(start)}, nil
 	}
 
-	files, total := listFiles(root)
-	if total > maxRepoFiles {
-		return Stats{}, ErrTooManyFiles(total)
+	var files []string
+	var total int
+	if standalone {
+		var tooBig bool
+		files, total, tooBig = listFiles(root, maxStandaloneFiles, maxStandaloneBytes)
+		if tooBig {
+			return Stats{}, ErrNotInRepo(root) // grande demais para avulsa: a recusa é a de sempre, sem promessa nova
+		}
+	} else {
+		files, total, _ = listFiles(root, maxRepoFiles, 0)
+		if total > maxRepoFiles {
+			return Stats{}, ErrTooManyFiles(total)
+		}
 	}
 	if over() {
 		return partial(len(files))
