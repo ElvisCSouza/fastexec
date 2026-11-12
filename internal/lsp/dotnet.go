@@ -155,7 +155,9 @@ func noSDKProblem() string {
 
 // configDotnetSDK is the SDK folder kept in the config file, or "". Only the
 // file is read here: the environment already had its turn before this.
-func configDotnetSDK() string {
+var configDotnetSDK = readConfigDotnetSDK
+
+func readConfigDotnetSDK() string {
 	c := config.Get()
 	if c == nil {
 		return ""
@@ -275,9 +277,14 @@ func installedSDKs(sdkRoot string) []string {
 		// reading it would make the answer depend on where FastExec was started.
 		return nil
 	}
+	// The SDK root holds an sdk/ folder with one directory per version. A root
+	// that is itself named "sdk" (W:\dotnet-sdk\sdk) still has its own sdk/ inside,
+	// so that one wins; only when it is absent is sdkRoot the versions folder.
 	dir := filepath.Join(sdkRoot, "sdk")
-	if filepath.Base(filepath.Clean(sdkRoot)) == "sdk" {
-		dir = sdkRoot
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		if filepath.Base(filepath.Clean(sdkRoot)) == "sdk" {
+			dir = sdkRoot
+		}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

@@ -18,7 +18,10 @@ func stubSDK(t *testing.T, root string, portable bool) {
 	t.Helper()
 	prev := dotnetSDK
 	dotnetSDK = func() (string, bool) { return root, portable }
-	t.Cleanup(func() { dotnetSDK = prev })
+	// The user's real config file must not leak into a described machine.
+	prevCfg := configDotnetSDK
+	configDotnetSDK = func() string { return "" }
+	t.Cleanup(func() { dotnetSDK = prev; configDotnetSDK = prevCfg })
 }
 
 // csproj writes a project file at dir/name. An empty body is enough: the
@@ -524,6 +527,16 @@ func TestPinnedSDKWalkStopsAtTheNearestFile(t *testing.T) {
 // TestInstalledSDKsReadsBothRootShapes: FASTEXEC_DOTNET_SDK may point at an
 // install root (...\dotnet) or straight at its sdk folder, and the note must
 // list the same versions either way.
+func TestInstalledSDKsRootNamedSdkWithNestedSdk(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sdk")
+	if err := os.MkdirAll(filepath.Join(root, "sdk", "8.0.428"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := installedSDKs(root); len(got) != 1 || got[0] != "8.0.428" {
+		t.Fatalf("installedSDKs(%q) = %v, want [8.0.428]", root, got)
+	}
+}
+
 func TestInstalledSDKsReadsBothRootShapes(t *testing.T) {
 	root := sdkTree(t, "8.0.404", "9.0.100", "not-a-version")
 	if got := installedSDKs(root); len(got) != 2 || got[0] != "8.0.404" || got[1] != "9.0.100" {
