@@ -37,6 +37,13 @@ func readMeta(d *sql.DB, key string) (meta, bool) {
 	return m, err == nil
 }
 
+// sameState diz se o estado já gravado é o do repositório agora — o teste barato que abre toda passada (o porcelano
+// cobre exatamente o que o índice segue). É o mesmo teste das duas pontas: o Sync e o disparo da indexação de fundo.
+func sameState(d *sql.DB, key, head, work string) bool {
+	m, ok := readMeta(d, key)
+	return ok && m.head == head && m.work == work && m.files > 0
+}
+
 func writeMeta(d *sql.DB, key, head, work string, files, docs int) error {
 	_, err := d.Exec(`INSERT INTO code_meta (repo_root, head, work, files, docs, checked_at) VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)
 		ON CONFLICT(repo_root) DO UPDATE SET head = excluded.head, work = excluded.work, files = excluded.files,
@@ -67,6 +74,18 @@ func gitState(root string) (head, work string, ok bool) {
 // quando o estado do repositório era o mesmo da última passada (nada foi varrido) e OverBudget=true quando o teto
 // estourou (o índice pode estar incompleto: não responda dele).
 func Sync(root string, budget time.Duration) (Stats, error) {
+	return syncWith(root, syncOpts{budget: budget})
+}
+
+// syncOpts são as opções da passada que só a indexação de fundo usa (zero = comportamento de sempre): o contador
+// N/M que a consulta mostra enquanto espera, e o cancelamento pedido no fechamento do processo.
+type syncOpts struct {
+	budget    time.Duration
+	progress  func(done, total int)
+	cancelled func() bool
+}
+
+func syncWith(root string, o syncOpts) (Stats, error) {
 	start := time.Now()
 	// Fora de repositório git a pasta é indexada como avulsa (chave própria, o caminho normalizado): sem HEAD e sem
 	// git status, o frescor vem só da comparação (mtime, hash) de cada arquivo — que é o que a varredura já faz.
@@ -90,15 +109,22 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 		// então estado igual dispensa a varredura sem deixar Markdown pendente para trás. O estado carrega também a
 		// contagem de Markdown daquela passada: sem ela a resposta fresca diria "0 docs" e as consultas esconderiam
 		// toda a documentação (é o gate st.Docs > 0).
-		if m, ok := readMeta(d, key); ok && m.head == head && m.work == work && m.files > 0 {
+		if m, ok := readMeta(d, key); ok && sameState(d, key, head, work) {
 			return Stats{Files: m.files, Docs: m.docs, Fresh: true, Took: time.Since(start)}, nil
 		}
 	}
 	deadline := time.Time{}
-	if budget > 0 {
-		deadline = start.Add(budget)
+	if o.budget > 0 {
+		deadline = start.Add(o.budget)
 	}
-	over := func() bool { return !deadline.IsZero() && time.Now().After(deadline) }
+	// Cancelamento (fechamento do processo) para a passada como o teto de tempo para: o que já entrou na transação
+	// fica, o estado não é gravado e quem chamou sabe que o índice pode estar incompleto.
+	over := func() bool {
+		if o.cancelled != nil && o.cancelled() {
+			return true
+		}
+		return !deadline.IsZero() && time.Now().After(deadline)
+	}
 	partial := func(files int) (Stats, error) {
 		if have {
 			_, _ = d.Exec(`DELETE FROM code_meta WHERE repo_root = ?`, key) // índice incompleto: estado não vale
@@ -156,10 +182,15 @@ func Sync(root string, budget time.Duration) (Stats, error) {
 	}
 	var docs []pendingDoc
 	budgetHit := false
+	scanned := 0
 	for _, rel := range files {
 		if over() {
 			budgetHit = true
 			break
+		}
+		scanned++
+		if o.progress != nil {
+			o.progress(scanned, len(files))
 		}
 		abs := filepath.Join(root, filepath.FromSlash(rel))
 		info, err := os.Stat(abs)

@@ -49,6 +49,11 @@ type Stats struct {
 	Files, Changed, Removed, Docs int
 	Took                          time.Duration
 	Fresh, OverBudget             bool
+	// Building marca a resposta dada com o índice AINDA em construção em segundo plano (a consulta esperou o teto do
+	// portão e não deu tempo): Built/BuiltTotal são os arquivos já varridos da passada em curso. Nunca é erro: a
+	// resposta sai do que já está indexado, com o aviso anexado.
+	Building          bool
+	Built, BuiltTotal int
 }
 
 // ResolveRepoRoot sobe a partir de path até a pasta com .git mais próxima (diretório ou arquivo, como em worktrees).
