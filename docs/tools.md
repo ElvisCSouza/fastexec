@@ -252,6 +252,52 @@ command deletes code files (`rm`, `del`/`erase`, `Remove-Item`, `git rm`):
 [graph] old/parser.go deleted: Fetch, Parse still used in 2 files: b.go:12, c.go:40, +2 more.
 ```
 
+### The edit repaired by the language server
+
+Above is the answer when there is no server. When a language server exists for the edited file **and it owns the
+project** (it starts and loads the repository), the same edit is completed the way the editor would complete it —
+automatically, without asking, and the reply says what was done. Every line is marked `(exact)`; the by-name warning
+of the previous section is not repeated for names the server already answered for.
+
+```
+[edit_file] 1 change(s) applied (31 -> 33 bytes) in W:\src\a.go.
+L3: func ParseRecord() {}
+[lsp] ParseLine -> ParseRecord: 8 uses in 5 files updated (exact): a.go:3, b.go:40, +3 more; undo: git apply -R C:\Users\me\AppData\Local\fastexec\undo\20261112-101520.118.patch
+[lsp] files changed: callers.go, main.go; re-read before editing them
+```
+
+- **Rename.** Only the identifier changed: `prepareRename` + `rename` are asked, and the resulting `WorkspaceEdit`
+  is **written** into every file it covers, not merely listed. The acceptance rule is the safety rule: the server's
+  version of the edited file must be the text being written once both names are forgotten, so an edit that changes
+  anything else (the wrong homonym included) is refused and the by-name warning takes over.
+- Above **100 files** nothing is written and the reply says how many would change: a rename that size is a decision
+  to take explicitly, not a side effect of `edit_file`.
+- Files that were **already dirty in git** outside FastExec are written anyway and listed at the end (`already
+  modified outside FastExec: ...`) — someone else's work in progress is not a reason to stop, but it is a reason to
+  say so.
+- The reverse patch is always written: `undo: git apply -R <patch>` restores every file the server touched, and the
+  edited file with it. The files that changed are named, because the model's copy of them is stale.
+- **Signature.** The header changed: if the server offers a ready-made refactor it is applied (same patch/undo
+  line); otherwise the exact callers come back as `signature changed, 3 caller(s) need adjustment (exact): a.go:12,
+  b.go:40` — the callers are **not** rewritten by guessing.
+- **Imports.** A new unresolved-symbol error is offered to the server's quickfix, and only import-shaped actions are
+  accepted: `[lsp] added import "fmt"` (or `removed unused import`, `organized the imports`) — and only when the
+  server classifies it that way. Arbitrary quickfixes are never applied.
+- **Diagnostics.** After the write, the errors are compared with the ones published before it: only the **new** ones
+  are reported, `[lsp] diagnostics: 2 errors (a.go:12: undefined: x; a.go:20: ...)` (up to 3, then `+N more`). An
+  error that was already there, with the same message, stays silent. The whole check is capped at ~1.5 s: past that
+  it is dropped, never waited for.
+- **Formatting.** Only when the file was already formatted and the server's edits fall inside the range that was
+  edited: `[lsp] formatted the edited range (2 edit(s))`. A whole-file reformat is not a side effect of a two-line
+  edit.
+- **Removal.** A declaration that disappeared and is still used comes back as `removed but still used 3 time(s)
+  (exact): a.go:12, b.go:40`, which is what `exec_delete_impact` guessed before when a server is around.
+
+An edit with no semantic effect — a body, a comment, whitespace — always answers byte for byte the same as before
+this existed. So does an edit where the server has nothing to say, or where the server is missing, cold and not
+needed, still loading, or slower than its budget: every step above fails into silence or into one warning line, and
+**no step can ever lose the edit**, which is already on disk by then. `FASTEXEC_LSP=off` turns all of it off.
+
 ## write_file
 
 Creates a file, optionally `atomic` (temp file + rename). An existing non-empty file is refused unless

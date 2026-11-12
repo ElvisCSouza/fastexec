@@ -503,6 +503,12 @@ func handleWriteFile(args WriteFileArgs, impact bool) (string, error) {
 		if args.Overwrite {
 			oldText = oldContentForRewrite(args.Path) // para o aviso de reescrita (rewrite_hint.go)
 		}
+		// Fase A do assistente de linguagem (lsp_autoedit.go): roda com o texto VELHO ainda no disco, que é o
+		// que dá posição válida ao servidor. Sem servidor, ae é nil e tudo abaixo é o de sempre.
+		ae := autoEditBegin(args.Host, args.Path, oldText, args.Content)
+		defer ae.Close()
+		final := ae.Text(args.Content)
+		contentBytes = []byte(final)
 		dir := filepath.Dir(args.Path)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", err
@@ -522,15 +528,17 @@ func handleWriteFile(args WriteFileArgs, impact bool) (string, error) {
 			}
 		}
 		graph.Touch(args.Path) // índice de código: reindexa em segundo plano se o repositório já é indexado
+		noteWrite(args.Host, args.Path)
 		msg := okReply(int64(len(contentBytes)))
-		if h := rewriteHint(oldText, args.Content); h != "" {
+		if h := rewriteHint(oldText, final); h != "" {
 			msg += "\n" + h
 		}
 		if impact {
-			if h := editImpact(args.Host, args.Path, oldText, args.Content); h != "" {
+			if h := editImpactExcept(args.Host, args.Path, oldText, final, ae.SkipNames()); h != "" {
 				msg += "\n" + h
 			}
 		}
+		msg += ae.Finish() // fase B: import que faltou, erro novo, formatação do trecho
 		return msg, nil
 	}
 
@@ -711,8 +719,11 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		ae := autoEditBegin(host, args.Path, content, newContent)
+		defer ae.Close()
+		newContent = ae.Text(newContent)
 		// o aviso de impacto lê o texto decodificado, antes de encodeForWrite (edit_impact.go)
-		if h := editImpact(host, args.Path, content, newContent); h != "" {
+		if h := editImpactExcept(host, args.Path, content, newContent, ae.SkipNames()); h != "" {
 			note += "\n" + h
 		}
 		if newContent, err = encodeForWrite(newContent, enc); err != nil {
@@ -728,7 +739,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
 		}
-		return note, nil
+		return note + ae.Finish(), nil
 	}
 
 	ops := args.Edits
@@ -804,9 +815,12 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		newBytes += len(r)
 	}
 
+	ae := autoEditBegin(host, args.Path, content, newContent)
+	defer ae.Close()
+	newContent = ae.Text(newContent)
 	proof := editProof(newContent, applied, enc)
 	// o aviso de impacto lê o texto decodificado, antes de encodeForWrite (edit_impact.go)
-	impact := editImpact(host, args.Path, content, newContent)
+	impact := editImpactExcept(host, args.Path, content, newContent, ae.SkipNames())
 	if newContent, err = encodeForWrite(newContent, enc); err != nil {
 		return "", err
 	}
@@ -832,6 +846,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 	if h := editBatchHint(identity(args.Caller, args.Conv), args.Path, len(ops)); h != "" {
 		msg += "\n" + h
 	}
+	msg += ae.Finish() // fase B: import que faltou, erro novo, formatação do trecho
 	return msg, nil
 }
 

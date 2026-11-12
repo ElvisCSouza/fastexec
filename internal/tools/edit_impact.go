@@ -45,6 +45,14 @@ type impactSymbol struct {
 // editImpact devolve o rodapé "[graph] ..." da resposta de edit_file/write_file, ou "" quando não há o que avisar.
 // oldText e newText são o conteúdo DECODIFICADO antes e depois da edição (o mesmo que o parser do grafo lê).
 func editImpact(host, path, oldText, newText string) string {
+	return editImpactExcept(host, path, oldText, newText, nil)
+}
+
+// editImpactExcept é o editImpact com uma lista de símbolos que o servidor de linguagem JÁ resolveu (rename
+// aplicado, assinatura tratada, órfãos já listados por tipo). Para eles a linha por nome não sai: ela seria um
+// palpite homônimo sobre um assunto já respondido com precisão, e duas linhas dizendo o mesmo com precisões
+// diferentes é pior do que uma. skip vazio (nil) devolve exatamente o aviso de sempre.
+func editImpactExcept(host, path, oldText, newText string, skip map[string]bool) string {
 	if oldText == "" || newText == "" || oldText == newText {
 		return ""
 	}
@@ -103,6 +111,9 @@ func editImpact(host, path, oldText, newText string) string {
 	for _, s := range syms {
 		if len(lines) == editImpactMaxWarn {
 			break
+		}
+		if skip[s.name] {
+			continue
 		}
 		if lspCtx != nil && !s.removed {
 			if l, ok := exactImpactLine(lspCtx, root, path, newText, self, s, newByLine[s.name]); ok {

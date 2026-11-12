@@ -13,6 +13,13 @@ import (
 // TestMain fixa a config de exemplo (server, router, devbox) e uma pasta de dados temporária: os testes não
 // dependem da config de quem roda nem gravam na pasta real.
 func TestMain(m *testing.M) {
+	// Com FAKELSP_TOOLS=1 o binário de teste não roda teste nenhum: vira o servidor de linguagem falso
+	// (fakelsp_test.go) que os testes do assistente automático sobem como processo. Tem que vir antes do Isolate:
+	// o falso não usa config nenhuma e não pode pagar por ela.
+	if os.Getenv("FAKELSP_TOOLS") == "1" {
+		runToolFakeServer()
+		os.Exit(0)
+	}
 	dir, cleanup := config.Isolate()
 	analytics.SessionsRoot = filepath.Join(dir, "sessions") // calculada no init, antes do Isolate
 	// Hermético: nenhum teste desta suíte inicia gopls por acidente. Sem isto, um code_graph callers em
