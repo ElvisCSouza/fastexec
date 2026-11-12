@@ -64,7 +64,10 @@ func cleanSpill(dir string) {
 // the plain capOutput so no information is dropped silently.
 func shapeOrCap(s string) string {
 	out := shapeOrCapInner(s)
-	telemetry.NoteSaving(telemetry.CatCut, len(s), len(out))
+	if len(s) > len(out) {
+		telemetry.NoteSavingDetail(telemetry.CatCut, len(s), len(out),
+			fmt.Sprintf("raw output had %d lines; returned %d (head and tail kept, the rest left out)", savLines(s), savLines(out)))
+	}
 	return out
 }
 

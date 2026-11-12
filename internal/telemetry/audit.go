@@ -180,6 +180,25 @@ func setupAuditSchema(db *sql.DB) {
 		CREATE INDEX IF NOT EXISTS idx_saving_cat ON saving(cat);`); err != nil {
 		noteFailure("schema saving", err)
 	}
+	savingCols := map[string]bool{}
+	if rows, err := db.Query("PRAGMA table_info(saving);"); err == nil {
+		for rows.Next() {
+			var cid, notNull, pk int
+			var name, colType string
+			var dflt sql.NullString
+			if rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk) == nil {
+				savingCols[name] = true
+			}
+		}
+		rows.Close()
+	}
+	for col, typ := range map[string]string{"size_before": "INTEGER NOT NULL DEFAULT 0", "size_after": "INTEGER NOT NULL DEFAULT 0", "note": "TEXT NOT NULL DEFAULT ''"} {
+		if !savingCols[col] {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE saving ADD COLUMN %s %s;", col, typ)); err != nil {
+				noteFailure("schema migration saving", err)
+			}
+		}
+	}
 	// Chamadas anteriores a este marco não guardaram o tamanho original: ficam fora do relatório de economia.
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		INSERT OR IGNORE INTO meta (key, value) VALUES ('savings_since', CURRENT_TIMESTAMP);`); err != nil {
@@ -258,8 +277,8 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 
 func writeSavings(db *sql.DB, auditID int64, items []Saving) error {
 	for _, s := range items {
-		if _, err := db.Exec(`INSERT INTO saving (audit_id, cat, bytes, trips, ms, exact) VALUES (?, ?, ?, ?, ?, ?);`,
-			auditID, s.Cat, s.Bytes, s.Trips, s.Ms, boolInt(s.Exact)); err != nil {
+		if _, err := db.Exec(`INSERT INTO saving (audit_id, cat, bytes, trips, ms, exact, size_before, size_after, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+			auditID, s.Cat, s.Bytes, s.Trips, s.Ms, boolInt(s.Exact), s.Before, s.After, s.Note); err != nil {
 			return err
 		}
 	}

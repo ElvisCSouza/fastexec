@@ -41,7 +41,19 @@ h2{margin:0;font-size:16px;font-weight:700}
 .sw{flex:none;width:12px;height:12px;border-radius:3px}
 .tag{font-size:10px;font-weight:700;color:#7A4A00;background:#FBEBCB;border-radius:999px;padding:2px 7px;margin-left:6px}
 .ev{display:flex;align-items:center;gap:10px;width:100%;border:0;border-radius:10px;padding:9px 10px;text-align:left;background:transparent}
-.ev[aria-pressed=true]{background:var(--gl)}
+.evw{border-radius:10px}
+.evw.open{background:var(--gl)}
+.evw>.ev:hover{background:var(--soft)}
+.evw.open>.ev:hover{background:transparent}
+.chev{flex:none;width:12px;color:var(--mut);font-size:11px;text-align:center}
+.xp{padding:6px 16px 18px 78px;display:flex;flex-direction:column;gap:16px;cursor:default}
+.mg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px 16px}
+.pre{margin:4px 0 0;padding:10px 12px;border-radius:8px;background:var(--soft);font:12px/1.5 ui-monospace,"JetBrains Mono",Consolas,monospace;white-space:pre-wrap;word-break:break-all;max-height:180px;overflow:auto}
+.bar{height:8px;border-radius:4px;background:var(--rl);overflow:hidden}
+.bar>div{height:100%;border-radius:4px;background:var(--g)}
+.part{border-top:1px solid var(--soft);padding-top:10px;margin-top:10px}
+.pl{font-size:13px;margin:4px 0 0 20px;display:flex;flex-direction:column;gap:3px}
+@media (max-width:640px){.xp{padding-left:14px}}
 .mono{font-family:ui-monospace,"JetBrains Mono",Consolas,monospace}
 .cols{display:flex;gap:18px;flex-wrap:wrap}
 .pair{display:flex;gap:12px;margin:12px 0}
@@ -102,11 +114,10 @@ td:first-child,th:first-child{text-align:left;font-weight:600}
   </div>
 
   <div class="cols">
-    <div class="card" style="flex:0 0 470px;max-width:100%;padding:18px 8px 8px">
-      <div style="padding:0 16px 6px"><h2>Live activity</h2><div class="mut" style="font-size:13px">Calls where FastExec saved something</div></div>
+    <div class="card" style="flex:1 1 100%;min-width:0;padding:18px 8px 8px">
+      <div style="padding:0 16px 6px"><h2>Live activity</h2><div class="mut" style="font-size:13px">Calls where FastExec saved something. Click a row to see exactly what happened.</div></div>
       <div id="rows"></div>
     </div>
-    <div class="card" style="flex:1 1 360px;min-width:0" id="detail"></div>
   </div>
   <div class="small" id="since"></div>
   <div class="small">Sizes are measured. Tokens are estimated as bytes ÷ 3.5, like <span class="mono">fastexec stats</span>. "Without" is what the plain tool would have returned. Items marked estimate use a stated proxy. Nothing leaves this computer.</div>
@@ -129,7 +140,7 @@ const kb=b=>b>=1024?(b/(b>=10240?1024:1024)).toFixed(b>=10240?0:1)+" KB":b+" B";
 const mins=ms=>{const m=Math.round(ms/60000);if(m<1)return Math.round(ms/1000)+" s";return m>=60?Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")+" min":m+" min"};
 function el(t,a,...c){const e=document.createElement(t);for(const k in(a||{})){if(k==="style")e.style.cssText=a[k];else if(k.startsWith("on"))e[k]=a[k];else e.setAttribute(k,a[k])}for(const x of c)e.append(x);return e}
 function api(path){return fetch(path+(path.includes("?")?"&":"?")+"t="+TOKEN,{headers:{"X-Token":TOKEN}}).then(r=>{if(!r.ok)throw new Error(r.status);return r.json()})}
-const pc=(a,b)=>a>0&&a!==b?"−"+Math.round((1-b/a)*100)+"%":"–";
+const pc=(a,b)=>a>0&&Math.round((1-b/a)*100)>0?"−"+Math.round((1-b/a)*100)+"%":"–";
 
 function render(){
  const r=R;if(!r)return;
@@ -147,7 +158,7 @@ function render(){
  $("since").textContent=r.since?"Measuring since "+r.since+". Earlier calls are estimated from the sizes they recorded.":"";
 
  // counterfactual chart
- const W=560,H=230,L=46,T=16,B=26,RM=92,pw=W-L-RM,ph=H-T-B,n=r.series.length,sum=r.series.reduce((a,b)=>a+b,0)||1;
+ const W=560,H=230,L=46,T=26,B=26,RM=92,pw=W-L-RM,ph=H-T-B,n=r.series.length,sum=r.series.reduce((a,b)=>a+b,0)||1;
  const yMax=Math.max(r.without_tokens,1),ratio=r.without_tokens>0?r.sent_tokens/r.without_tokens:1;
  const kf=v=>v>=1e6?(v/1e6).toFixed(1)+"M":v>=1e4?Math.round(v/1e3)+"k":v>=1e3?(v/1e3).toFixed(1)+"k":String(Math.round(v));
  const step=(()=>{const raw=yMax/4,mag=Math.pow(10,Math.floor(Math.log10(raw))),f=raw/mag;return(f<=1?1:f<=2?2:f<=5?5:10)*mag})();
@@ -189,31 +200,55 @@ function render(){
   return el("div",{class:"row"},el("span",{class:"sw",style:"background:"+m.color}),
    el("div",{style:"flex:1 1 0;min-width:0"},el("div",{style:"font-weight:600"},m.name,...((m.est||!c.exact)?[el("span",{class:"tag"},"estimate")]:[])),el("div",{class:"mut",style:"font-size:13px"},m.why)),
    el("span",{class:"num",style:"width:96px;text-align:right;font-weight:600"},fmt(c.tokens)),
-   el("span",{class:"num mut",style:"width:44px;text-align:right"},Math.round(c.tokens/tot*100)+"%"))}):[el("div",{class:"empty"},"Nothing saved in this period yet.")]));
+   el("span",{class:"num mut",style:"width:44px;text-align:right"},Math.round(c.tokens/tot*100)+"%"))}):[el("div",{class:"empty"},"Nothing saved in this period yet.")])); 
 
  // live activity
- if(!sel&&r.recent.length)sel=r.recent[0].id;
- $("rows").replaceChildren(...(r.recent.length?r.recent.map(e=>el("button",{class:"ev","aria-pressed":String(sel===e.id),onclick:()=>{sel=e.id;render()}},
-  el("span",{class:"num mut",style:"font-size:12px;width:58px;flex:none"},e.time),
-  el("div",{style:"flex:1 1 0;min-width:0"},el("div",{style:"font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"},el("span",{class:"mono",style:"color:var(--gd)"},e.tool),"  "+(e.target||"")),
-   el("div",{class:"mut",style:"font-size:12px"},e.cats.map(c=>(CATS[c]||{name:c}).name).join(" · "))),
-  el("span",{class:"num",style:"font-weight:700;color:var(--g);flex:none"},"−"+fmt(e.saved_bytes/3.5)))):[el("div",{class:"empty"},"Calls will appear here as FastExec works.")]));
- detail();
+ $("rows").replaceChildren(...(r.recent.length?r.recent.map(e=>{const open=sel===e.id;
+  return el("div",{class:"evw"+(open?" open":"")},
+   el("button",{class:"ev","aria-expanded":String(open),onclick:()=>{sel=open?null:e.id;render()}},
+    el("span",{class:"num mut",style:"font-size:12px;width:58px;flex:none"},e.time),
+    el("div",{style:"flex:1 1 0;min-width:0"},el("div",{style:"font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"},el("span",{class:"mono",style:"color:var(--gd)"},e.tool),"  "+(e.target||"")),
+     el("div",{class:"mut",style:"font-size:12px"},e.cats.map(c=>(CATS[c]||{name:c}).name).join(" · ")+(e.sent_bytes>0?" · "+Math.round(e.saved_bytes/(e.sent_bytes+e.saved_bytes)*100)+"% smaller ("+kb(e.sent_bytes+e.saved_bytes)+" → "+kb(e.sent_bytes)+")":""))),
+    el("span",{class:"num",style:"font-weight:700;color:var(--g);flex:none"},"−"+fmt(e.saved_bytes/3.5)),
+    el("span",{class:"chev","aria-hidden":"true"},open?"▾":"▸")),
+   ...(open?[expand(e)]:[]))}):[el("div",{class:"empty"},"Calls will appear here as FastExec works.")]));
 }
-function detail(){
- const d=$("detail"),e=(R.recent||[]).find(x=>x.id===sel);
- if(!e){d.replaceChildren(el("div",{class:"empty"},"Select a call to see why it saved tokens."));return}
- const without=e.sent_bytes+e.saved_bytes;
- const uniq=[...new Set(e.cats)];
- d.replaceChildren(
-  el("div",{class:"k"},"Why this call saved tokens"),
-  el("div",{class:"mono",style:"font-size:14px;word-break:break-all;margin-top:2px"},e.tool+"  "+(e.target||"")),
-  el("div",{class:"pair"},
-   el("div",{style:"background:var(--rl)"},el("div",{style:"font-size:12px;font-weight:700;color:var(--rd)"},"Without FastExec"),el("div",{class:"num",style:"font-size:20px;font-weight:700"},kb(without))),
-   el("div",{style:"background:var(--gl)"},el("div",{style:"font-size:12px;font-weight:700;color:var(--gd)"},"With FastExec"),el("div",{class:"num",style:"font-size:20px;font-weight:700"},kb(e.sent_bytes)))),
-  el("div",{class:"k"},"What FastExec did"),
-  ...uniq.map(c=>el("div",{style:"display:flex;gap:10px;margin-top:8px"},el("span",{style:"flex:none;width:6px;height:6px;border-radius:50%;background:var(--g);margin-top:7px"}),el("span",{},(CATS[c]||{did:c}).did+((CATS[c]||{}).est?" (estimate)":"")))),
-  el("div",{class:"small",style:"margin-top:14px"},"Saved ≈ "+fmt(e.saved_bytes/3.5)+" tokens"+(e.trips?" and "+e.trips+" round trip"+(e.trips>1?"s":""):"")+"."));
+const PROXY={retry:"Estimate: the cost of the failed attempt that did not happen (the resent command plus the error text)."};
+function expand(e){
+ const without=e.sent_bytes+e.saved_bytes,tokS=e.saved_bytes/3.5,parts=e.parts||[],isList=e.tool==="tools/list";
+ const kv=(k,v,mono)=>el("div",{style:"min-width:0"},el("div",{class:"k"},k),el("div",{class:mono?"mono":"",style:"font-size:13px;word-break:break-word"},v));
+ const dur=e.duration_ms>=1000?(e.duration_ms/1000).toFixed(1)+" s":e.duration_ms+" ms";
+ const meta=[kv("When",e.date+" "+e.time),kv("Tool",e.tool,true)];
+ if(!isList){
+  meta.push(kv("Host",e.host||"local"),kv("Duration",dur),kv("Result",(e.ok?"Succeeded":"Failed")+(e.exit_code?" (exit code "+e.exit_code+")":"")),
+   kv("Request size",kb(e.bytes_in)),kv("Returned to the model",kb(e.sent_bytes)+" ≈ "+fmt(e.tokens_out||e.sent_bytes/3.5)+" tokens"));
+  if(e.client)meta.push(kv("Client",e.client))}
+ const out=[el("div",{class:"mg"},...meta)];
+ if(!isList&&e.full_target)out.push(el("div",{},el("div",{class:"k"},"The call"),el("pre",{class:"pre"},e.full_target)));
+ if(!e.ok&&e.err)out.push(el("div",{},el("div",{class:"k",style:"color:var(--rd)"},"Error returned"),el("pre",{class:"pre",style:"color:var(--rd)"},e.err)));
+ if(!isList){const pct=without>0?Math.round(e.saved_bytes/without*100):0;
+  out.push(el("div",{},el("div",{class:"k"},"What the model had to read"),
+   el("div",{class:"pair"},
+    el("div",{style:"background:var(--rl)"},el("div",{style:"font-size:12px;font-weight:700;color:var(--rd)"},"Without FastExec"),el("div",{class:"num",style:"font-size:20px;font-weight:700"},kb(without)),el("div",{class:"small num"},"≈ "+fmt(without/3.5)+" tokens")),
+    el("div",{style:"background:var(--gl)"},el("div",{style:"font-size:12px;font-weight:700;color:var(--gd)"},"With FastExec"),el("div",{class:"num",style:"font-size:20px;font-weight:700"},kb(e.sent_bytes)),el("div",{class:"small num"},"≈ "+fmt(e.sent_bytes/3.5)+" tokens"))),
+   el("div",{class:"bar",role:"img","aria-label":pct+"% smaller"},el("div",{style:"width:"+Math.max(1,100-pct)+"%"})),
+   el("div",{class:"small",style:"margin-top:4px"},pct+"% less to read. The bar shows what remained of the original size.")))}
+ const body=[el("div",{class:"k"},"What FastExec did, step by step")];
+ if(parts.length)parts.forEach(pt=>{const m=CATS[pt.cat]||{name:pt.cat,did:pt.cat,color:"#999"},share=e.saved_bytes?Math.round(pt.bytes/e.saved_bytes*100):0;
+  body.push(el("div",{class:"part"},
+   el("div",{style:"display:flex;gap:8px;align-items:center"},el("span",{class:"sw",style:"background:"+m.color}),el("span",{style:"font-weight:600;flex:1 1 0"},m.name,...((m.est||!pt.exact)?[el("span",{class:"tag"},"estimate")]:[])),el("span",{class:"num",style:"font-weight:700"},"−"+fmt(pt.bytes/3.5)+" tokens"),el("span",{class:"num mut",style:"width:40px;text-align:right"},share+"%")),
+   el("div",{class:"pl"},
+    el("div",{},m.did),
+    ...(pt.note?[el("div",{},pt.note)]:[]),
+    ...(pt.before>0?[el("div",{class:"mut"},"Size: "+kb(pt.before)+" → "+kb(pt.after)+" (−"+Math.round(pt.bytes/pt.before*100)+"%)")]:[]),
+    ...((pt.trips||pt.ms)?[el("div",{class:"mut"},"Avoided "+(pt.trips?pt.trips+" round trip"+(pt.trips>1?"s":""):"")+(pt.trips&&pt.ms?" and ":"")+(pt.ms?"about "+mins(pt.ms):"")+" of waiting.")]:[]),
+    el("div",{class:"mut",style:"font-size:12px"},pt.exact?"Measured: difference between the raw size and what was returned.":(PROXY[pt.cat]||"Estimate based on a stated proxy."))))) });
+ else [...new Set(e.cats)].forEach(c=>body.push(el("div",{style:"display:flex;gap:10px;margin-top:6px"},el("span",{style:"flex:none;width:6px;height:6px;border-radius:50%;background:var(--g);margin-top:7px"}),el("span",{},(CATS[c]||{did:c}).did+((CATS[c]||{}).est?" (estimate)":"")))));
+ out.push(el("div",{},...body));
+ if(e.marks)out.push(el("div",{},el("div",{class:"k"},"FastExec notes on this call"),el("div",{class:"mono",style:"font-size:12px;word-break:break-word"},e.marks)));
+ if(e.truncated)out.push(el("div",{class:"small"},"The output was truncated before it reached the model."));
+ out.push(el("div",{style:"font-size:13px;font-weight:600"},"Total saved ≈ "+fmt(tokS)+" tokens (≈ $"+(tokS*3/1e6).toFixed(4)+" at $3 per million)"+(e.trips?", "+e.trips+" round trip"+(e.trips>1?"s":"")+" avoided":"")+"."));
+ return el("div",{class:"xp"},...out);
 }
 async function load(){
  try{R=await api("/api/report?p="+period);lastID=R.last_id;$("dot").className="dot";$("liveTxt").textContent="Live · updated "+R.generated;render()}

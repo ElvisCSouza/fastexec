@@ -27,14 +27,39 @@ type CatTotal struct {
 }
 
 type SavingEvent struct {
-	ID         int64    `json:"id"`
-	Time       string   `json:"time"`
-	Tool       string   `json:"tool"`
-	Target     string   `json:"target"`
-	SentBytes  int64    `json:"sent_bytes"`
-	SavedBytes int64    `json:"saved_bytes"`
-	Cats       []string `json:"cats"`
-	Trips      int64    `json:"trips"`
+	ID         int64       `json:"id"`
+	Time       string      `json:"time"`
+	Date       string      `json:"date"`
+	Tool       string      `json:"tool"`
+	Target     string      `json:"target"`
+	FullTarget string      `json:"full_target"`
+	SentBytes  int64       `json:"sent_bytes"`
+	SavedBytes int64       `json:"saved_bytes"`
+	Cats       []string    `json:"cats"`
+	Trips      int64       `json:"trips"`
+	Parts      []EventPart `json:"parts"`
+	Host       string      `json:"host"`
+	DurationMs int64       `json:"duration_ms"`
+	OK         bool        `json:"ok"`
+	ExitCode   int64       `json:"exit_code"`
+	Err        string      `json:"err"`
+	BytesIn    int64       `json:"bytes_in"`
+	TokensOut  int64       `json:"tokens_out"`
+	Client     string      `json:"client"`
+	Marks      string      `json:"marks"`
+	Truncated  bool        `json:"truncated"`
+}
+
+// EventPart é a parte da economia de uma chamada que veio de uma categoria.
+type EventPart struct {
+	Cat    string `json:"cat"`
+	Bytes  int64  `json:"bytes"`
+	Trips  int64  `json:"trips"`
+	Ms     int64  `json:"ms"`
+	Exact  bool   `json:"exact"`
+	Before int64  `json:"before"`
+	After  int64  `json:"after"`
+	Note   string `json:"note"`
 }
 
 type SavingsReport struct {
@@ -151,24 +176,95 @@ func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
 	}
 
 	// atividade recente: uma linha por chamada
-	erows, err := db.Query(`SELECT MAX(s.id), strftime('%H:%M:%S', MIN(s.timestamp),'localtime'), COALESCE(a.tool,'tools/list'),
-		COALESCE(a.command_summary,''), COALESCE(a.bytes_out,0), SUM(s.bytes), group_concat(s.cat), SUM(s.trips)
+	erows, err := db.Query(`SELECT MAX(s.id), MAX(s.audit_id), strftime('%H:%M:%S', MIN(s.timestamp),'localtime'),
+		strftime('%Y-%m-%d', MIN(s.timestamp),'localtime'), COALESCE(a.tool,'tools/list'),
+		COALESCE(a.command_summary,''), COALESCE(a.bytes_out,0), SUM(s.bytes), group_concat(s.cat), SUM(s.trips),
+		COALESCE(a.host,''), COALESCE(a.duration_ms,0), COALESCE(a.success,1), COALESCE(a.exit_code,0),
+		COALESCE(a.error_message,''), COALESCE(a.bytes_in,0), COALESCE(a.est_tokens_out,0), COALESCE(a.client,''),
+		COALESCE(a.marks,''), COALESCE(a.truncated,0)
 		FROM saving s LEFT JOIN audit a ON a.id = s.audit_id
 		GROUP BY CASE WHEN s.audit_id = 0 THEN -s.id ELSE s.audit_id END
 		ORDER BY MAX(s.id) DESC LIMIT 40`)
 	if err == nil {
+		var keys []int64
 		for erows.Next() {
 			var e SavingEvent
 			var cats string
-			if erows.Scan(&e.ID, &e.Time, &e.Tool, &e.Target, &e.SentBytes, &e.SavedBytes, &cats, &e.Trips) == nil {
+			var aid, okInt, trunc int64
+			if erows.Scan(&e.ID, &aid, &e.Time, &e.Date, &e.Tool, &e.FullTarget, &e.SentBytes, &e.SavedBytes, &cats, &e.Trips,
+				&e.Host, &e.DurationMs, &okInt, &e.ExitCode, &e.Err, &e.BytesIn, &e.TokensOut, &e.Client, &e.Marks, &trunc) == nil {
 				e.Cats = strings.Split(cats, ",")
+				e.Parts = []EventPart{}
+				e.OK, e.Truncated = okInt != 0, trunc != 0
+				e.Target = e.FullTarget
 				if len(e.Target) > 90 {
 					e.Target = e.Target[:90] + "…"
 				}
+				if len(e.FullTarget) > 4000 {
+					e.FullTarget = e.FullTarget[:4000] + "…"
+				}
+				if len(e.Err) > 600 {
+					e.Err = e.Err[:600] + "…"
+				}
+				key := aid
+				if aid == 0 {
+					key = -e.ID
+				}
+				keys = append(keys, key)
 				r.Recent = append(r.Recent, e)
 			}
 		}
 		erows.Close()
+		// partes por categoria de cada chamada (com antes/depois e a nota)
+		if len(keys) > 0 {
+			var args []any
+			var aidQ, idQ []string
+			for _, k := range keys {
+				if k > 0 {
+					aidQ = append(aidQ, "?")
+				} else {
+					idQ = append(idQ, "?")
+				}
+			}
+			for _, k := range keys {
+				if k > 0 {
+					args = append(args, k)
+				}
+			}
+			for _, k := range keys {
+				if k < 0 {
+					args = append(args, -k)
+				}
+			}
+			cond := "0"
+			if len(aidQ) > 0 {
+				cond = "audit_id IN (" + strings.Join(aidQ, ",") + ")"
+			}
+			if len(idQ) > 0 {
+				cond += " OR (audit_id = 0 AND id IN (" + strings.Join(idQ, ",") + "))"
+			}
+			by := map[int64][]EventPart{}
+			if prow, perr := db.Query(`SELECT audit_id, id, cat, bytes, trips, ms, exact, size_before, size_after, note FROM saving WHERE `+cond+` ORDER BY id`, args...); perr == nil {
+				for prow.Next() {
+					var aid, id, ex int64
+					var p EventPart
+					if prow.Scan(&aid, &id, &p.Cat, &p.Bytes, &p.Trips, &p.Ms, &ex, &p.Before, &p.After, &p.Note) == nil {
+						p.Exact = ex == 1
+						k := aid
+						if aid == 0 {
+							k = -id
+						}
+						by[k] = append(by[k], p)
+					}
+				}
+				prow.Close()
+			}
+			for i := range r.Recent {
+				if ps, ok := by[keys[i]]; ok {
+					r.Recent[i].Parts = ps
+				}
+			}
+		}
 	}
 	_ = db.QueryRow(`SELECT COALESCE(MAX(id),0) FROM saving`).Scan(&r.LastID)
 	_ = db.QueryRow(`SELECT strftime('%Y-%m-%d %H:%M', value, 'localtime') FROM meta WHERE key='savings_since'`).Scan(&r.Since)

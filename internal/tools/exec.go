@@ -17,7 +17,7 @@ import (
 // avoidedRetry anota uma chamada que o FastExec respondeu ou corrigiu sozinho: o agente não precisou
 // errar, ler o erro e reenviar. Os bytes são um proxy: o comando reenviado e o texto devolvido.
 func avoidedRetry(label, out string) {
-	telemetry.NoteAvoided(telemetry.CatRetry, 2*len(label)+len(out), 0)
+	telemetry.NoteAvoidedDetail(telemetry.CatRetry, 2*len(label)+len(out), 0, retryNote(label, out))
 }
 
 // MaxClientTimeoutMs é o teto do timeout_ms do exec: o Claude Desktop corta a chamada do dispositivo aos
@@ -317,7 +317,9 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 	needle := searchNeedle(command) // termo buscado: linha gigante cortada mostra a ocorrência
 	stdout := cleanOutputFor(res.Stdout, needle)
 	stderr := cleanOutputFor(res.Stderr, needle)
-	telemetry.NoteSaving(telemetry.CatClean, len(res.Stdout)+len(res.Stderr), len(stdout)+len(stderr))
+	if rawN, cleanN := len(res.Stdout)+len(res.Stderr), len(stdout)+len(stderr); rawN > cleanN {
+		telemetry.NoteSavingDetail(telemetry.CatClean, rawN, cleanN, cleanNote(res.Stdout+res.Stderr, stdout+stderr))
+	}
 
 	if res.TimedOut {
 		return formatTimeout(res.Duration, stdout, stderr)
@@ -403,7 +405,8 @@ func stderrErrors(stderr string) string {
 // formatTimeout devolve ao agente um desfecho inequívoco: estourou o prazo, a árvore foi encerrada e o que foi emitido
 // até o corte. Assim ele nunca precisa adivinhar se o comando rodou.
 func formatTimeout(elapsedMs int64, stdout, stderr string) (string, error) {
-	telemetry.NoteAvoided(telemetry.CatTimeout, len(stdout)+len(stderr), 0)
+	telemetry.NoteAvoidedDetail(telemetry.CatTimeout, len(stdout)+len(stderr), 0,
+		fmt.Sprintf("Timed out after %.1f s; returned the %d B emitted so far instead of letting the client cut the call", float64(elapsedMs)/1000, len(stdout)+len(stderr)))
 	head := fmt.Sprintf("[timeout after %.1fs; process tree killed]", float64(elapsedMs)/1000)
 	partial := stdout
 	if stderr != "" {

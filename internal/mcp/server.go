@@ -341,7 +341,8 @@ func (s *Server) serve(r io.Reader) error {
 
 		case "tools/list":
 			if n := tools.InactiveSchemaBytes(); n > 0 && config.Get().TelemetryOn() {
-				go telemetry.RecordSaving(telemetry.Saving{Cat: telemetry.CatSchema, Bytes: n, Exact: true})
+				go telemetry.RecordSaving(telemetry.Saving{Cat: telemetry.CatSchema, Bytes: n, Exact: true,
+					Note: fmt.Sprintf("%d B of optional tool schemas were left out of this tool list; they load on demand", n)})
 			}
 			s.writeResponse(JSONRPCResponse{
 				JSONRPC: "2.0",

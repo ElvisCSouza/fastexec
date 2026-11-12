@@ -29,11 +29,14 @@ const AvoidedRoundTripMs = 15000
 
 // Saving é uma economia registrada.
 type Saving struct {
-	Cat   string `json:"cat"`
-	Bytes int    `json:"bytes"`  // bytes que o agente deixou de ler/enviar (medido ou proxy documentado)
-	Trips int    `json:"trips"`  // idas ao modelo evitadas
-	Ms    int64  `json:"ms"`     // tempo evitado estimado
-	Exact bool   `json:"exact"`  // true: diferença de tamanhos medida; false: estimativa
+	Cat    string `json:"cat"`
+	Bytes  int    `json:"bytes"`  // bytes que o agente deixou de ler/enviar (medido ou proxy documentado)
+	Trips  int    `json:"trips"`  // idas ao modelo evitadas
+	Ms     int64  `json:"ms"`     // tempo evitado estimado
+	Exact  bool   `json:"exact"`  // true: diferença de tamanhos medida; false: estimativa
+	Before int    `json:"before"` // tamanho que a ferramenta comum devolveria (0 se não medido)
+	After  int    `json:"after"`  // tamanho realmente devolvido
+	Note   string `json:"note"`   // o que aconteceu, em uma frase com números (aparece na tela de detalhes)
 }
 
 type callLedger struct {
@@ -81,16 +84,22 @@ func add(s Saving) {
 }
 
 // NoteSaving anota uma redução medida: before era o tamanho da saída crua, after o que foi devolvido.
-func NoteSaving(cat string, before, after int) {
+func NoteSaving(cat string, before, after int) { NoteSavingDetail(cat, before, after, "") }
+
+// NoteSavingDetail é o NoteSaving com uma nota (o que foi cortado ou removido, com números).
+func NoteSavingDetail(cat string, before, after int, note string) {
 	if before > after {
-		add(Saving{Cat: cat, Bytes: before - after, Exact: true})
+		add(Saving{Cat: cat, Bytes: before - after, Exact: true, Before: before, After: after, Note: note})
 	}
 }
 
 // NoteAvoided anota uma ida ao modelo evitada. bytes é um proxy: o que a tentativa que falharia
 // teria custado (comando reenviado e mensagem de erro); ms é tempo evitado além da ida ao modelo.
-func NoteAvoided(cat string, bytes int, ms int64) {
-	add(Saving{Cat: cat, Bytes: bytes, Trips: 1, Ms: AvoidedRoundTripMs + ms})
+func NoteAvoided(cat string, bytes int, ms int64) { NoteAvoidedDetail(cat, bytes, ms, "") }
+
+// NoteAvoidedDetail é o NoteAvoided com uma nota (o que o FastExec corrigiu ou respondeu).
+func NoteAvoidedDetail(cat string, bytes int, ms int64, note string) {
+	add(Saving{Cat: cat, Bytes: bytes, Trips: 1, Ms: AvoidedRoundTripMs + ms, Note: note})
 }
 
 // NoteBytes anota economia medida sem comparação de tamanhos (ex.: partes do esquema não enviadas).
