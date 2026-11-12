@@ -507,12 +507,14 @@ func bashPlanFor(host, command string) ([]string, string, bool) {
 		return nil, "", false // sem bash: fica a nota acionável de unixShellHint
 	}
 	line, ex := windowsPathsToPosix(command)
-	note := fmt.Sprintf("[FastExec Auto-Remediation] Unix-style command ran in bash (%s) instead of cmd.exe on this "+
-		"Windows host", bash)
+	// Nota curta de propósito: ela volta em toda chamada Unix do canal e o texto é cobrado de novo em todo turno
+	// seguinte (o bench roda com o cache do provedor desligado), então cada palavra dela sai do orçamento do modelo
+	// várias vezes. Continua dizendo o que rodou e qual é o próximo passo — o que sai é a explicação repetida.
+	note := fmt.Sprintf("[FastExec Auto-Remediation] Unix-style line ran in bash (%s) instead of cmd.exe (Windows host)", bash)
 	if ex != "" {
-		note += ", with " + ex + " translated for bash"
+		note += ", with " + ex + " translated"
 	}
-	note += ". Next time pass the line as argv ['bash','-lc','<the whole line>']."
+	note += ". Next time pass it as argv ['bash','-lc','<the whole line>']."
 	return []string{bash, "-lc", line}, note, true
 }
 

@@ -351,7 +351,7 @@ var reRecursiveSearch = regexp.MustCompile(`(?i)-recurse\b|\bgrep\s+-[a-z]*r|\bg
 
 const broadSearchMinLines = 10
 
-const broadSearchHint = "[FastExec FastHint] Searching by concept? code_outline(path=<repo or folder>, symbol='<word>') lists every declaration whose name contains the word, with line numbers, in one call; then read_file(path, start_line, end_line)."
+const broadSearchHint = "[FastExec FastHint] Concept search: code_outline(path=<repo or folder>, symbol='<word>') lists the declarations whose name contains the word, with line numbers, in one call."
 
 var reSearchProgram = regexp.MustCompile(`(?i)\bselect-string\b|\bsls\b|\bgrep\b|\brg\b|\bfindstr\b`)
 

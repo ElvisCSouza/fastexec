@@ -99,7 +99,10 @@ background job already says how long it ran.
 
 A search that finds nothing (exit 1, no output at all) answers `no result (exit 1)` instead of looking like a failure.
 If the same search wrote anything to stderr, that message is shown instead: `no result` is only for real silence.
-A non-zero exit is reported with its code and the first meaningful error line.
+A non-zero exit is reported with its code and the first meaningful error line. When the command wrote to **both**
+channels, the stdout is kept as well, under `[stdout before the failure]` with a `[FastExec]` line saying it came
+before the failure: in a compound line (`grep … && python …`) the first stage may have printed exactly what was asked
+and only the second one failed — dropping it made the model re-run the whole command just to read output it already had.
 
 ### Guards and corrections
 
@@ -123,7 +126,7 @@ Each one tells the model what it did and what to do next time.
 | edit by script (`Get-Content ... -replace ... Set-Content`, `sed -i`) | Hint to use `edit_file` with `edits` |
 | command that deletes code files (`rm`, `del`/`erase`, `Remove-Item`, `git rm`), on a repository that already has a graph index | After a successful run, one `[graph] <file> deleted: ... still used in N files: a.go:12, ...` line naming the symbols of the deleted file that other files still use — the index consulted is the one from **before** the deletion. Silent without an index, on a remote host, or when nothing uses those symbols (see `edit_file`) |
 | no `host`, remote `default_host`, Windows drive path in `command`/`argv`/`cwd` | Runs on host `local`, with a `[FastExec Auto-Remediation]` note telling the model to pass `host='local'` next time |
-| Unix-style line (`grep`/`wc`/`sort`/`sed`/`awk`/`cut`/`ls -la`, `$(...)`, single quotes, `/dev/null`, `find` with Unix flags, Git Bash path) with no cmd signal, on a Windows `local` host that has `bash` (Git for Windows) | `bash -lc <line>` is chosen **before** running: one execution, same cwd, same timeout, same guards. The output carries `[FastExec Auto-Remediation] Unix-style command ran in bash (<path>) instead of cmd.exe`, plus the path translation when one happened |
+| Unix-style line (`grep`/`wc`/`sort`/`sed`/`awk`/`cut`/`ls -la`, `$(...)`, single quotes, `/dev/null`, `find` with Unix flags, Git Bash path) with no cmd signal, on a Windows `local` host that has `bash` (Git for Windows) | `bash -lc <line>` is chosen **before** running: one execution, same cwd, same timeout, same guards. The output carries a short `[FastExec Auto-Remediation] Unix-style line ran in bash (<path>) instead of cmd.exe (Windows host)` note with the next step, plus the path translation when one happened |
 | Line that starts with a POSIX assignment (`start=$(date +%s%N); …`), with a Unix signal, on a Windows `local` host | Goes to `bash -lc` even when the line also carries a `%NAME%`-looking token (`+%s%N` is not a cmd variable) or a program both shells know (`pwsh`). No valid `cmd.exe` line starts with `VAR=`, and the first token would become the `START` builtin, which swallows the rest of the line: the call would only answer on the timeout (measured: 300 s for a 50 s script) |
 | Unix tool missing on a Windows `local` host (`grep`, `rg`, `wc`, `head`, `tail`, `sed`, `awk`, `xargs`, `cat`, `ls`, `python`) on a command that failed with no stdout | `[FastExec Hint]` naming the tool, saying it does not exist here (commands run through `cmd.exe`) and giving the native alternative (`read_file`, `code_outline`, `file_ops`, or `pwsh` with `Select-String`/`Get-ChildItem` through `argv`+`input`); when `bash` exists on the host it also offers `argv ['bash','-lc','<the whole line>']` |
 | `find`/`sort` from System32 used with Unix flags (`-printf`, `-name`, `-rn`) | Same hint, saying the binary that ran is the Windows one and takes different flags |
