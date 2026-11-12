@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,7 +14,7 @@ import (
 // PATH da máquina que roda o teste.
 func semAmbienteUnix(t *testing.T, existentes ...string) {
 	t.Helper()
-	origPath, origBash, origDrive := toolPath, bashOnHost, driveExists
+	origPath, origBash, origBashPath, origDrive := toolPath, bashOnHost, bashPathOnHost, driveExists
 	toolPath = func(name string) (string, error) {
 		for _, e := range existentes {
 			if name == e {
@@ -21,9 +23,26 @@ func semAmbienteUnix(t *testing.T, existentes ...string) {
 		}
 		return "", exec.ErrNotFound
 	}
+	// A sonda real acharia o Git Bash desta máquina e mudaria o caminho de execução dos testes.
+	bashPathOnHost = func() string { return "" }
 	bashOnHost = func() bool { return false }
 	driveExists = func(l byte) bool { return strings.ToUpper(string(l)) == "W" || strings.ToUpper(string(l)) == "C" }
-	t.Cleanup(func() { toolPath, bashOnHost, driveExists = origPath, origBash, origDrive })
+	t.Cleanup(func() {
+		toolPath, bashOnHost, bashPathOnHost, driveExists = origPath, origBash, origBashPath, origDrive
+	})
+}
+
+// comBashReal: cenário do host Windows que tem Git Bash de verdade. Pula quando a máquina não tem bash.
+func comBashReal(t *testing.T) string {
+	t.Helper()
+	semAmbienteUnix(t)
+	bashPathOnHost = probeBashPathOnHost
+	bashOnHost = func() bool { return bashPathOnHost() != "" }
+	bash := bashPathOnHost()
+	if bash == "" {
+		t.Skip("sem Git Bash nesta máquina")
+	}
+	return bash
 }
 
 // TestUnixShellHintFerramentaAusente: os comandos do benchmark no cmd.exe ganham nota com a alternativa nativa.
@@ -254,5 +273,202 @@ func TestExecGitBashPathTraduzidoComAviso(t *testing.T) {
 	}
 	if !strings.Contains(out, "[FastExec Auto-Remediation]") || !strings.Contains(out, "'/w/ReposHomeLab'") {
 		t.Errorf("saída sem a nota de tradução: %q", out)
+	}
+}
+
+// TestUnixStyleLineClassifica: a decisão de shell é da linha inteira, antes de rodar. Sinal Unix forte sem sinal de
+// cmd/PowerShell vai para o bash; qualquer sinal de cmd (ou dúvida) fica no cmd.exe, como antes desta correção.
+func TestUnixStyleLineClassifica(t *testing.T) {
+	semAmbienteUnix(t)
+	casos := []struct {
+		label string
+		unix  bool
+		nota  string
+	}{
+		{`grep -rn "func main" . | wc -l`, true, "pipeline com wc"},
+		{`cat README.md | sort | head -5`, true, "sort no pipeline"},
+		{`cut -d: -f1 /etc/passwd`, true, "cut"},
+		{`ls -la`, true, "ls -la"},
+		{`sed -n '1,20p' README.md`, true, "sed"},
+		{`awk '{print $1}' x.txt`, true, "awk"},
+		{`cd /w/Data/bench && ls`, true, "caminho estilo Git Bash"},
+		{`echo $(date)`, true, "substituição de comando"},
+		{`grep x y.txt > /dev/null`, true, "/dev/null"},
+		{`find . -name "*.go"`, true, "find com flag Unix"},
+		{`cat x.txt | grep y >/dev/null 2>&1`, true, "2>&1 com ferramenta Unix"},
+		{`findstr /s /i foo *.go`, false, "findstr do cmd"},
+		{`dir /b`, false, "dir"},
+		{`type x.txt`, false, "type"},
+		{`echo %TEMP%`, false, "variável do cmd"},
+		{`for /r . %f in (*.go) do echo %f`, false, "for /r do cmd"},
+		{`set X=1 && echo %X%`, false, "set do cmd"},
+		{`Select-String -Path a.cpp -Pattern 'struct Row'`, false, "cmdlet do PowerShell"},
+		{`powershell -c "ls"`, false, "powershell explícito"},
+		{`type x.txt | sort | head -5`, false, "type vence o sort"},
+		{`go build ./...`, false, "sem sinal nenhum"},
+		{`echo ok`, false, "ambíguo"},
+		{`python -c "print(1)"`, false, "ferramenta dos dois lados"},
+		{`bash -lc "grep -rn x . | wc -l"`, false, "já vai para um shell Unix"},
+		{`wsl grep -rn x .`, false, "wsl"},
+		{"", false, "linha vazia"},
+	}
+	for _, c := range casos {
+		if got := unixStyleLine(c.label); got != c.unix {
+			t.Errorf("%s (%q): esperava unixStyleLine=%v, veio %v", c.nota, c.label, c.unix, got)
+		}
+	}
+}
+
+// TestBashPlanForSemBash: sem bash no host nada muda — o caminho segue o cmd.exe e a nota acionável de unixShellHint
+// é quem orienta a próxima chamada.
+func TestBashPlanForSemBash(t *testing.T) {
+	semAmbienteUnix(t)
+	argv, note, ok := bashPlanFor("local", `grep -rn x . | wc -l`)
+	if ok || argv != nil || note != "" {
+		t.Errorf("sem bash no host não pode haver plano: %v / %q / %v", argv, note, ok)
+	}
+	if hint := unixShellHint(`grep -rn x . | wc -l`); !strings.Contains(hint, "[FastExec Hint]") {
+		t.Errorf("sem bash deve sobrar a nota acionável: %q", hint)
+	}
+}
+
+// TestBashPlanForComBash: linha Unix com bash no host vira argv ['bash','-lc',<linha>] — uma execução só, sem passar
+// pelo cmd.exe.
+func TestBashPlanForComBash(t *testing.T) {
+	bash := comBashReal(t)
+	argv, note, ok := bashPlanFor("local", `grep -rn "func main" . | wc -l`)
+	if !ok {
+		t.Fatal("linha Unix com bash no host deveria virar plano de bash")
+	}
+	if len(argv) != 3 || argv[0] != bash || argv[1] != "-lc" || argv[2] != `grep -rn "func main" . | wc -l` {
+		t.Errorf("argv errado: %#v", argv)
+	}
+	if !strings.Contains(note, "[FastExec Auto-Remediation]") || !strings.Contains(note, "ran in bash") ||
+		!strings.Contains(note, "argv ['bash','-lc'") {
+		t.Errorf("nota sem o que rodou e como repetir: %q", note)
+	}
+
+	// comando de cmd não vira plano, mesmo com bash presente.
+	for _, label := range []string{`findstr /s /i foo *.go`, `dir /b`, `echo ok`, `powershell -c "ls"`} {
+		if _, _, ok := bashPlanFor("local", label); ok {
+			t.Errorf("%q: linha de cmd não pode virar plano de bash", label)
+		}
+	}
+	// argv explícito nunca passa por aqui (o chamador só olha 'command').
+	if _, _, ok := bashPlanFor("local", "bash -lc \"grep x . | wc -l\""); ok {
+		t.Error("linha que já chama um shell Unix não pode ser convertida de novo")
+	}
+}
+
+// TestBashPlanForTraduzCaminhoWindows: no ramo bash o 'W:\x' sem aspas perderia as barras, então o caminho é
+// traduzido antes de rodar e a nota diz o que mudou.
+func TestBashPlanForTraduzCaminhoWindows(t *testing.T) {
+	comBashReal(t)
+	argv, note, ok := bashPlanFor("local", `ls W:\ReposHomeLab\fastexec | head -3`)
+	if !ok {
+		t.Fatal("linha Unix com caminho Windows deveria virar plano de bash")
+	}
+	if argv[2] != `ls /w/ReposHomeLab/fastexec | head -3` {
+		t.Errorf("caminho não traduzido para o bash: %q", argv[2])
+	}
+	if !strings.Contains(note, `'W:\ReposHomeLab\fastexec' -> '/w/ReposHomeLab/fastexec'`) {
+		t.Errorf("nota sem a tradução feita: %q", note)
+	}
+}
+
+// TestWindowsPathsToPosix: tradução Windows -> POSIX (o sentido inverso é gitBashToWindows) só com unidade existente.
+func TestWindowsPathsToPosix(t *testing.T) {
+	semAmbienteUnix(t)
+	casos := []struct{ in, out, ex string }{
+		{`ls W:\ReposHomeLab\fastexec`, `ls /w/ReposHomeLab/fastexec`, `'W:\ReposHomeLab\fastexec' -> '/w/ReposHomeLab/fastexec'`},
+		{`cat "C:\tmp\a.txt"`, `cat "/c/tmp/a.txt"`, `'C:\tmp\a.txt' -> '/c/tmp/a.txt'`},
+		{`ls /w/ReposHomeLab`, `ls /w/ReposHomeLab`, ""},   // já POSIX
+		{`ls U:\nada`, `ls U:\nada`, ""},                   // unidade inexistente
+		{`curl http://x/y:1/z`, `curl http://x/y:1/z`, ""}, // URL não é caminho de unidade
+		{`echo ok`, `echo ok`, ""},
+	}
+	for _, c := range casos {
+		got, ex := windowsPathsToPosix(c.in)
+		if got != c.out || ex != c.ex {
+			t.Errorf("%q: esperava %q / %q, veio %q / %q", c.in, c.out, c.ex, got, ex)
+		}
+	}
+}
+
+// TestExecUnixPipelineRodaNoBash: ponta a ponta no host local — a linha Unix roda de primeira no bash, com a nota, e
+// o comando de cmd continua no cmd.exe.
+func TestExecUnixPipelineRodaNoBash(t *testing.T) {
+	comBashReal(t)
+	out, err := HandleExec(ExecArgs{Host: "local", Command: `printf 'b\na\n' | sort | head -1`})
+	if err != nil {
+		t.Fatalf("HandleExec falhou: %v", err)
+	}
+	if !strings.Contains(out, "[FastExec Auto-Remediation]") || !strings.Contains(out, "ran in bash") {
+		t.Fatalf("saída sem a nota do bash: %q", out)
+	}
+	if !strings.Contains(out, "\na\n") {
+		t.Errorf("o pipeline não rodou: %q", out)
+	}
+	if strings.Contains(out, "[FastExec Hint]") {
+		t.Errorf("depois de rodar no bash não cabe a dica de ferramenta ausente: %q", out)
+	}
+
+	// linha de cmd: nem nota de bash, nem troca de shell.
+	out, err = HandleExec(ExecArgs{Host: "local", Command: `findstr /c:"a" nul`})
+	if err != nil && !strings.Contains(out, "[FastExec") {
+		t.Fatalf("HandleExec falhou: %v", err)
+	}
+	if strings.Contains(out, "ran in bash") {
+		t.Errorf("linha de cmd não pode ir para o bash: %q", out)
+	}
+}
+
+// TestExecPipelineDoBenchmarkRodaNoBash: a linha exata do ds-full4 que morria no cmd.exe ('grep ... | wc -l', com o
+// guard de busca ampla e as exclusões de grep já aplicadas) roda de primeira no bash e devolve a contagem.
+func TestExecPipelineDoBenchmarkRodaNoBash(t *testing.T) {
+	comBashReal(t)
+	dir := t.TempDir()
+	body := "package main\n\nfunc main() {}\n\nfunc other() {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := HandleExec(ExecArgs{Host: "local", Cwd: dir, Command: `grep -rn "func main" . | wc -l`})
+	if err != nil {
+		t.Fatalf("HandleExec falhou: %v", err)
+	}
+	if !strings.Contains(out, "ran in bash") {
+		t.Errorf("a linha do benchmark devia rodar no bash: %q", out)
+	}
+	if !strings.Contains(out, "\n1\n") && !strings.Contains(out, "\r\n1\r\n") {
+		t.Errorf("a contagem do pipeline não saiu: %q", out)
+	}
+}
+
+// TestLeituraNativaComCaminhoGitBash: numa linha que vai para o bash o 'command' fica em forma POSIX, mas a remediação
+// nativa (read_file/file_ops) lê o caminho antes disso — ali ele precisa da unidade Windows. Sem isso 'cat /c/...'
+// deixaria de ser lido e 'ls /c/...' deixaria de ser listado nativamente.
+func TestLeituraNativaComCaminhoGitBash(t *testing.T) {
+	comBashReal(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "p.txt")
+	if err := os.WriteFile(file, []byte("conteudo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d := strings.ToUpper(file[:1]); d != "C" && d != "W" {
+		t.Skipf("diretório temporário em unidade fora do cenário de teste: %s", d)
+	}
+	posix := "/" + strings.ToLower(file[:1]) + strings.ReplaceAll(file[2:], `\`, "/")
+
+	out, err := HandleExec(ExecArgs{Host: "local", Command: "cat " + posix})
+	if err != nil || !strings.Contains(out, "conteudo") {
+		t.Errorf("'cat %s' devia ser lido nativamente: err=%v out=%q", posix, err, out)
+	}
+	if !strings.Contains(out, "was run as the native 'read_file'") {
+		t.Errorf("saída sem a remediação de leitura: %q", out)
+	}
+
+	out, err = HandleExec(ExecArgs{Host: "local", Command: "ls " + posix[:strings.LastIndex(posix, "/")]})
+	if err != nil || !strings.Contains(out, "p.txt") {
+		t.Errorf("'ls <dir posix>' devia ser listado nativamente: err=%v out=%q", err, out)
 	}
 }

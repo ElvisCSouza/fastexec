@@ -2,15 +2,19 @@ package tools
 
 // unix_shell.go: o host 'local' é Windows e o exec roda por cmd.exe. A LLM, vinda de ambiente Unix, manda linhas
 // estilo bash ('grep -rnE ... | wc -l', 'find . -printf', 'sort -rn | head', 'cd /w/Data/...') e recebia "no result
-// (exit 1)" ou uma mensagem de erro do cmd sem dizer o que fazer. Aqui ficam duas correções, ambas com aviso:
+// (exit 1)" ou uma mensagem de erro do cmd sem dizer o que fazer. Aqui ficam três correções, todas com aviso:
 //
-//  1. nota (nunca no lugar do erro) quando um estágio do comando usa ferramenta Unix que não existe neste host, ou
-//     usa o homônimo do Windows (find.exe/sort.exe do System32) com sintaxe Unix;
-//  2. tradução de caminho estilo Git Bash (/w/..., /c/...) para a unidade Windows (W:\...) antes de rodar.
+//  1. escolha do shell antes de rodar: linha claramente Unix + bash presente no host = a linha inteira vai para
+//     'bash -lc', com os caminhos de unidade Windows traduzidos para o que o bash entende (uma execução só, nada de
+//     rodar no cmd e reenviar depois);
+//  2. nota (nunca no lugar do erro) quando um estágio do comando usa ferramenta Unix que não existe neste host, ou
+//     usa o homônimo do Windows (find.exe/sort.exe do System32) com sintaxe Unix — e não há bash para resolver;
+//  3. tradução de caminho estilo Git Bash (/w/..., /c/...) para a unidade Windows (W:\...) antes de rodar no cmd.
 //
-// A detecção é conservadora de propósito: só age em host local Windows, em comando que falhou sem produzir saída, e
-// só fala de ferramenta que realmente não resolve neste host (sondagem real de PATH). Comando que funcionou não é
-// tocado. Nenhum parâmetro novo: a correção é interna.
+// A detecção é conservadora de propósito: só age em host local Windows; a classificação exige sinal Unix forte e
+// nenhum sinal de cmd/PowerShell; a nota só aparece em comando que falhou sem produzir saída, e só fala de ferramenta
+// que realmente não resolve neste host (sondagem real de PATH). Na dúvida, cmd.exe, como antes. Comando que funcionou
+// não é tocado. Nenhum parâmetro novo: a correção é interna.
 
 import (
 	"fmt"
@@ -19,6 +23,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 
 	"homelab/fastexec/internal/transport"
 )
@@ -42,14 +47,42 @@ func toolExists(name string) bool {
 	return err == nil
 }
 
-// bashOnHost: existe bash (Git for Windows) aqui? Decide se a nota oferece o caminho de bash ou só as alternativas
-// nativas.
-var bashOnHost = func() bool {
-	if runtime.GOOS != "windows" {
-		return false
-	}
-	return toolExists("bash")
+// bashPathOnHost: caminho do bash (Git for Windows) neste host, "" quando não existe. Sondagem real no PATH e nas
+// instalações padrão do Git, com cache por processo (o resultado não muda durante a vida do servidor e a sondagem
+// roda a cada exec). É o que decide se a linha Unix vai para o bash ou se fica no cmd com a nota.
+var bashPathOnHost = sync.OnceValue(probeBashPathOnHost)
+
+// gitBashCandidates: instalações usuais do Git for Windows, a partir das pastas de ambiente.
+var gitBashCandidates = []string{
+	`\Git\bin\bash.exe`,
+	`\Git\usr\bin\bash.exe`,
+	`\Programs\Git\bin\bash.exe`,
+	`\Programs\Git\usr\bin\bash.exe`,
 }
+
+func probeBashPathOnHost() string {
+	if runtime.GOOS != "windows" {
+		return ""
+	}
+	if p, err := toolPath("bash"); err == nil && p != "" {
+		return p
+	}
+	for _, root := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramW6432"), os.Getenv("LOCALAPPDATA")} {
+		if root == "" {
+			continue
+		}
+		for _, rel := range gitBashCandidates {
+			p := root + rel
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
+// bashOnHost: existe bash aqui? Decide se a nota oferece o caminho de bash ou só as alternativas nativas.
+var bashOnHost = func() bool { return bashPathOnHost() != "" }
 
 // driveExists: a unidade existe? Evita traduzir '/usr/...' (que viraria 'U:\sr\...') por engano.
 var driveExists = func(letter byte) bool {
@@ -252,6 +285,16 @@ func gitBashToWindows(s string) (string, string) {
 	return b.String(), example
 }
 
+// windowsPathForNativeRead: as remediações nativas de leitura (read_file, file_ops) trabalham com o caminho, não com a
+// linha. Numa linha que vai para o bash o 'command' fica de propósito em forma POSIX — é o que o bash entende — então
+// quem extrai o caminho da linha traduz aqui: é o mesmo que remediateGitBashPaths fazia na linha inteira antes de a
+// escolha de shell existir. Sem isso 'cat /c/x/p.txt' deixaria de ser lido nativamente e falharia no read_file.
+// Caminho que não é estilo Git Bash (ou cuja unidade não existe) volta intacto.
+func windowsPathForNativeRead(p string) string {
+	out, _ := gitBashToWindows(p)
+	return out
+}
+
 // hasUnixShellInvocation: a linha já entrega o texto a um shell Unix ('bash -lc ...', 'wsl ...'): ali o caminho Unix
 // está certo e traduzir quebraria o comando.
 func hasUnixShellInvocation(label string) bool {
@@ -289,6 +332,190 @@ func remediateGitBashPaths(host, command, cwd string) (string, string, string) {
 	return command, cwd, "[FastExec Auto-Remediation] This host is Windows and cmd.exe does not understand Git Bash paths; " +
 		"translated " + strings.Join(exemplos, ", ") + " before running. Next time write the Windows path (e.g. W:\\Data\\x); " +
 		"when bash is the right tool here, use argv ['bash','-lc','<the whole line>']."
+}
+
+// --- Escolha do shell antes de rodar (linha Unix no host Windows) -------------------------------------------------
+//
+// O benchmark ds-full4 mediu o custo de deixar a linha Unix morrer no cmd.exe: o modelo gasta 4 a 6 turnos
+// corrigindo a sintaxe (R1 +77%, T8 +23%, E4 +41% de tokens contra o nativo). Com bash no host, rodar a linha certa
+// de primeira é mais barato do que qualquer nota. A escolha é feita ANTES de rodar, uma execução só, e a saída diz
+// que o shell foi trocado.
+
+// windowsLineTools: primeira palavra de um estágio que é ferramenta do cmd/PowerShell e não existe em shell Unix.
+// Presente, a linha fica no cmd.exe (comportamento de sempre): converter seria adivinhar. Homônimos (find/sort/type)
+// ficam de fora de propósito — quem decide neles é o sinal da sintaxe, não o nome.
+var windowsLineTools = map[string]bool{
+	"dir": true, "findstr": true, "type": true, "copy": true, "move": true, "del": true, "erase": true, "ren": true,
+	"md": true, "rd": true, "cls": true, "where": true, "start": true, "tasklist": true, "taskkill": true,
+	"icacls": true, "robocopy": true, "xcopy": true, "attrib": true, "fc": true, "chkdsk": true, "net": true,
+	"sc": true, "reg": true, "wmic": true, "certutil": true, "schtasks": true, "powershell": true, "pwsh": true,
+	"cmd": true,
+}
+
+// unixLineTools: primeira palavra de um estágio que só existe em shell Unix — o mesmo conjunto do benchmark, mais os
+// filtros de pipeline. Ferramenta que existe nos dois lados (python, curl, node) fica de fora: não é sinal.
+var unixLineTools = map[string]bool{
+	"grep": true, "egrep": true, "fgrep": true, "rg": true,
+	"wc": true, "head": true, "tail": true, "sort": true, "uniq": true, "cut": true, "sed": true, "awk": true,
+	"xargs": true, "tee": true, "tr": true, "cat": true, "ls": true, "find": true, "which": true,
+}
+
+var (
+	// powershellCmdletRe: verbo-substantivo do PowerShell (Get-Content, Select-String, Sort-Object) — nunca aparece
+	// numa linha Unix, sempre numa linha de PowerShell. Só verbos conhecidos: 'My-File.txt' não é cmdlet.
+	powershellCmdletRe = regexp.MustCompile(`\b(Add|Block|Checkpoint|Clear|Compare|Complete|Confirm|ConvertFrom|` +
+		`ConvertTo|Copy|Debug|Deny|Disable|Dismount|Enable|Enter|Exit|Export|ForEach|Format|Get|Group|Grant|Hide|` +
+		`Import|Invoke|Join|Lock|Measure|Mount|Move|New|Optimize|Out|Pop|Protect|Push|Read|Receive|Register|Remove|` +
+		`Rename|Repair|Reset|Resolve|Restart|Restore|Resume|Revoke|Save|Select|Send|Set|Show|Sort|Split|Start|Stop|` +
+		`Submit|Suspend|Switch|Test|Trace|Unblock|Undo|Unlock|Unprotect|Unpublish|Unregister|Update|Use|Wait|Write)-[A-Z][a-zA-Z]*\b`)
+	// cmdVarRe: variável do cmd (%TEMP%, %~dp0).
+	cmdVarRe = regexp.MustCompile(`%[A-Za-z_][A-Za-z0-9_]*%|%~[a-z]*[0-9]`)
+	// cmdForRe/cmdIfRe/cmdSetRe/cmdNulRe/cmdFlagRe/cmdExtRe: construções que só o cmd tem. A flag solta
+	// ('dir /s', 'findstr /i') exige fim de token: '/d/' é unidade montada no bash, não flag.
+	cmdForRe  = regexp.MustCompile(`(?i)(^|[\s&|(])for\s+/[rfdl]\b`)
+	cmdIfRe   = regexp.MustCompile(`(?i)(^|[\s&|(])if\s+(exist|not)\b`)
+	cmdSetRe  = regexp.MustCompile(`(?i)(^|[\s&|(])set\s+[A-Za-z_][A-Za-z0-9_]*=`)
+	cmdNulRe  = regexp.MustCompile(`(?i)>\s*nul\b`)
+	cmdFlagRe = regexp.MustCompile(`(?i)(^|\s)/[dsbfiv](\s|$|")`)
+	cmdExtRe  = regexp.MustCompile(`(?i)\.(bat|cmd)\b`)
+)
+
+// hasWindowsSignal: a linha carrega algo que só o cmd/PowerShell entende. Vence qualquer sinal Unix: na dúvida,
+// cmd.exe (como antes desta correção).
+func hasWindowsSignal(label string) bool {
+	for _, stage := range shellStages(label) {
+		if windowsLineTools[stageTool(stageWords(stage))] {
+			return true
+		}
+	}
+	for _, re := range []*regexp.Regexp{powershellCmdletRe, cmdVarRe, cmdForRe, cmdIfRe, cmdSetRe, cmdNulRe, cmdFlagRe, cmdExtRe} {
+		if re.MatchString(label) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasGitBashPath: a linha traz caminho estilo Git Bash ('cd /w/Data') de uma unidade que existe de fato. É sinal
+// forte: no cmd.exe esse caminho não leva a lugar nenhum.
+func hasGitBashPath(label string) bool {
+	for _, m := range gitBashPathRe.FindAllStringSubmatchIndex(label, -1) {
+		if driveExists(label[m[4]]) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasUnixSignal: sinal forte de linha Unix. Cada um é sintaxe que o cmd.exe não interpreta como a LLM espera.
+func hasUnixSignal(label string) bool {
+	if strings.Contains(label, "$(") || strings.Contains(label, "/dev/null") || hasGitBashPath(label) {
+		return true
+	}
+	// aspas simples: no cmd são literais; no shell Unix citam. Uma aspas solta (apóstrofo em texto) não conta.
+	if strings.Count(label, "'") >= 2 {
+		return true
+	}
+	for _, stage := range shellStages(label) {
+		words := stageWords(stage)
+		switch tool := stageTool(words); {
+		case tool == "find":
+			if hasUnixFindFlags(words[1:]) {
+				return true
+			}
+		case tool == "sort":
+			if hasUnixFlags(words[1:]) {
+				return true
+			}
+		case unixLineTools[tool]:
+			return true
+		}
+	}
+	return false
+}
+
+// unixStyleLine: linha claramente Unix (sinal forte) e sem nenhum sinal de cmd/PowerShell. A linha que já entrega o
+// texto a um shell Unix (bash/sh/wsl) não entra: esse caminho continua intocado.
+func unixStyleLine(label string) bool {
+	if strings.TrimSpace(label) == "" || hasUnixShellInvocation(label) {
+		return false
+	}
+	return !hasWindowsSignal(label) && hasUnixSignal(label)
+}
+
+// winDrivePathInLineRe: caminho de unidade Windows ('W:\ReposHomeLab', 'c:/tmp/x') precedido de início de linha ou
+// separador — mesmo formato do winDrivePathRe de host_autolocal.go, com a letra e o resto em grupos próprios.
+var winDrivePathInLineRe = regexp.MustCompile(`(^|[\s"'=(|&;>])([A-Za-z]):[\\/]([^\s"')|&;>]*)`)
+
+// windowsPathsToPosix traduz os caminhos de unidade Windows de uma linha para o que o bash entende ('/w/...') e
+// devolve um exemplo do que mudou (vazio quando nada mudou). Sem isso o bash come as barras invertidas de 'W:\x' sem
+// aspas e o comando recebe 'W:x'. Só traduz quando a unidade existe de fato.
+func windowsPathsToPosix(s string) (string, string) {
+	matches := winDrivePathInLineRe.FindAllStringSubmatchIndex(s, -1)
+	if matches == nil {
+		return s, ""
+	}
+	var b strings.Builder
+	var example string
+	last := 0
+	for _, m := range matches {
+		letter, rest := s[m[4]:m[5]], s[m[6]:m[7]]
+		if !driveExists(letter[0]) {
+			continue
+		}
+		orig := s[m[3]:m[1]]
+		novo := "/" + strings.ToLower(letter) + "/" + strings.ReplaceAll(rest, `\`, "/")
+		b.WriteString(s[last:m[3]]) // até o começo do caminho; o separador faz parte do texto
+		b.WriteString(novo)
+		last = m[1]
+		if example == "" {
+			example = fmt.Sprintf("'%s' -> '%s'", orig, novo)
+		}
+	}
+	if example == "" {
+		return s, ""
+	}
+	b.WriteString(s[last:])
+	return b.String(), example
+}
+
+// bashPlanFor: a linha vai para o bash antes de rodar? Devolve o argv pronto ('bash -lc <linha>'), a nota para a LLM
+// e ok=false quando o caminho de sempre (cmd.exe) vale — sem bash no host, host remoto, linha não-Unix ou linha que
+// já chama um shell Unix. A nota diz o que rodou e como pedir o mesmo na próxima chamada.
+func bashPlanFor(host, command string) ([]string, string, bool) {
+	if runtime.GOOS != "windows" || strings.TrimSpace(command) == "" {
+		return nil, "", false
+	}
+	t, err := transport.ResolveHost(host)
+	if err != nil || !t.IsLocal {
+		return nil, "", false
+	}
+	if !unixStyleLine(command) {
+		return nil, "", false
+	}
+	bash := bashPathOnHost()
+	if bash == "" {
+		return nil, "", false // sem bash: fica a nota acionável de unixShellHint
+	}
+	line, ex := windowsPathsToPosix(command)
+	note := fmt.Sprintf("[FastExec Auto-Remediation] Unix-style command ran in bash (%s) instead of cmd.exe on this "+
+		"Windows host", bash)
+	if ex != "" {
+		note += ", with " + ex + " translated for bash"
+	}
+	note += ". Next time pass the line as argv ['bash','-lc','<the whole line>']."
+	return []string{bash, "-lc", line}, note, true
+}
+
+// remediateLocalWindowsPaths: no host local Windows, decide quem cuida dos caminhos. Linha que vai para o bash: o
+// caminho Unix do 'command' já está certo e só o 'cwd' precisa da forma de unidade (o CreateProcess exige diretório
+// real); senão, traduz como antes. Devolve command/cwd e o aviso para a LLM.
+func remediateLocalWindowsPaths(host, command, cwd string) (string, string, string) {
+	if _, _, toBash := bashPlanFor(host, command); toBash {
+		_, novoCwd, note := remediateGitBashPaths(host, "", cwd)
+		return command, novoCwd, note
+	}
+	return remediateGitBashPaths(host, command, cwd)
 }
 
 // unixShellNoteFor: a nota do comando Unix que morreu, só quando o comando de fato falhou sem saída no host local.

@@ -57,8 +57,9 @@ func HandleExec(args ExecArgs) (string, error) {
 	parts := append([]string{args.Command, args.Cwd}, args.Argv...)
 	host, note := localHostForWindowsPath(args.Host, parts...)
 	args.Host = host
-	// Caminho estilo Git Bash em host Windows (unix_shell.go) é traduzido antes de rodar, com aviso.
-	argCmd, argCwd, bashNote := remediateGitBashPaths(args.Host, args.Command, args.Cwd)
+	// Caminho estilo Git Bash em host Windows (unix_shell.go) é traduzido antes de rodar, com aviso — menos na linha
+	// que vai para o bash, onde o caminho Unix do comando já está certo (só o cwd vira unidade Windows).
+	argCmd, argCwd, bashNote := remediateLocalWindowsPaths(args.Host, args.Command, args.Cwd)
 	args.Command, args.Cwd = argCmd, argCwd
 	note = joinNotes(note, bashNote)
 	out, err := handleExec(args)
@@ -168,6 +169,20 @@ func handleExec(args ExecArgs) (string, error) {
 	// Guard de busca: grep recursivo na raiz ganha exclusões de diretórios de build/dependência (label segue o original).
 	excluded := applyGrepExcludes(&args)
 
+	// Escolha do shell (unix_shell.go): linha Unix em host Windows com bash disponível vai inteira para 'bash -lc',
+	// com aviso na saída. Acontece depois de todas as guardas, para o comando que chega ao shell ser exatamente o que
+	// as guardas avaliaram, e é uma execução só — nada de rodar no cmd e reenviar depois. 'label' continua sendo a
+	// linha original (dicas, dedup e telemetria falam do comando da LLM, não do argv montado aqui).
+	bashNote := ""
+	unixLbl := unixLabel(label, hasArgv, args.Argv)
+	if hasCmd {
+		if argv, note, ok := bashPlanFor(args.Host, args.Command); ok {
+			args.Argv, args.Command, hasArgv, bashNote = argv, "", true, note
+			// No bash o PATH é o do Git, não o do processo: a nota de "ferramenta não instalada" seria falsa.
+			unixLbl = ""
+		}
+	}
+
 	var (
 		res *transport.ExecResult
 		err error
@@ -181,7 +196,7 @@ func handleExec(args ExecArgs) (string, error) {
 		return "", err
 	}
 	if res.JobID != "" {
-		return handoffResult(*res, timeout), nil
+		return withHostNote(bashNote, handoffResult(*res, timeout), nil), nil
 	}
 
 	searchHint := ""
@@ -198,7 +213,7 @@ func handleExec(args ExecArgs) (string, error) {
 		out += "\n" + searchExcludedNote
 	}
 	if !searchGuardOff() {
-		out = execFailureHints(out, label, unixLabel(label, hasArgv, args.Argv), res)
+		out = execFailureHints(out, label, unixLbl, res)
 	}
 	if res.ExitCode != 0 && !res.TimedOut {
 		if hint := checkCompileOrTestFailure(args.Cwd, label, out); hint != "" {
@@ -248,7 +263,7 @@ func handleExec(args ExecArgs) (string, error) {
 	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
 		out = dedupExecOutput(args, label, out)
 	}
-	return out, ferr
+	return withHostNote(bashNote, out, ferr), ferr
 }
 
 // unixLabel: rótulo em que a detecção de ferramenta Unix (unix_shell.go) se apoia. Num 'command' a linha inteira é
@@ -595,6 +610,8 @@ func detectCatCommand(args ExecArgs) (string, string) {
 	}
 
 	candidatePath = strings.Trim(candidatePath, `"'`)
+	// Linha que vai para o bash conserva o caminho POSIX (unix_shell.go); aqui, que é leitura nativa, ele vira unidade.
+	candidatePath = windowsPathForNativeRead(candidatePath)
 
 	if candidatePath != "" && !strings.HasPrefix(candidatePath, "-") && !strings.HasPrefix(candidatePath, "/") {
 		return cmdName, candidatePath
@@ -722,6 +739,8 @@ func detectListCommand(args ExecArgs) (cmdName string, candidatePath string) {
 
 	// Limpa aspas envolventes se houver
 	pathArg = strings.Trim(pathArg, `"'`)
+	// Linha que vai para o bash conserva o caminho POSIX (unix_shell.go); aqui, que é listagem nativa, ele vira unidade.
+	pathArg = windowsPathForNativeRead(pathArg)
 
 	// Se contém curingas (* ou ?), delega para o shell expandir o glob
 	if strings.ContainsAny(pathArg, "*?") {
