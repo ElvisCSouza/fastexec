@@ -496,7 +496,7 @@ func (c *Client) handshake(ctx context.Context, cn *conn) error {
 		"workspaceFolders": []map[string]any{
 			{"uri": rootURI, "name": filepath.Base(c.root)},
 		},
-		"capabilities": clientCapabilities(),
+		"capabilities": clientCapabilities(len(c.cfg.BlockingProgress) > 0),
 		"trace":        "off",
 	}
 	if len(c.cfg.InitOptions) > 0 {
@@ -765,7 +765,11 @@ func (c *Client) Capabilities() serverCapabilities { return c.capabilities() }
 // clientCapabilities is what FastExec advertises. Full-document sync is
 // requested on purpose: it makes the daemon the single source of the bytes
 // and removes a whole class of position-arithmetic bugs.
-func clientCapabilities() map[string]any {
+// clientCapabilities describes this client to the server. workDoneProgress is
+// advertised only for a server whose load the client gates on $/progress
+// (csharp-ls reports "Loading solution" that way and stays silent for a client
+// that does not announce support), so the gate has something to wait on.
+func clientCapabilities(workDoneProgress bool) map[string]any {
 	return map[string]any{
 		"workspace": map[string]any{
 			"workspaceFolders": true,
@@ -822,7 +826,7 @@ func clientCapabilities() map[string]any {
 			"formatting":     map[string]any{},
 			"diagnostic":     map[string]any{"relatedDocumentSupport": false},
 		},
-		"window":  map[string]any{"workDoneProgress": false, "showMessage": map[string]any{}},
+		"window":  map[string]any{"workDoneProgress": workDoneProgress, "showMessage": map[string]any{}},
 		"general": map[string]any{"positionEncodings": []string{"utf-16"}},
 	}
 }
