@@ -286,6 +286,17 @@ func lspCallers(root, symbol string, max, depth int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if len(ans.sites) == 0 {
+		// An "exact" empty list is only believable when the index does not see a use
+		// either. A server whose project failed to load (a solution it could not
+		// restore, a target it has no pack for) answers every query with nothing,
+		// and reporting that as "no references" would be a confident wrong answer:
+		// the name-based answer is better, so degrade to it and say why.
+		if byName, nerr := graph.Callers(root, symbol, 1, 1); nerr == nil && !strings.Contains(byName, "Total: 0 ") &&
+			strings.Contains(byName, "Total: ") {
+			return "", lsp.Unavailable("%s returned no references but the index finds uses by name (project not fully loaded?)", ans.server)
+		}
+	}
 	if max <= 0 {
 		max = graph.DefaultMax
 	}
