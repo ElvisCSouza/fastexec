@@ -48,6 +48,7 @@ func cmdSetup(args []string) {
 		fmt.Fprintln(os.Stderr, "cannot find this executable's path")
 		os.Exit(1)
 	}
+	exe = guiTwin(exe) // clientes registram o exe sem console: o gemeo de terminal (fastexec-cli.exe) abriria janela de console
 	// verb("register", "registered"): o que vai acontecer (dry-run) ou o que aconteceu
 	verb := func(future, done string) string {
 		if dry {
@@ -113,6 +114,10 @@ func cmdSetup(args []string) {
 		fmt.Println("  --deny-bash: Claude Code not found, nothing to change")
 	}
 
+	if msg := startTray(exe, dry); msg != "" {
+		fmt.Println("  Tray icon: " + msg)
+	}
+
 	switch {
 	case dry:
 		fmt.Println("\nDry run: nothing was changed.")
@@ -130,6 +135,19 @@ func cmdSetup(args []string) {
 }
 
 // setupClaudeCode registra no escopo de usuário do Claude Code. found=false quando não há Claude Code.
+// guiTwin: no Windows existem dois binarios iguais, fastexec.exe (sem console, o que os clientes MCP devem chamar) e
+// fastexec-cli.exe (para o terminal). Quem roda `setup` pelo segundo deve registrar o primeiro, quando ele existe ao lado.
+func guiTwin(exe string) string {
+	dir, base := filepath.Split(exe)
+	if !strings.EqualFold(base, "fastexec-cli.exe") {
+		return exe
+	}
+	if gui := filepath.Join(dir, "fastexec.exe"); fileExists(gui) {
+		return gui
+	}
+	return exe
+}
+
 func setupClaudeCode(exe string, dry bool, verb func(string, string) string) (changed, found bool) {
 	cli, cliErr := exec.LookPath("claude")
 	data, fileErr := os.ReadFile(claudeCodeFile())

@@ -157,6 +157,8 @@ func normalizeArgs(tool string, fs *fieldSet, raw json.RawMessage) (json.RawMess
 		msg := fmt.Sprintf("unknown parameter(s) for %s: %s. Valid: %s.", tool, strings.Join(quoteAll(unknown), ", "), validList(fs))
 		if s := suggest(unknown[0], fs); s != "" {
 			msg += fmt.Sprintf(" Did you mean '%s'?", s)
+		} else if tool == "job" && canonKey(unknown[0]) == canonKey("timeout_ms") {
+			msg += " 'wait' blocks up to 45 s per call and takes no timeout; call it again to keep waiting."
 		}
 		if strictArgs() {
 			return raw, nil, fmt.Errorf("%s Nothing was run.", msg)

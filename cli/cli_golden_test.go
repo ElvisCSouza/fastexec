@@ -21,6 +21,7 @@ func TestMain(m *testing.M) {
 		Main()
 		os.Exit(0)
 	}
+	os.Setenv("FASTEXEC_NO_TRAY", "1") // testes de instalação não abrem ícone nem mexem no "iniciar com o Windows" real
 	os.Exit(m.Run())
 }
 

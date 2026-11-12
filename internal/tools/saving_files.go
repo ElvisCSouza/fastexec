@@ -30,13 +30,3 @@ func noteReadSaving(host, path, out string) {
 	}
 }
 
-// noteEditSaving: trocar um trecho envia só o texto da troca; sem edit_file seria preciso reenviar o arquivo inteiro.
-func noteEditSaving(args EditFileArgs) {
-	sent := len(args.Target) + len(args.Replacement)
-	for _, op := range args.Edits {
-		sent += len(op.Target) + len(op.Replacement)
-	}
-	if size := localFileSize(args.Host, args.Path); size > sent {
-		telemetry.NoteSaving(telemetry.CatEdit, size, sent)
-	}
-}

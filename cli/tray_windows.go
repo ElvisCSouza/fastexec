@@ -7,6 +7,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"syscall"
 	"unsafe"
@@ -221,6 +222,11 @@ func autostartOn() bool {
 }
 
 func setAutostart(on bool) {
+	exe, _ := os.Executable()
+	setAutostartFor(exe, on)
+}
+
+func setAutostartFor(exe string, on bool) {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.SET_VALUE)
 	if err != nil {
 		return
@@ -230,10 +236,33 @@ func setAutostart(on bool) {
 		_ = k.DeleteValue(runValue)
 		return
 	}
-	if exe, err := os.Executable(); err == nil {
+	if exe != "" {
 		_ = k.SetStringValue(runValue, `"`+exe+`" tray`)
 	}
 }
+
+// startTray é chamado pela instalação: liga "iniciar com o Windows" e abre o ícone de bandeja agora (sem console).
+// Uma segunda instância sai sozinha (mutex), então repetir é seguro. Devolve o que foi feito, para o log.
+func startTray(exe string, dry bool) string {
+	exe = guiTwin(exe)
+	if dry {
+		return "would start the tray icon and add it to Windows startup"
+	}
+	if os.Getenv("FASTEXEC_NO_TRAY") != "" {
+		return ""
+	}
+	if !autostartOn() {
+		setAutostartFor(exe, true)
+	}
+	cmd := exec.Command(exe, "tray")
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000 | 0x00000008}
+	if err := cmd.Start(); err != nil {
+		return "could not start the tray icon: " + err.Error()
+	}
+	_ = cmd.Process.Release()
+	return "tray icon started (and set to start with Windows)"
+}
+
 
 func (t *tray) menu() {
 	m, _, _ := pCreatePopupMenu.Call()

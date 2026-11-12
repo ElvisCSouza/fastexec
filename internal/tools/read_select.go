@@ -136,7 +136,7 @@ func digestMatches(lines []string, re *regexp.Regexp) (string, bool) {
 		}
 		fmt.Fprintf(&b, "%dx lines %d..%d | first: %s\n", g.count, g.first, g.last, ex)
 	}
-	b.WriteString("Read the lines with ranges='a-b' or a narrower pattern.\n")
+	b.WriteString("Counts, first lines and line ranges above are complete; use ranges='a-b' or a narrower pattern only to see other lines.\n")
 	return b.String(), true
 }
 

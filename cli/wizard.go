@@ -409,6 +409,10 @@ func (w *wizard) Install() {
 			}
 		}
 	}
+	// 5. ícone de bandeja (Windows): abre agora e inicia com o Windows
+	if msg := startTray(w.exe, false); msg != "" {
+		w.logf("info", "%s", msg)
+	}
 	w.logf("info", "Install finished; run the verification")
 }
 

@@ -96,6 +96,7 @@ func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
 		aw += " AND timestamp >= '" + since + "'"
 		sw += " AND timestamp >= '" + since + "'"
 	}
+	sw += " AND cat <> 'edit'" // economia de edicao nao e mais contada: o edit nativo tambem troca so o trecho, o ganho nao e real
 	r := SavingsReport{Period: period, SeriesStart: start, SeriesEnd: end, Generated: time.Now().Format("15:04:05"), Cats: []CatTotal{}, Recent: []SavingEvent{}}
 
 	var sentTok sql.NullInt64

@@ -1,0 +1,25 @@
+{
+  "model": "claude-sonnet-5-5",
+  "work_dir": "W:\\Data\\bench-v2",
+  "daemon_addr": "127.0.0.1:9246",
+  "fastexec_exe": "..\\bin\\fastexec.exe",
+  "arms": {
+    "native":   { "label": "Claude nativo",         "mcp": false, "tools": ["Bash", "Read", "Glob", "Grep", "Edit", "Write"] },
+    "fastexec": { "label": "Claude com FastExec",   "mcp": true,  "tools": [] },
+    "hybrid":   { "label": "Nativo + FastExec (uso real)", "mcp": true, "tools": ["Bash", "Read", "Glob", "Grep", "Edit", "Write"] }
+  },
+  "defaults": { "reps": 5, "max_run_usd": 1.0, "max_total_usd": 15.0 },
+  "baseline_warn_tokens": 14000,
+  "providers": {
+    "together-dsv41flash": {
+      "label": "DeepSeek V4.1 Flash (Together)",
+      "base_url": "https://api.together.ai",
+      "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "api_key_env": "TOGETHER_API_KEY",
+      "usd_per_m": { "input": 0.30, "cached_input": 0.006, "output": 1.20 }
+    }
+  },
+  "repos": {
+    "cobra": { "url": "https://github.com/spf13/cobra", "ref": "v1.8.1" }
+  }
+}

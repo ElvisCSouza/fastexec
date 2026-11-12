@@ -143,7 +143,7 @@ function render(){
  const max=Math.max(1,...r.series);
  $("bars").replaceChildren(...r.series.map(v=>el("div",{style:"height:"+Math.max(2,Math.round(v/max*64))+"px"})));
  $("callsTxt").textContent=fmt(r.calls)+" calls handled";
- $("since").textContent=r.since?"Measuring since "+r.since+". Earlier calls did not record their original size, so they are not counted.":"";
+ $("since").textContent=r.since?"Measuring since "+r.since+". Earlier calls are estimated from the sizes they recorded.":"";
 
  // counterfactual chart
  const W=560,H=170,p=4,n=r.series.length,sum=r.series.reduce((a,b)=>a+b,0)||1;

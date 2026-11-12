@@ -4,3 +4,5 @@ server/dist/
 *.log
 *.tmp
 .teaching/
+
+bench/tools/runjob/runjob.exe

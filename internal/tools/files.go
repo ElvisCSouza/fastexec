@@ -665,11 +665,7 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 }
 
 func HandleEditFile(args EditFileArgs) (string, error) {
-	out, err := handleEditFile(args)
-	if err == nil {
-		noteEditSaving(args)
-	}
-	return out, err
+	return handleEditFile(args)
 }
 
 func handleEditFile(args EditFileArgs) (string, error) {
@@ -746,6 +742,16 @@ func handleEditFile(args EditFileArgs) (string, error) {
 			}
 		}
 		if n == 0 {
+			// o alvo veio com "\n" ou "\t" literais (duas letras) mas o arquivo tem quebras reais: corrige sozinho
+			if ut := unescapeLiteral(op.Target); ut != op.Target {
+				ut2, ur := matchEOL(newContent, ut, unescapeLiteral(op.Replacement))
+				if c := strings.Count(newContent, ut2); c > 0 {
+					t, r, n = ut2, ur, c
+					notes = append(notes, fmt.Sprintf("[FastExec Auto-Remediation] %s had a literal backslash-n/backslash-t; read as a real line break/tab and applied automatically (send real newlines, not escape sequences)", label))
+				}
+			}
+		}
+		if n == 0 {
 			msg := fmt.Sprintf("%s not found in '%s'; nothing was written", label, args.Path)
 			if h := nearMiss(newContent, op.Target); h != "" {
 				msg += "\n" + h
@@ -782,6 +788,11 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		msg += "\n" + h
 	}
 	return msg, nil
+}
+
+// unescapeLiteral troca as sequencias literais \r\n, \n e \t (duas letras) por quebra de linha e tab reais.
+func unescapeLiteral(s string) string {
+	return strings.NewReplacer(`\r\n`, "\r\n", `\n`, "\n", `\t`, "\t").Replace(s)
 }
 
 func okReply(n int64) string {
