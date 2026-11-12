@@ -60,6 +60,14 @@ As execuções usam a sua conta do Claude Code e contam no seu uso. Tarefas e br
 | C3 | contexto | **trace2code**: dada a pilha de um panic dentro do `cobra`, o arquivo:linha onde ele nasceu |
 | C4–C5 | contexto | **edit2ripple**: arquivos não-teste que precisam mudar junto com a assinatura de uma função |
 | C6 | contexto | **comment2context**: símbolos exportados do próprio arquivo citados num comentário `TODO`/`Deprecated` |
+| W1 | terminal | 40 arquivos `.txt` com espaços e acentos: quantos passam de 1 KB e os 3 maiores, com tamanho |
+| W2 | terminal | git sintético (25 commits, 3 autores, 2 branches): autor que mais mexeu num arquivo, hash curto do commit que removeu uma função, commits exclusivos do branch |
+| W3 | terminal | log misto de 20 mil linhas: erros por código e os 5 IPs mais frequentes entre as linhas de erro |
+| W4 | terminal | 3 processos filhos com marcador: listar PIDs e linhas de comando e encerrar só o segundo |
+| W5 | terminal | scripts `.cmd` e `.ps1` definindo `FOO_BAR=42`: executar os dois e relatar a saída |
+| W6 | terminal | arquivo de 80 MB quase todo zeros com 3 linhas de texto: texto e posição em bytes de cada uma, sem ler tudo |
+| W7 | terminal | Go: 3 erros de compilação revelados em cadeia num projeto de 6 arquivos |
+| W8 | terminal | JSON de 15 MB numa linha só: soma de um campo com filtro booleano e maior id entre os inativos |
 
 Cada tarefa tem **oráculo objetivo** calculado na hora por programa independente das duas ferramentas, e o `-DryRun` prova que
 o oráculo aceita o gabarito e rejeita resposta errada. Adicionar tarefa: crie uma entrada `$TaskTable['Xn']` em `tasks\*.ps1`
@@ -68,14 +76,21 @@ o oráculo aceita o gabarito e rejeita resposta errada. Adicionar tarefa: crie u
 A suíte **`edicao-multi`** (`tasks\edicao.ps1`, tarefas M1–M6) é auto-contida: cada `Prepare` gera um projeto sintético num
 diretório temporário, sem rede. Onde o host tem a ferramenta da linguagem, o oráculo a executa de verdade (`go build`/`go
 test`/`go vet`, `node --check`, `pytest`); onde não tem, cai para o oráculo estrutural e avisa `[edicao-multi] … oráculo só
-estrutural`. Detalhes em [`docs/bench/spec-edicao.md`](../docs/bench/spec-edicao.md).
+estrutural`. Detalhes em [`fastexec-private/_docs/spec-bench-edicao.md`](../fastexec-private/_docs/spec-bench-edicao.md).
 
 A suíte **`contexto`** (`tasks\contexto.ps1`, tarefas C1–C6) é só leitura e cobre os quatro tipos de recuperação de contexto do
 Agent Retrieval Bench (code2test, trace2code, edit2ripple, comment2context) nos fixtures `cobra` e `hugo` de ref fixa. O
 gabarito sai de programa independente em `tools\contexto` (`go/ast`, sem heurística textual) e o alvo de cada tarefa é
 escolhido por regra determinista documentada no topo do arquivo, então o gabarito é estável entre execuções. A resposta é
 sempre uma lista (um item por linha) pontuada por conjunto (precisão e recall; `correct` exige os dois em 1,0). Detalhes em
-[`docs/bench/spec-contexto.md`](../docs/bench/spec-contexto.md).
+[`fastexec-private/_docs/spec-bench-contexto.md`](../fastexec-private/_docs/spec-bench-contexto.md).
+
+A suíte **`terminal`** (`tasks\terminal.ps1`, tarefas W1–W8) reproduz o caso do Windows: `cmd.exe`/PowerShell, caminhos com
+espaço e acento, git, logs, processos, arquivos grandes e erro de compilação em cadeia — justamente os estratos em que o
+Terminal-Bench/TerminalWorld (que rodam em Docker com bash) não medem. Cada `Prepare` cria tudo num diretório temporário,
+sem rede e sem efeito fora dele; os processos filhos são encerrados e o `Score` confere que não sobrou nenhum. Onde o host
+não tem a ferramenta (`git`, `go`), o oráculo cai para a checagem estrutural e avisa `[terminal] …`; dá para silenciar com
+`BENCH_TERMINAL_QUIET=1`. Detalhes em [`fastexec-private/_docs/spec-bench-terminal.md`](../fastexec-private/_docs/spec-bench-terminal.md).
 
 ## O que é medido por execução
 
