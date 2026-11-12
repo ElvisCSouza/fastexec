@@ -134,6 +134,15 @@ func handleExec(args ExecArgs) (string, error) {
 		graphNote = note
 	}
 
+	// Saída de build/teste (go/dotnet/npm/tsc/cargo): o '--raw' e FASTEXEC_NO_OUTPUT_FILTER desligam a compactação
+	// (build_compact.go). O marcador só sai de comando de família reconhecida — em qualquer outro ele é do programa.
+	buildNote := ""
+	buildRaw := outputFilterOff()
+	if newLabel, stripped := stripBuildRawEscape(&args); stripped {
+		label, buildRaw = newLabel, true
+		buildNote = "[FastExec] raw output as asked: build/test output not compacted."
+	}
+
 	// Auto-remediação de cat / type puro (conversão para read_file com notificação pedagógica)
 	if out, handled, err := tryRemediateCat(args); handled {
 		if cdHint != "" && out != "" {
@@ -224,11 +233,21 @@ func handleExec(args ExecArgs) (string, error) {
 	}
 
 	listingHint := ""
-	if !rawEscape && !res.TimedOut && res.ExitCode == 0 {
+	if !rawEscape && !outputFilterOff() && !res.TimedOut && res.ExitCode == 0 {
 		// Listagem recursiva grande vira uma linha por diretório (listing_group.go). Nenhum arquivo é omitido: o
 		// texto é o mesmo, reagrupado. O '--raw' (rawEscape) desliga.
 		if grouped, note, ok := regroupListing(label, res.Stdout); ok {
 			res.Stdout, listingHint = strings.TrimRight(grouped, "\r\n")+"\n", note
+		}
+	}
+
+	// Compactação de saída de build/teste, ANTES de formatar: o que sobrevive é erro/aviso com arquivo:linha, o
+	// resumo final e o nome do teste que falhou; uma linha por pacote que passou, progresso e banner saem. A
+	// compactação só é aceita se nenhum bloco de erro do original tiver ficado de fora (compactBuildOutput confere).
+	compactNote := ""
+	if !buildRaw && !res.TimedOut {
+		if body, note, ok := compactBuildOutput(label, res.ExitCode, res.Stdout, res.Stderr); ok {
+			res.Stdout, res.Stderr, compactNote = strings.TrimRight(body, "\r\n")+"\n", "", note
 		}
 	}
 
@@ -237,6 +256,8 @@ func handleExec(args ExecArgs) (string, error) {
 		out = strings.TrimRight(out, "\r\n") + "\n" + searchHint
 	} else if listingHint != "" {
 		out = strings.TrimRight(out, "\r\n") + "\n" + listingHint
+	} else if compactNote != "" {
+		out = strings.TrimRight(out, "\r\n") + "\n" + compactNote
 	} else if excluded && out == NoResultText {
 		out += "\n" + searchExcludedNote
 	}
@@ -288,6 +309,13 @@ func handleExec(args ExecArgs) (string, error) {
 	if graphNote != "" {
 		out = strings.TrimRight(out, "\r\n") + "\n\n" + graphNote
 	}
+	if buildNote != "" {
+		out = strings.TrimRight(out, "\r\n")
+		if out != "" {
+			out += "\n"
+		}
+		out += buildNote
+	}
 	if ferr == nil && res.ExitCode == 0 && !res.TimedOut {
 		// apagou arquivo de código? o índice (de antes do apagamento) diz quem ainda usa os símbolos dele
 		if h := execDeleteImpact(args); h != "" {
@@ -297,7 +325,9 @@ func handleExec(args ExecArgs) (string, error) {
 			}
 			out += h
 		}
-		out = dedupExecOutput(args, label, out)
+		if !outputFilterOff() { // saída íntegra pedida: nada de trocar o texto por um stub de repetição
+			out = dedupExecOutput(args, label, out)
+		}
 	}
 	// Rodapé do tempo (elapsed.go) por ÚLTIMO: depois do '[exit N]', das notas de remediação e do dedup — se ele
 	// entrasse antes, o texto do tempo mudaria o hash a cada execução e o dedup de saídas idênticas nunca casaria.
@@ -360,10 +390,13 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 
 func formatExecOutput(command string, res transport.ExecResult) (string, error) {
 	needle := searchNeedle(command) // termo buscado: linha gigante cortada mostra a ocorrência
-	stdout := cleanOutputFor(res.Stdout, needle)
-	stderr := cleanOutputFor(res.Stderr, needle)
-	if rawN, cleanN := len(res.Stdout)+len(res.Stderr), len(stdout)+len(stderr); rawN > cleanN {
-		telemetry.NoteSavingDetail(telemetry.CatClean, rawN, cleanN, cleanNote(res.Stdout+res.Stderr, stdout+stderr))
+	stdout, stderr := res.Stdout, res.Stderr
+	if !outputFilterOff() { // FASTEXEC_NO_OUTPUT_FILTER=1: saída íntegra, nenhuma limpeza
+		stdout = cleanOutputFor(res.Stdout, needle)
+		stderr = cleanOutputFor(res.Stderr, needle)
+		if rawN, cleanN := len(res.Stdout)+len(res.Stderr), len(stdout)+len(stderr); rawN > cleanN {
+			telemetry.NoteSavingDetail(telemetry.CatClean, rawN, cleanN, cleanNote(res.Stdout+res.Stderr, stdout+stderr))
+		}
 	}
 
 	if res.TimedOut {
