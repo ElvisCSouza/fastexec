@@ -1,6 +1,6 @@
 // Sonda CS6 - fronteiras dos validadores de comprimento do FluentValidation.
 // O bug plantado (comparacao '<= min' em vez de '< min') so' aparece nas
-// fronteiras: MinimumLength(n) com exatamente n caracteres e ExactLength(n).
+// fronteiras: MinimumLength(n) e Length(n) (exato) com exatamente n caracteres.
 using System;
 using FluentValidation;
 
@@ -8,7 +8,7 @@ public class Alvo { public string Nome { get; set; } }
 
 public class ValMin : AbstractValidator<Alvo> { public ValMin() { RuleFor(x => x.Nome).MinimumLength(3); } }
 public class ValMax : AbstractValidator<Alvo> { public ValMax() { RuleFor(x => x.Nome).MaximumLength(5); } }
-public class ValExato : AbstractValidator<Alvo> { public ValExato() { RuleFor(x => x.Nome).ExactLength(4); } }
+public class ValExato : AbstractValidator<Alvo> { public ValExato() { RuleFor(x => x.Nome).Length(4); } }
 public class ValFaixa : AbstractValidator<Alvo> { public ValFaixa() { RuleFor(x => x.Nome).Length(2, 4); } }
 
 class Probe

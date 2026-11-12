@@ -205,7 +205,7 @@ New-CsWriteTask -Id 'CS6' -Name 'C#: bug de fronteira nos validadores de comprim
     -Expect @('min_ok=True', 'min_curto=False', 'min_null=True', 'max_ok=True', 'max_longo=False', 'exato_ok=True', 'exato_curto=False', 'faixa_min=True', 'faixa_max=True', 'faixa_fora=False') `
     -Plant { param($dir) Edit-CsText -Path (Join-Path $dir 'src\FluentValidation\Validators\LengthValidator.cs') -Once -From 'if (length < min ||' -To 'if (length <= min ||' } `
     -Fix { param($dir) Edit-CsText -Path (Join-Path $dir 'src\FluentValidation\Validators\LengthValidator.cs') -Once -From 'if (length <= min ||' -To 'if (length < min ||' } `
-    -Prompt "Projeto C# (FluentValidation 11.9.2) copiado em $dir. Bug relatado por um usuario: ``RuleFor(x => x.Nome).MinimumLength(3)`` passou a REJEITAR um valor com exatamente 3 caracteres, e ``ExactLength(4)`` rejeita um valor com exatamente 4. Valores mais longos continuam validos e ``MaximumLength`` parece certo. Encontre a causa nos validadores de comprimento de src/FluentValidation e corrija a comparacao, sem afrouxar os limites (nao vale remover a regra nem mudar a API publica): ``MinimumLength(n)`` deve aceitar exatamente n, ``ExactLength(n)`` deve aceitar exatamente n e rejeitar n-1, e ``Length(min,max)`` deve aceitar as duas pontas. $csDotnetHint"
+    -Prompt "Projeto C# (FluentValidation 11.9.2) copiado em $dir. Bug relatado por um usuario: ``RuleFor(x => x.Nome).MinimumLength(3)`` passou a REJEITAR um valor com exatamente 3 caracteres, e ``Length(4)`` (comprimento exato) rejeita um valor com exatamente 4. Valores mais longos continuam validos e ``MaximumLength`` parece certo. Encontre a causa nos validadores de comprimento de src/FluentValidation e corrija a comparacao, sem afrouxar os limites (nao vale remover a regra nem mudar a API publica): ``MinimumLength(n)`` deve aceitar exatamente n, ``Length(n)`` (exato) deve aceitar exatamente n e rejeitar n-1, e ``Length(min,max)`` deve aceitar as duas pontas. $csDotnetHint"
 
 # ---- CS7: pergunta de arquitetura (nomes + endereco) --------------------------
 # -GoldText recebe o local encontrado e monta a resposta de referencia.
@@ -245,7 +245,7 @@ New-CsQaTask -Id 'CS7' -Name 'C#: cadeia de override de nivel por SourceContext 
 # ---- CS8: bug plantado no casing do elemento {Level} (Serilog) ----------------
 New-CsWriteTask -Id 'CS8' -Name 'C#: casing trocado em {Level:wN}/{Level:uN} (Serilog)' `
     -Fixture $csSerilog -Repo 'serilog' -ProbeName 'cs8' -ProbeFile 'cs8-levelcasing.cs' `
-    -Expect @('w3=wrn', 'u3=WRN', 't3=Wrn', 'w2=wr', 'w5=warni', 'full=Warning') `
+    -Expect @('w3=wrn', 'u3=WRN', 't3=Wrn', 'w2=wn', 'w5=warni', 'full=Warning') `
     -Plant {
         param($dir)
         Edit-CsText -Path (Join-Path $dir 'src\Serilog\Formatting\Display\LevelOutputFormat.cs') -Once `
