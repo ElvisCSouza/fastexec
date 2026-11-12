@@ -7,6 +7,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/daemon"
 	"homelab/fastexec/internal/jsonedit"
+	"homelab/fastexec/internal/lsp"
 )
 
 type wStatus string
@@ -57,6 +59,27 @@ type wOptions struct {
 	Exclusive  bool     `json:"exclusive"`  // negar as ferramentas nativas do Claude Code
 	InstallDir string   `json:"installDir"` // vazio = usar o executável onde está
 	Skip       []string `json:"skip"`       // caminhos de config de cliente que o usuário desmarcou
+	Langs      []string `json:"langs"`      // servidores de linguagem aprovados no cartão "Language servers"
+}
+
+// wLang é uma linha do cartão "Language servers": o que seria baixado, mostrado
+// antes de qualquer pergunta. Vem do mesmo catálogo fixado do `fastexec lsp
+// install`, para o assistente e a CLI nunca discordarem sobre versão, tamanho,
+// origem ou licença.
+type wLang struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Server    string `json:"server"`
+	Version   string `json:"version,omitempty"`
+	Size      string `json:"size,omitempty"`
+	Origin    string `json:"origin,omitempty"`
+	License   string `json:"license,omitempty"`
+	Detected  bool   `json:"detected"`
+	Files     int    `json:"files"`
+	Ready     bool   `json:"ready"`               // dá para baixar agora nesta máquina
+	Reason    string `json:"reason,omitempty"`    // por que não dá (pré-requisito, sem download fixado)
+	Fix       string `json:"fix,omitempty"`       // comando que resolve o motivo
+	Installed string `json:"installed,omitempty"` // versão que o FastExec já instalou
 }
 
 // wState é o retrato completo enviado à interface.
@@ -70,6 +93,7 @@ type wState struct {
 	Log     []wLog    `json:"log"`
 	Opts    wOptions  `json:"opts"`
 	Clients []wClient `json:"clients"`
+	Langs   []wLang   `json:"langs"`
 }
 
 type wClient struct {
@@ -92,6 +116,7 @@ type wizard struct {
 	phase string
 	busy  bool
 	ready bool
+	langs []wLang // detectado uma vez, no Inspect: varrer o repositório a cada evento seria caro
 	// testes: executável usado no smoke test MCP e no passo de cópia
 	smokeExe string
 }
@@ -202,7 +227,7 @@ func (w *wizard) snapshot() wState {
 		cl = append(cl, wClient{c.Client, c.Path})
 	}
 	return wState{Phase: w.phase, Busy: w.busy, Ready: w.ready, Exe: w.exe, Version: versionLine(), Items: items,
-		Log: append([]wLog(nil), w.logs...), Opts: w.opts, Clients: cl}
+		Log: append([]wLog(nil), w.logs...), Opts: w.opts, Clients: cl, Langs: append([]wLang(nil), w.langs...)}
 }
 
 func (w *wizard) setOpts(o wOptions) {
@@ -298,7 +323,61 @@ func (w *wizard) Inspect() {
 	} else {
 		w.set("claudecode", g, "Claude Code", wSkip, "not installed (skipped)", "", false)
 	}
+	// Servidores de linguagem: o que existe, o que seria baixado e o que falta na
+	// máquina. Só leitura — a lista é oferecida na tela de opções, desmarcada
+	// exceto para as linguagens detectadas nos repositórios do usuário.
+	langs := detectLangs()
+	w.mu.Lock()
+	w.langs = langs
+	w.mu.Unlock()
+	for _, l := range langs {
+		switch {
+		case l.Installed != "":
+			w.logf("info", "%s: %s %s already installed by FastExec", l.Name, l.Server, l.Installed)
+		case !l.Ready:
+			w.logf("info", "%s: not offered (%s)", l.Name, l.Reason)
+		case l.Detected:
+			w.logf("info", "%s: detected in your files (%d source file(s)); offered ticked", l.Name, l.Files)
+		}
+	}
 	w.logf("info", "Inspection finished")
+}
+
+// detectLangs monta o cartão "Language servers": uma linha por linguagem do
+// catálogo, com o que seria baixado e o que falta. Ready=false quando não há
+// download fixado ou falta pré-requisito — e nesse caso Fix diz o comando, que
+// o FastExec nunca roda sozinho.
+func detectLangs() []wLang {
+	items := lsp.PlanAll(lsp.DetectCounts(lsp.DetectRoots()...))
+	out := make([]wLang, 0, len(items))
+	for _, it := range items {
+		l := wLang{ID: it.Lang.ID, Name: it.Lang.Name, Server: it.Lang.Primary().Name,
+			Detected: it.Detected, Files: it.Files, Ready: it.Ok}
+		if it.Pinned {
+			l.Server, l.Version, l.Size = it.Pin.Server, it.Version, it.Size
+			l.Origin, l.License = it.Origin, it.License
+		}
+		if it.Installed != nil {
+			l.Installed = it.Installed.Version
+		}
+		switch {
+		case !it.Pinned:
+			l.Reason = "FastExec has no pinned download for it"
+			if it.Manual != "" {
+				l.Fix = it.Manual
+			}
+		case len(it.Missing) > 0:
+			l.Reason = strings.Join(it.Missing, ", ") + " is missing"
+			for _, pr := range it.Requires {
+				if !pr.Found && pr.Install != "" {
+					l.Fix = pr.Install
+					break
+				}
+			}
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 func fileExists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
@@ -409,11 +488,63 @@ func (w *wizard) Install() {
 			}
 		}
 	}
-	// 5. ícone de bandeja (Windows): abre agora e inicia com o Windows
+	// 5. servidores de linguagem (opcional): só as linguagens marcadas no cartão,
+	// que mostra versão fixada, tamanho, origem e licença antes da pergunta. Sem
+	// nada marcado, nada é baixado e nem se toca na rede.
+	w.mu.Lock()
+	langs := append([]string(nil), w.opts.Langs...)
+	w.mu.Unlock()
+	if len(langs) > 0 {
+		installLangs(w, langs)
+	}
+
+	// 6. ícone de bandeja (Windows): abre agora e inicia com o Windows
 	if msg := startTray(w.exe, false); msg != "" {
 		w.logf("info", "%s", msg)
 	}
 	w.logf("info", "Install finished; run the verification")
+}
+
+// installLangs baixa os servidores aprovados. Uma linguagem que falha vira um
+// item vermelho e não impede as outras — e nada aqui é obrigatório: o FastExec
+// funciona sem servidor de linguagem nenhum.
+func installLangs(w *wizard, langs []string) {
+	g := "Install"
+	_, sel, err := lspPlan(lsp.DetectRoots(), langs)
+	if err != nil {
+		w.set("lsp:plan", g, "Language servers", wFail, err.Error(), "Pick the languages again in the options above.", false)
+		w.logf("error", "language servers: %v", err)
+		return
+	}
+	for _, it := range sel.Blocked {
+		w.set("lsp:"+it.Lang.ID, g, "Language server: "+it.Lang.Name, wFail,
+			strings.Join(it.Missing, ", ")+" is missing",
+			"Install the prerequisite, then run `fastexec lsp install "+it.Lang.ID+"`.", false)
+	}
+	if len(sel.Items) == 0 {
+		w.set("lsp:none", g, "Language servers", wSkip, "none of the selected languages can be installed here", "", false)
+		return
+	}
+	w.logf("info", "Language servers: %d to download into %s", len(sel.Items), lsp.InstallDir())
+	in := lsp.NewInstaller()
+	in.Log = func(format string, a ...any) { w.logf("info", "  "+format, a...) }
+	for _, it := range sel.Items {
+		id := "lsp:" + it.Lang.ID
+		w.set(id, g, "Language server: "+it.Lang.Name, wRunning,
+			it.Pin.Server+" "+it.Version+" ("+it.Size+", "+it.Origin+", "+it.License+")", "", false)
+		w.logf("info", "Downloading %s %s from %s (%s, licence %s)", it.Pin.Server, it.Version, it.Origin, it.Size, it.License)
+		st, err := in.Install(context.Background(), it.Pin)
+		if err != nil {
+			w.set(id, g, "Language server: "+it.Lang.Name, wFail, err.Error(),
+				"Nothing was left half-installed; `fastexec lsp install "+it.Lang.ID+"` tries again.", false)
+			w.logf("error", "%s: %v", it.Pin.Server, err)
+			continue
+		}
+		w.set(id, g, "Language server: "+it.Lang.Name, wOK,
+			st.Server+" "+st.Version+" in "+st.Bin+" ("+st.License+")",
+			"`fastexec lsp remove "+st.Server+"` deletes it.", false)
+		w.logf("info", "Installed %s %s (%s)", st.Server, st.Version, st.License)
+	}
 }
 
 func claudeCodePresent() (string, bool) {
@@ -559,6 +690,18 @@ func (w *wizard) Verify() {
 				w.set("v-deny", g, "Claude Code built-in tools denied", wFail, "still allowed: "+strings.Join(missing, ", "), "Run the Install step again.", false)
 			}
 		}
+	}
+
+	// servidores de linguagem: informativo, nunca obrigatório — o FastExec
+	// funciona sem nenhum. Diz o que ficou instalado e a licença de cada um.
+	if list := lsp.InstalledList(); len(list) > 0 {
+		var names []string
+		for _, st := range list {
+			names = append(names, st.Server+" "+st.Version+" ("+st.License+")")
+		}
+		w.set("v-lsp", g, "Language servers installed by FastExec", wOK,
+			fmt.Sprintf("%d in %s: %s", len(list), lsp.InstallDir(), strings.Join(names, ", ")),
+			"`fastexec lsp doctor` shows the details; `fastexec lsp update` refreshes them.", false)
 	}
 
 	// teste de verdade: sobe o executável como um cliente MCP faria
@@ -738,6 +881,19 @@ func (w *wizard) Undo() {
 				w.set("undo:deny:"+t, g, "Claude Code: allow built-in "+t+" again", wOK, "removed from deny list", "", false)
 			}
 		}
+	}
+	// Servidores de linguagem: o Undo tira o FastExec dos clientes, não apaga
+	// componentes de terceiros que o usuário aprovou baixar. Apagar é um comando
+	// à parte, com o nome do servidor na mão.
+	if list := lsp.InstalledList(); len(list) > 0 {
+		var servers []string
+		for _, st := range list {
+			servers = append(servers, st.Server)
+		}
+		w.set("undo:lsp", g, "Language servers kept", wSkip,
+			fmt.Sprintf("%d left in %s: %s", len(list), lsp.InstallDir(), strings.Join(servers, ", ")),
+			"Undo only unregisters FastExec. To delete one: `fastexec lsp remove "+servers[0]+"`.", false)
+		w.logf("info", "Language servers were left in place (%s)", strings.Join(servers, ", "))
 	}
 	w.logf("info", "Undo finished")
 }

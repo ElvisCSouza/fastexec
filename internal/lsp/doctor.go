@@ -15,6 +15,9 @@ const versionTimeout = 5 * time.Second
 // DoctorEntry is the diagnostic result for one language.
 type DoctorEntry struct {
 	Language Language
+	// Server is the server that answered the probe, or the preferred one when
+	// nothing was found. A language may have several; this is which.
+	Server Server
 	// Found is whether an executable was located.
 	Found bool
 	// Path is the executable that was found.
@@ -22,6 +25,10 @@ type DoctorEntry struct {
 	// Version is the first line the server printed for its version flag, empty
 	// when it could not be read.
 	Version string
+	// NoVersion is true for a launcher with no version flag at all (jdtls,
+	// PowerShellEditorServices): an empty Version is then expected, not a
+	// problem.
+	NoVersion bool
 	// Problem explains a found server whose version probe failed.
 	Problem string
 	// Tried lists the places that were searched, in order.
@@ -39,17 +46,23 @@ type DoctorEntry struct {
 func Doctor(ctx context.Context) []DoctorEntry {
 	out := make([]DoctorEntry, 0, len(Languages))
 	for _, lang := range Languages {
-		e := DoctorEntry{Language: lang}
-		path, tried, ok := Find(lang)
+		e := DoctorEntry{Language: lang, Server: lang.Primary()}
+		srv, path, tried, ok := FindServer(lang, "")
 		e.Tried = tried
 		if !ok {
 			out = append(out, e)
 			continue
 		}
+		e.Server = srv
 		e.Found = true
 		e.Path = path
 		e.Details = langDetails(lang, path)
-		version, err := serverVersion(ctx, lang, path)
+		if srv.NoVersion {
+			e.NoVersion = true
+			out = append(out, e)
+			continue
+		}
+		version, err := serverVersion(ctx, srv, path)
 		if err != nil {
 			e.Problem = err.Error()
 		} else {
@@ -72,8 +85,8 @@ func langDetails(lang Language, bin string) []string {
 
 // serverVersion runs the server's version flag. This is the only process
 // `lsp doctor` ever starts, and it is the server itself, not an installer.
-func serverVersion(ctx context.Context, lang Language, bin string) (string, error) {
-	args := lang.VersionArgs
+func serverVersion(ctx context.Context, srv Server, bin string) (string, error) {
+	args := srv.VersionArgs
 	if len(args) == 0 {
 		args = []string{"--version"}
 	}

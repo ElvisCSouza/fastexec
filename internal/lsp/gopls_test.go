@@ -68,7 +68,8 @@ func realGopls(t *testing.T, root string) *Client {
 	lang := goLanguage(t)
 	launch, ok := LaunchFor(lang, root)
 	if !ok {
-		t.Skipf("%s not installed: %s", lang.Server, lang.Install)
+		srv := lang.Primary()
+		t.Skipf("%s not installed: %s", srv.Name, srv.Install)
 	}
 	// gopls loads and type-checks the module on the first request, so the bound
 	// here is generous: a cold module takes seconds, not milliseconds.
@@ -78,7 +79,7 @@ func realGopls(t *testing.T, root string) *Client {
 		Timeout:          60 * time.Second,
 	})
 	if err != nil {
-		t.Fatalf("starting the real %s: %v", lang.Server, err)
+		t.Fatalf("starting the real %s: %v", launch.Name, err)
 	}
 	t.Cleanup(c.Close)
 	return c

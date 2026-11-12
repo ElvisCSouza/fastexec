@@ -18,11 +18,14 @@ import (
 	"homelab/fastexec/internal/jsonedit"
 )
 
-const setupUsage = `Usage: fastexec setup [--dry-run] [--deny-bash]
+const setupUsage = `Usage: fastexec setup [--dry-run] [--deny-bash] [--lang go,cs,ts] [--yes] [--no-lsp]
   Registers this executable as the "fastexec" MCP server in every AI client found on this machine
   (Claude Desktop, Claude Code, Antigravity, Cursor) and creates ~/.fastexec.
   --dry-run    show what would change, change nothing
-  --deny-bash  also deny Claude Code's built-in Bash tool, so shell commands go through FastExec`
+  --deny-bash  also deny Claude Code's built-in Bash tool, so shell commands go through FastExec
+  --lang       also offer these language servers (default: the ones detected in your repositories)
+  --yes        with --lang, install them without asking one by one
+  --no-lsp     skip the optional language-server step entirely`
 
 func cmdSetup(args []string) {
 	for _, a := range args {
@@ -31,13 +34,32 @@ func cmdSetup(args []string) {
 			return
 		}
 	}
-	dry, denyBash := false, false
-	for _, a := range args {
+	dry, denyBash, noLSP, yes := false, false, false, false
+	var langs []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		// --lang aceita as duas formas, como em `lsp install`: "--lang go,cs" e "--lang=go,cs".
+		if v, ok := strings.CutPrefix(a, "--lang="); ok {
+			langs = append(langs, v)
+			continue
+		}
 		switch a {
 		case "--dry-run", "-n":
 			dry = true
 		case "--deny-bash":
 			denyBash = true
+		case "--no-lsp":
+			noLSP = true
+		case "--yes", "-y":
+			yes = true
+		case "--lang", "-l":
+			if i+1 >= len(args) {
+				fmt.Print("--lang needs a language list, e.g. --lang go,cs,ts\n\n")
+				fmt.Println(setupUsage)
+				os.Exit(2)
+			}
+			i++
+			langs = append(langs, args[i])
 		default:
 			fmt.Println(setupUsage)
 			os.Exit(2)
@@ -116,6 +138,16 @@ func cmdSetup(args []string) {
 
 	if msg := startTray(exe, dry); msg != "" {
 		fmt.Println("  Tray icon: " + msg)
+	}
+
+	// Etapa opcional: servidores de linguagem. São componentes de terceiros, com
+	// licença própria, baixados com a permissão do usuário — nada é baixado sem
+	// um "sim" por linguagem. Um servidor que falha não derruba o setup.
+	if !noLSP {
+		if err := setupLSP(dry, yes, langs); err != nil {
+			fmt.Fprintf(os.Stderr, "\nLanguage servers: %v\n", err)
+			failed = true
+		}
 	}
 
 	switch {

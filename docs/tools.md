@@ -174,6 +174,24 @@ A folder is not a file: the call is refused saying which tool to use instead (`f
 search line through `exec`) — `pattern` looks inside a single file only. Before, the raw OS error came back, and on
 Windows that is the localized `Função incorreta`, which tells the model nothing.
 
+**Types of what was read.** When the excerpt contains a declaration that leaves the type to the compiler
+(`var x = ...`, `x := ...`, `const y = ...`, an inferred lambda parameter) and a language server for that file is
+**already warm**, the answer ends with one compact line:
+
+```
+types: pedido: Reader, total: int
+```
+
+That is the one thing the editor gives for free and the model does not: without it, knowing the type of `pedido`
+costs opening another file — exactly the cost this line removes. The type is never guessed: it comes from the
+server's inlay hints, or from hover when the server has no hints, always at the exact column the declaration was
+found in the excerpt (in UTF-16 units, which is how servers count columns, so an accent earlier in the line cannot
+shift the annotation onto another symbol). Reading a file never starts a server: cold server, `FASTEXEC_LSP=off`,
+language without a server, no answer within ~1 s, or the read cap cutting the excerpt — and the response is
+byte-identical to before, with no line and no note. At most 8 names (`typeLineMaxNames`) and 400 bytes
+(`typeLineMaxBytes`); a declaration that writes its type is not annotated, because that would spend a request to
+repeat the text. `code_outline` appends the same line for the bodies of the declarations it shows.
+
 ## edit_file
 
 Exact text replacement: `target` → `replacement`, or several changes at once in `edits` (applied in order, all or
@@ -311,6 +329,54 @@ The note is silent when there was no server to begin with (no server installed f
 that name in the index, `FASTEXEC_LSP=off`), because the by-name answer is then simply the answer. Servers are
 started on demand, kept warm for 15 minutes and never downloaded; `fastexec lsp doctor` shows what was found.
 
+What each language gets, and what it needs installed to get it:
+
+- **exact once the server is installed** — Go (`gopls`), C# (`csharp-ls`), TypeScript/JavaScript
+  (`typescript-language-server`), Python (`pyright-langserver`, or `pylsp` as the fallback for a machine without
+  npm), C/C++ (`clangd`), Rust (`rust-analyzer`), Java (`jdtls`), Kotlin (`kotlin-language-server`), Zig (`zls`).
+  All of these are reported by `lsp doctor` when missing, because for them the by-name answer really is a fallback.
+- **exact when the server is installed, silence when it is not** — JSON (`vscode-json-language-server`), YAML
+  (`yaml-language-server`), Markdown (`marksman`, optional: the documentation graph already navigates it), Shell
+  (`bash-language-server`) and PowerShell (PowerShellEditorServices, which has no installer of its own — it is the
+  `.ps1` launcher inside the editor bundle, started through `pwsh`). These are already indexed by the name-based
+  graph, so a missing server is not a degradation and adds no note; `lsp doctor` still lists the install command.
+- **always by name** — every language with no entry in the table (Ruby, PHP, Lua, Haskell, CSS, HTML, Razor, a
+  Makefile): nothing is started, no note is printed, and the answer is the graph's.
+
+Two servers are honestly less exact than the rest even when they start, and `lsp doctor` says so: C# needs
+`dotnet restore` first, and `clangd` guesses its compile flags unless a `compile_commands.json` exists (generate it
+with `cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..`, `bear -- make` or `compiledb -n make`). `jdtls` is a launcher
+script with no version flag and keeps a private index directory per project outside the repository.
+
+#### C# (csharp-ls)
+
+C# is answered by `csharp-ls` (Roslyn), which is the only server that resolves a C# symbol exactly: it separates two
+overloads, two types' same-named methods, an interface from its implementations, a `partial` class's halves, an
+extension method from the method it extends, and `nameof`. It needs two things of the machine and never provides them
+itself: a **.NET SDK** (found on `PATH`, or through `FASTEXEC_DOTNET_SDK`/`DOTNET_ROOT`, or in `W:\Data\dotnet-sdk\sdk`)
+and a **restored project** — a project with no `obj/project.assets.json` answers empty reference lists, which would read
+as "no callers", so it is refused instead:
+
+```
+lsp unavailable (no .NET SDK found (install one, or set FASTEXEC_DOTNET_SDK to its folder)); by name
+lsp unavailable (restore needed: run dotnet restore (src/App/App.csproj)); by name
+```
+
+FastExec never runs `dotnet restore` — that downloads packages, and downloading on someone's behalf is not its
+decision. The server loads the nearest `.sln` above the file (falling back to the nearest `.csproj`), because references
+are only exact across projects when the whole solution is loaded. That load is slow on a large solution (tens of
+seconds), so the first query in that root answers `lsp loading C# solution…; by name` and falls back to the name graph;
+later queries use the server. Files whose name ends in `.g.cs` (generated) are ignored. C# multiple `TargetFramework`s,
+Razor and Blazor are out of scope: `.razor`/`.cshtml` stay **by name only**.
+
+Two defects of `csharp-ls` 0.16 are worked around inside the client rather than trusted: its `textDocument/rename`
+returns edits for **every overload** sharing the name (so a rename is built from the reference list of the one symbol
+under the cursor, each edit verified against the file on disk before it is offered), and its
+`textDocument/codeAction` expects the diagnostics of the range in the request — a null list kills the process, so the
+diagnostics of the last pull are cached and sent. Hover, diagnostics, the `using` quickfix, formatting and
+`documentSymbol` are exposed as library calls and covered by tests, but are not yet tools; only `callers` and `def`
+reach the LSP.
+
 `callers` takes an optional `depth` (1 = direct callers, the default and the same output as always; up to 4). With
 `depth` > 1 the answer is the transitive closure, deduplicated: one line per symbol, grouped by level (`depth 1:`,
 `depth 2:`, ...), each with `file:line` and the enclosing symbol. So "what reaches this function, directly or
@@ -323,6 +389,39 @@ closure reaches further, one line `transitive: depth=3 reaches N more symbols.` 
 in the other cases. Homonyms reuse the same treatment as `depth` 1: a name declared in more than one type shows the
 call's receiver and the type it points at (`via x -> Type`, `-> ?` when undecided) and is listed in a final `NOTE:`
 line; no link is invented.
+
+### What the server adds to def and callers
+
+An exact answer carries what the text of one file cannot say. On `def`:
+
+```
+- src/Order.cs:11-11 (struct)
+  class Order : Reader
+  implements: IComparable (src/IComparable.cs:3)
+  inherits: Base (src/Base.cs:1)
+  members (3):
+  - 12: ID (field) int
+  - 13: Total (field) int
+  - 16: Sum (method) int Sum()
+```
+
+- the **signature** is the server's (hover), which is where a resolved generic or a return type the index does
+  not keep shows up; a type's hover is the whole body, and a body is not a signature, so the indexed header is
+  kept instead;
+- `implements` / `inherits` / `derived` / `extends` name the relation **in the direction the question was
+  asked**: an interface answers who implements it (`implemented by:`), a type answers what it implements and
+  what it extends, a member answers which contract it fulfils (its base, in C#). In Go none of that is written
+  anywhere — a type satisfies an interface structurally — and the concrete type that satisfies it does not
+  reference the interface's name at all, so without this line "who implements Reader" would answer with the one
+  parameter that mentions it;
+- `members (N):` lists a **type** as one line per member, no body, capped at 24 (`relMaxMembers`), each with the
+  line it starts at, the name, the kind and the detail. Methods declared outside the type (Go) are attached to it,
+  because that is what they are.
+
+`callers` and `impact` carry only the relation, above the references. Every target is `Name (file:line)`; a
+relation line lists at most 8 (`relMaxNames`) and then `... +N`. Relations are a complement, never a reason to
+fail: a server that answers references but not the relation still gives an exact list. `callers` of an interface
+answers with `implemented by:` first, since that is what someone about to change the contract needs.
 
 The same graph carries the **documentation**: inside an indexed repository, every Markdown file becomes
 documentation nodes and edges, by deterministic rule, never by the model. Each section (a heading) is a node, named by

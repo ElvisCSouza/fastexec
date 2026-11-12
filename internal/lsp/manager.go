@@ -47,7 +47,16 @@ func (e *UnavailableError) Error() string { return "lsp unavailable: " + e.Reaso
 
 // Degraded renders the one-line honesty note that replaces the exact answer.
 // It is the only place that wording lives, so every tool says it the same way.
+//
+// A project that is still loading is not "unavailable": the server is there and
+// working, and the next query is exact. Saying so — "lsp loading C# solution…;
+// by name" — is the difference between a user who retries and a user who goes
+// looking for a broken install.
 func Degraded(err error) string {
+	var le *LoadingError
+	if errors.As(err, &le) {
+		return "lsp " + le.Note + "…; by name"
+	}
 	var ue *UnavailableError
 	if errors.As(err, &ue) && ue.Reason != "" {
 		return "lsp unavailable (" + ue.Reason + "); by name"
@@ -269,8 +278,22 @@ func (m *manager) Acquire(ctx context.Context, root string, lang Language) (*Cli
 
 	launch, ok := launchFor(lang, abs)
 	if !ok {
-		m.recordFail(key, unavailable("%s not installed", lang.Server))
-		return nil, nil, unavailable("%s not installed", lang.Server)
+		m.recordFail(key, unavailable("%s not installed", lang.Primary().Name))
+		return nil, nil, unavailable("%s not installed", lang.Primary().Name)
+	}
+	if launch.Problem != "" {
+		// The server exists but cannot work here. This is deliberately not
+		// remembered as a failure: the cause is on the user's side and is cheap
+		// to check again (a missing SDK, a project not restored yet), and a
+		// cooldown would keep answering "restore needed" for two minutes after
+		// they ran the restore.
+		m.mu.Lock()
+		e.inflight--
+		if e.client == nil {
+			delete(m.entries, key)
+		}
+		m.mu.Unlock()
+		return nil, nil, unavailable("%s", launch.Problem)
 	}
 
 	// Starting a server outlives the query that triggered it: a caller whose
@@ -281,7 +304,7 @@ func (m *manager) Acquire(ctx context.Context, root string, lang Language) (*Cli
 	if err != nil {
 		reason := "server did not start"
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			reason = "timed out starting " + lang.Server
+			reason = "timed out starting " + launch.Name
 		}
 		m.recordFail(key, unavailable("%s", reason))
 		return nil, nil, unavailable("%s", reason)
@@ -407,7 +430,7 @@ func (m *manager) Warm(root string, lang Language) (*Client, func(), error) {
 		if fail != nil {
 			return nil, nil, fail
 		}
-		return nil, nil, unavailable("no warm %s for %s", lang.Server, filepath.Base(abs))
+		return nil, nil, unavailable("no warm %s for %s", lang.Primary().Name, filepath.Base(abs))
 	}
 	e.inflight++
 	m.mu.Unlock()
@@ -446,6 +469,13 @@ func (m *manager) AcquireFile(ctx context.Context, path string) (*Client, func()
 // ancestor of path that carries a project marker for the language. Without a
 // marker, the file's own directory is the best we can honestly claim.
 //
+// When the language declares ProjectFiles, those patterns are tried in order
+// and each one is searched all the way up before the next is considered. That
+// order is the language's, not the tree's: C# loads a .sln best, so a solution
+// at the top of the repository wins over the .csproj right next to the file.
+// A language with no ProjectFiles match falls through to the marker walk below
+// instead of giving up, so a language that declares both kinds keeps both.
+//
 // A language may also declare StrictMarkers — the config file (tsconfig.json)
 // without which the server runs on a guessed project. Those win over the plain
 // markers at any distance: a monorepo with a package.json at the top and a
@@ -457,6 +487,13 @@ func RootFor(lang Language, path string) string {
 	dir := path
 	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
 		dir = filepath.Dir(path)
+	}
+	if len(lang.ProjectFiles) > 0 {
+		for _, pattern := range lang.ProjectFiles {
+			if d, ok := nearestWith(dir, pattern); ok {
+				return d
+			}
+		}
 	}
 	fallback := ""
 	for i := 0; i < maxRootDepth; i++ {
@@ -476,6 +513,22 @@ func RootFor(lang Language, path string) string {
 		return fallback
 	}
 	return filepath.Dir(path)
+}
+
+// nearestWith walks up from dir looking for a directory that holds a file
+// matching pattern.
+func nearestWith(dir, pattern string) (string, bool) {
+	for i := 0; i < maxRootDepth; i++ {
+		if matches, _ := filepath.Glob(filepath.Join(dir, pattern)); len(matches) > 0 {
+			return dir, true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir || parent == "" {
+			break
+		}
+		dir = parent
+	}
+	return "", false
 }
 
 // Servers lists the live servers, newest use last.

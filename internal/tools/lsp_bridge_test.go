@@ -118,6 +118,42 @@ func TestDisabledIsNotDegradation(t *testing.T) {
 	}
 }
 
+// TestOptionalLanguageIsSilentWhenServerIsMissing: Markdown, JSON, YAML, Shell e PowerShell já são indexados pelo
+// grafo por nome. Nelas, servidor ausente não é degradação — a resposta por nome é a resposta final. Sem esta
+// regra, um `callers` numa seção de .md ganharia uma nota mandando instalar o marksman, que ninguém pediu.
+//
+// O teste pula quando o servidor do Markdown está instalado (aí o caminho exato é que vale) e quando o grafo não
+// produz declaração nenhuma para o nome, que é o caso em que a pergunta nem chega a ser feita.
+func TestOptionalLanguageIsSilentWhenServerIsMissing(t *testing.T) {
+	lang, ok := lsp.LanguageForPath("doc.md")
+	if !ok || !lang.Optional {
+		t.Fatalf("Markdown deveria ser uma linguagem opcional, veio %+v/%v", lang, ok)
+	}
+	if lsp.Installed(lang) {
+		t.Skipf("%s instalado: o caminho exato é o que vale nesta máquina", lang.Primary().Name)
+	}
+
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("marcar repositório: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("criar docs: %v", err)
+	}
+	doc := "# Guia\n\n## Fetch\n\nTexto da seção.\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "a.md"), []byte(doc), 0o644); err != nil {
+		t.Fatalf("escrever Markdown: %v", err)
+	}
+
+	_, err := lspCallers(root, "Fetch", 0, 1)
+	if errors.Is(err, errNoAnchor) {
+		return // silêncio: a resposta por nome sai sem nota
+	}
+	// Qualquer outra coisa é degradação onde não deveria haver nenhuma: a
+	// linguagem é opcional e o servidor falta.
+	t.Fatalf("Markdown com servidor ausente virou degradação (err=%v)", err)
+}
+
 // ---------------------------------------------------------------------------
 // Com servidor de verdade: gopls
 // ---------------------------------------------------------------------------
@@ -175,8 +211,9 @@ func realGoplsBridge(t *testing.T) string {
 	writeGo(t, root, "alpha.go", bridgeAlpha)
 	writeGo(t, root, "beta.go", bridgeBeta)
 	writeGo(t, root, "caller.go", bridgeCaller)
-	if _, _, ok := lsp.Find(lang); !ok {
-		t.Skipf("%s not installed: %s", lang.Server, lang.Install)
+	if !lsp.Installed(lang) {
+		srv := lang.Primary()
+		t.Skipf("%s not installed: %s", srv.Name, srv.Install)
 	}
 	// No Windows o servidor quente tem este diretório como cwd, e o t.TempDir não consegue apagá-lo por baixo
 	// dele. Encerrar a raiz é o mesmo que o daemon faz quando o repositório vai embora — e é o que devolve o

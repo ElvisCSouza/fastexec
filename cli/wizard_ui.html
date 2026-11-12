@@ -63,17 +63,24 @@ ul.checks{list-style:none;margin:0;padding:0}
 </div>
 </div>
 
+<div class="card" id="langcard" style="display:none">
+<h2>Language servers <small style="display:inline;text-transform:none;letter-spacing:0;font-weight:400">(optional, third-party)</small></h2>
+<p class="sub" style="margin:0 0 8px;font-size:13px">FastExec drives compilers through their own language servers (jump to definition, find references, real rename). They are separate programs with their own licences, pinned to an exact version. <b>Nothing is downloaded unless you tick it here</b>, and each line shows the version, the size, the origin and the licence before you decide. The ones already detected in your files come ticked; the rest stay unticked.</p>
+<div id="langs"></div>
+</div>
+
 <div class="card"><h2>Checks</h2><div id="list"></div></div>
 <div class="card"><h2>Log</h2><div id="log"></div></div>
 </main>
 <script>
 const T="__TOKEN__";
 const $=id=>document.getElementById(id);
-let S=null, skip=new Set(), optsLoaded=false;
+let S=null, skip=new Set(), optsLoaded=false, langsLoaded=false;
+const picked=new Set();
 const H={"X-Token":T,"Content-Type":"application/json"};
 const post=(p,b)=>fetch(p,{method:"POST",headers:H,body:b?JSON.stringify(b):undefined});
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
-function sendOpts(){post("/api/opts",{exclusive:$("excl").checked,installDir:$("dir").value.trim(),skip:[...skip]})}
+function sendOpts(){post("/api/opts",{exclusive:$("excl").checked,installDir:$("dir").value.trim(),skip:[...skip],langs:[...picked]})}
 $("excl").onchange=sendOpts;$("dir").onchange=sendOpts;
 $("go").onclick=async()=>{await sendOpts();post("/api/run/install")};
 $("again").onclick=()=>post("/api/run/inspect");
@@ -84,6 +91,16 @@ function render(s){
   if(!optsLoaded){$("excl").checked=s.opts.exclusive;$("dir").value=s.opts.installDir||"";optsLoaded=true}
   $("clients").innerHTML=s.clients.map(c=>`<label class="opt"><input type="checkbox" data-p="${esc(c.path)}" ${skip.has(c.path)?"":"checked"}><span>${esc(c.name)}<small>${esc(c.path)}</small></span></label>`).join("");
   $("clients").querySelectorAll("input").forEach(i=>i.onchange=()=>{i.checked?skip.delete(i.dataset.p):skip.add(i.dataset.p);sendOpts()});
+  const L=s.langs||[];
+  $("langcard").style.display=L.length?"":"none";
+  if(L.length&&!langsLoaded){
+    const fromServer=s.opts.langs||[];
+    if(fromServer.length)fromServer.forEach(id=>picked.add(id));
+    else L.forEach(l=>{if(l.detected&&l.ready)picked.add(l.id)});
+    langsLoaded=true;
+  }
+  $("langs").innerHTML=L.map(l=>`<label class="opt"><input type="checkbox" data-l="${esc(l.id)}" ${picked.has(l.id)?"checked":""} ${l.ready?"":"disabled"}><span><b>${esc(l.name)}</b>${l.detected?` <em style="font-style:normal;color:var(--mut);font-size:12px">detected in ${l.files} file(s)</em>`:""}${l.installed?` <em style="font-style:normal;color:var(--ok);font-size:12px">already installed: ${esc(l.installed)}</em>`:""}<small>${l.ready?`${esc(l.server)} ${esc(l.version)} &middot; ${esc(l.size)} &middot; ${esc(l.origin)} &middot; licence ${esc(l.license)}`:`not offered here: ${esc(l.reason)}`}</small>${l.fix?`<small>${esc(l.fix)}</small>`:""}</span></label>`).join("");
+  $("langs").querySelectorAll("input").forEach(i=>i.onchange=()=>{i.checked?picked.add(i.dataset.l):picked.delete(i.dataset.l);sendOpts()});
   const fails=s.items.filter(i=>i.status==="fail"&&i.required).length, req=s.items.filter(i=>i.required);
   const b=$("banner");b.className="banner";
   if(s.busy){b.classList.add("busy");$("bt").textContent={inspect:"Inspecting...",install:"Installing...",verify:"Verifying...",undo:"Undoing..."}[s.phase]||"Working...";$("bd").textContent=""}

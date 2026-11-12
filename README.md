@@ -72,6 +72,30 @@ and list them in `~/.fastexec/config.json` (`fastexec config init` writes a samp
 }
 ```
 
+## Language servers (optional)
+
+FastExec can drive a language server (gopls, csharp-ls, typescript-language-server, pyright, rust-analyzer, zls)
+for the languages you actually use. They are **not** bundled in the binary: they are third-party components,
+downloaded only with your permission, from these origins:
+
+| Language | Server | Origin | License |
+|---|---|---|---|
+| Go | gopls | proxy.golang.org | BSD-3-Clause |
+| C# | csharp-ls | nuget.org | MIT |
+| TypeScript/JavaScript | typescript-language-server | registry.npmjs.org | MIT (typescript: Apache-2.0) |
+| Python | pyright-langserver | registry.npmjs.org | MIT |
+| Rust | rust-analyzer | github.com/rust-lang/rust-analyzer | MIT or Apache-2.0 |
+| Zig | zls | github.com/zigtools/zls | MIT |
+
+Nothing is ever downloaded in the background or on first use. `fastexec setup` offers the step at the end, with
+the versions and the languages it detected in your repositories pre-selected; `fastexec lsp install` does the same
+later. Every server is pinned to an exact version, installed under `<data_dir>/lsp/<server>/` (never on your PATH,
+no admin rights), and `fastexec lsp doctor` lists what is installed and its licence. The prerequisite for each
+language (the Go toolchain, the .NET SDK, Node/npm) is checked and explained first — FastExec never installs an SDK
+for you. Nothing is selected by default: uncheck everything and no download happens.
+
+See [docs/install.md](docs/install.md#language-servers-optional).
+
 ## Documentation
 
 - [Install and update](docs/install.md), including manual registration per client

@@ -88,11 +88,14 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		out := outlineSource(path, src, lang, args.Symbol, max)
+		shown, ends := outlineSpans(path, src, lang, args.Symbol)
+		out := renderFileEnds(shown, max, args.Symbol, ends)
 		if args.Symbol != "" && strings.HasPrefix(out, "(no declaration matching") {
-			out += outlineElsewhere(path, args.Symbol, max)
+			return out + outlineElsewhere(path, args.Symbol, max), nil
 		}
-		return out, nil
+		// O outline mostra só os cabeçalhos; o corpo da declaração mostrada é onde vivem os `x := ...`.
+		// A linha "types:" fecha esse buraco sem obrigar outra leitura.
+		return out + outlineTypeLine(path, src, shown, ends, max), nil
 	}
 	return outlineTree(path, args.Symbol, max)
 }
@@ -208,19 +211,28 @@ func outlineDecls(path string, src []byte, lang *codescan.Lang) []codescan.Decl 
 // comes from the scanner (balanced braces, or indentation in Python); when the
 // scanner has none, the line before the next declaration is used.
 func outlineSource(path string, src []byte, lang *codescan.Lang, symbol string, max int) string {
-	decls := outlineDecls(path, src, lang)
+	decls, ends := outlineSpans(path, src, lang, symbol)
+	return renderFileEnds(decls, max, symbol, ends)
+}
+
+// outlineSpans devolve as declarações a mostrar e o fim (1-based) de cada uma.
+//
+// O fim é calculado sobre TODAS as declarações do arquivo, e só depois o filtro por símbolo é aplicado:
+// filtrar primeiro faria o fim de cada declaração esticar até a próxima que casa, engolindo o arquivo.
+func outlineSpans(path string, src []byte, lang *codescan.Lang, symbol string) ([]codescan.Decl, map[int]int) {
+	all := outlineDecls(path, src, lang)
 	var ends map[int]int
 	if graph.IsCSharp(path) {
 		ends = map[int]int{} // o parser de C# carimba o fim de cada bloco; o palpite pelo vizinho só piora
 	} else {
-		ends = declEnds(src, decls)
+		ends = declEnds(src, all)
 	}
-	for _, d := range decls {
+	for _, d := range all {
 		if d.EndLine > d.Line {
 			ends[d.Line] = d.EndLine
 		}
 	}
-	return renderFileEnds(filterDecls(decls, symbol), max, symbol, ends)
+	return filterDecls(all, symbol), ends
 }
 
 func declEnds(src []byte, decls []codescan.Decl) map[int]int {

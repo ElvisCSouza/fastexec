@@ -43,6 +43,43 @@ It registers the running executable as the MCP server named `fastexec` in every 
 - It warns about other servers that also run commands or edit files (desktop-commander, filesystem, shell...).
   With them in the same client, models usually pick those and FastExec is rarely called. It does not remove them.
 
+## Language servers (optional)
+
+The last step of `fastexec setup` is optional and installs language servers. It is skipped with `--no-lsp`, and with
+`--lang go,cs,ts` you can name the languages up front (`--lang` accepts short spellings: `go`, `cs`/`c#`, `ts`/`js`,
+`py`, `rs`, `zig`). In a terminal it shows one line per server — name, pinned version, approximate size, origin and
+licence — and asks for each one. Without a terminal nothing is installed unless you pass `--yes` together with
+`--lang`.
+
+Six languages have a reproducible download (see the table in the README). The rest — C/C++ (clangd), Java (jdtls),
+Kotlin, and whatever else FastExec can drive — are reported as *manual*: `lsp install` prints the command that
+installs them and downloads nothing, because a real install would mean a multi-hundred-MB SDK.
+
+The same step is available later:
+
+```
+fastexec lsp install              # asks for the languages detected in your repositories
+fastexec lsp install go,csharp    # start from these instead
+fastexec lsp install --root ~/work --dry-run
+fastexec lsp update               # reinstall the servers whose pinned version changed
+fastexec lsp remove gopls
+fastexec lsp doctor               # what is installed, what the prerequisites are, licences
+```
+
+- **Detection.** `setup` and `lsp install` scan the repositories FastExec already knows plus any `--root` you give,
+  count file extensions, and pre-select those languages. Everything else stays unchecked.
+- **Prerequisites are checked first**, and explained in one line: C# needs the .NET SDK; TypeScript/JavaScript and
+  Python need Node and npm (pyright comes from npm); Go needs the Go toolchain. If one is missing FastExec prints the
+  command that installs it and continues without that language. It never installs an SDK by itself.
+- **Pinned and verified.** Each server has an exact version (never "latest"); downloads come from the origins listed
+  in the README and the checksum or integrity check offered by that origin is used. Servers live in
+  `<data_dir>/lsp/<server>/`, they are not added to PATH, and no administrator rights are needed.
+- **Nothing is installed silently.** A failed download is reported with the command it ran and leaves no half-written
+  server behind; the temporary staging folder is discarded. The already-installed servers are untouched.
+- **Third-party components.** FastExec ships none of them in the binary. They keep their own licences (BSD-3-Clause
+  for gopls, MIT for csharp-ls and pyright, MIT/Apache-2.0 for rust-analyzer, MIT for zls and
+  typescript-language-server, Apache-2.0 for the TypeScript compiler); `fastexec lsp doctor` prints them.
+
 ## Manual registration
 
 Any MCP client that starts stdio servers can use FastExec. The entry is just the executable, no arguments:

@@ -173,12 +173,13 @@ func realTS(t *testing.T, root string) *Client {
 		t.Skip("FASTEXEC_LSP is off")
 	}
 	lang := tsLanguage(t)
+	srv := lang.Primary()
 	launch, ok := LaunchFor(lang, root)
 	if !ok {
-		t.Skipf("%s not installed: %s", lang.Server, lang.Install)
+		t.Skipf("%s not installed: %s", srv.Name, srv.Install)
 	}
-	if _, ok := launch.InitializationOptions["tsserver"]; !ok {
-		t.Skipf("no tsserver found for %s: %s", lang.Server, tsDoctorDetails(launch.Command)[0])
+	if _, ok := launch.InitOptions["tsserver"]; !ok {
+		t.Skipf("no tsserver found for %s: %s", srv.Name, tsDoctorDetails(launch.Command)[0])
 	}
 	c, err := New(context.Background(), Config{
 		Launch:           launch,
@@ -186,7 +187,7 @@ func realTS(t *testing.T, root string) *Client {
 		Timeout:          60 * time.Second,
 	})
 	if err != nil {
-		t.Fatalf("starting the real %s: %v", lang.Server, err)
+		t.Fatalf("starting the real %s: %v", srv.Name, err)
 	}
 	t.Cleanup(c.Close)
 	return c

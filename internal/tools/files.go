@@ -300,6 +300,9 @@ func handleReadFile(args ReadFileArgs) (string, error) {
 	}
 	if !done {
 		out = capRead(out, args)
+		// A linha "types:" fecha o trecho lido: `x := ...` sem tipo escrito custaria abrir outro arquivo.
+		// Só quando o texto é puro (sem nota do grafo) e a faixa saiu inteira — ver typeLineForRead.
+		out += typeLineForRead(args, out)
 	}
 	// A hint only for the same read made again (same file AND same selection): reading a file in different
 	// ranges is what read_file is for and must not be called re-reading.

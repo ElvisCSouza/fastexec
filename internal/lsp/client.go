@@ -50,19 +50,31 @@ type TextEdit struct {
 	NewText string `json:"newText"`
 }
 
-// DocumentSymbol is a flattened symbol entry.
+// DocumentSymbol is a symbol entry. DocumentSymbols returns a flat list;
+// Children is what the server nested under this entry (interface methods,
+// struct members), kept so a caller can list one type's members alone.
 type DocumentSymbol struct {
-	Name      string `json:"name"`
-	Kind      int    `json:"kind"`
-	Range     Range  `json:"range"`
-	Selection Range  `json:"selectionRange"`
-	Detail    string `json:"detail,omitempty"`
+	Name      string           `json:"name"`
+	Kind      int              `json:"kind"`
+	Range     Range            `json:"range"`
+	Selection Range            `json:"selectionRange"`
+	Detail    string           `json:"detail,omitempty"`
+	Children  []DocumentSymbol `json:"-"`
 }
 
 // Hover carries the type/signature text at a position.
 type Hover struct {
 	Contents string
 	Range    *Range
+}
+
+// InlayHint is one annotation the server suggests for a position, normally the
+// type it inferred. Label is already flattened to text: the protocol allows a
+// plain string or a list of parts, and both arrive here as one line.
+type InlayHint struct {
+	Position Position
+	Label    string
+	Kind     int // 1 = Type, 2 = Parameter; 0 when the server omitted it
 }
 
 // CodeAction is one suggested fix.
@@ -90,11 +102,35 @@ type Launch struct {
 	Args       []string // extra arguments
 	Env        []string // extra environment entries ("K=V")
 	Root       string   // repository root; also the process working directory
-	// InitializationOptions is sent verbatim as the `initializationOptions` of
-	// initialize. Nil means "send none", which is what every server that needs
-	// nothing gets. Some servers cannot start without it: the TypeScript one
-	// does not run at all unless it is told where its tsserver is.
-	InitializationOptions map[string]any
+	// InitOptions is sent verbatim as the `initializationOptions` of initialize.
+	// Nil sends nothing (many servers do not read it); a server that does read
+	// it and finds it absent falls back to its own defaults, which is worse for
+	// the languages that need it and harmless for the rest. Some servers cannot
+	// start without it: the TypeScript one does not run at all unless it is told
+	// where its tsserver is.
+	InitOptions map[string]any
+
+	// BlockingProgress lists progress-title prefixes that mean "the project is
+	// still loading": while one of them is in flight the server answers empty
+	// lists that mean "not yet", not "nothing". Languages whose server loads
+	// instantly (gopls) leave it nil and are unaffected.
+	BlockingProgress []string
+	// LoadingNote is the short phrase reported while a blocking progress is in
+	// flight, e.g. "loading C# solution".
+	LoadingNote string
+
+	// Problem, when set on a launch that was otherwise found, says the server
+	// exists but cannot work here (a .NET SDK is missing, say). The manager
+	// degrades with this phrase instead of pretending the server is absent.
+	Problem string
+
+	// RenameByRefs says the server's own rename is not per-symbol, so its
+	// WorkspaceEdit cannot be trusted: csharp-ls renames every overload that
+	// shares the name. Rename then builds the edits from the reference list,
+	// which resolves one symbol exactly, instead of from textDocument/rename.
+	// Languages whose server renames the symbol under the cursor (gopls) leave
+	// it false and are unaffected.
+	RenameByRefs bool
 }
 
 // Config is a Launch plus the runtime limits.
@@ -139,8 +175,22 @@ type Client struct {
 	docs     map[string]*document // uri -> state
 	diags    map[string][]Diagnostic
 	diagSeq  map[string]uint64
+	// pulled is the last textDocument/diagnostic answer per file. It exists
+	// because a codeAction request has to carry the diagnostics of the range it
+	// asks about, and a pull-only server never pushes them: without this the
+	// quickfix list comes back empty (or, on csharp-ls, kills the process).
+	pulled   map[string][]Diagnostic
 	caps     serverCapabilities
 	restarts []time.Time
+
+	// loading holds the title of every blocking $/progress still in flight, by
+	// progress token. Empty means the project has finished loading.
+	loading map[string]string
+	// loadDone records that a blocking load finished at least once, so later
+	// queries skip the wait entirely. gateRetired records that this server does
+	// not announce its loads at all, so waiting for one is pointless.
+	loadDone    bool
+	gateRetired bool
 
 	lastUse time.Time
 
@@ -180,6 +230,8 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		docs:    make(map[string]*document),
 		diags:   make(map[string][]Diagnostic),
 		diagSeq: make(map[string]uint64),
+		pulled:  make(map[string][]Diagnostic),
+		loading: make(map[string]string),
 		stderr:  newRingBuffer(cfg.StderrBytes),
 		lastUse: time.Now(),
 		closed:  make(chan struct{}),
@@ -447,8 +499,8 @@ func (c *Client) handshake(ctx context.Context, cn *conn) error {
 		"capabilities": clientCapabilities(),
 		"trace":        "off",
 	}
-	if len(c.cfg.InitializationOptions) > 0 {
-		params["initializationOptions"] = c.cfg.InitializationOptions
+	if len(c.cfg.InitOptions) > 0 {
+		params["initializationOptions"] = c.cfg.InitOptions
 	}
 	raw, err := cn.call(ctx, "initialize", params)
 	if err != nil {
@@ -462,6 +514,8 @@ func (c *Client) handshake(ctx context.Context, cn *conn) error {
 			ImplementationProvider capFlag         `json:"implementationProvider"`
 			TypeDefinitionProvider capFlag         `json:"typeDefinitionProvider"`
 			HoverProvider          capFlag         `json:"hoverProvider"`
+			InlayHintProvider      capFlag         `json:"inlayHintProvider"`
+			TypeHierarchyProvider  capFlag         `json:"typeHierarchyProvider"`
 			DocumentSymbolProvider capFlag         `json:"documentSymbolProvider"`
 			RenameProvider         capFlag         `json:"renameProvider"`
 			CodeActionProvider     capFlag         `json:"codeActionProvider"`
@@ -485,6 +539,8 @@ func (c *Client) handshake(ctx context.Context, cn *conn) error {
 		Implementation: cap.ImplementationProvider.present,
 		TypeDefinition: cap.TypeDefinitionProvider.present,
 		Hover:          cap.HoverProvider.present,
+		InlayHint:      cap.InlayHintProvider.present,
+		TypeHierarchy:  cap.TypeHierarchyProvider.present,
 		DocumentSymbol: cap.DocumentSymbolProvider.present,
 		Rename:         cap.RenameProvider.present,
 		PrepareRename:  cap.RenameProvider.has("prepareProvider"),
@@ -501,12 +557,19 @@ func (c *Client) handshake(ctx context.Context, cn *conn) error {
 	return cn.notify("initialized", map[string]any{})
 }
 
-// handleNotify records server push notifications. publishDiagnostics is the
-// only one that carries state FastExec consumes.
+// handleNotify records server push notifications. Two of them carry state
+// FastExec consumes: publishDiagnostics (the server has looked at a document)
+// and $/progress (the server is, or is no longer, loading the project).
 func (c *Client) handleNotify(method string, params json.RawMessage) {
-	if method != "textDocument/publishDiagnostics" {
-		return
+	switch method {
+	case "textDocument/publishDiagnostics":
+		c.handleDiagnostics(params)
+	case "$/progress":
+		c.handleProgress(params)
 	}
+}
+
+func (c *Client) handleDiagnostics(params json.RawMessage) {
 	var p struct {
 		URI         string       `json:"uri"`
 		Version     *int         `json:"version"`
@@ -520,6 +583,88 @@ func (c *Client) handleNotify(method string, params json.RawMessage) {
 	c.diags[key] = p.Diagnostics
 	c.diagSeq[key]++
 	c.mu.Unlock()
+}
+
+// handleProgress tracks the server's work-done progress. Only titles the
+// language declared as blocking count: for gopls (which declares none) this is
+// a no-op, so nothing downstream changes for it.
+//
+// A blocking title in flight is the one signal that separates "this symbol has
+// no uses" from "the project is not loaded yet": while the solution is loading,
+// a language server answers empty lists that mean nothing at all.
+func (c *Client) handleProgress(params json.RawMessage) {
+	if len(c.cfg.BlockingProgress) == 0 {
+		return
+	}
+	var p struct {
+		Token json.RawMessage `json:"token"`
+		Value struct {
+			Kind  string `json:"kind"`
+			Title string `json:"title"`
+		} `json:"value"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return
+	}
+	token := string(p.Token)
+	if token == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch p.Value.Kind {
+	case "begin":
+		if title := c.blocking(p.Value.Title); title != "" {
+			c.loading[token] = title
+		}
+	case "end":
+		if _, ok := c.loading[token]; ok {
+			delete(c.loading, token)
+			// Only the end of the LAST blocking progress means the project is
+			// loaded. A solution reports "Loading solution ..." and then
+			// "Loading 4 project(s)...": declaring the load finished at the
+			// first end would open the gate while half the projects are still
+			// being read, which is exactly when references come back short.
+			c.loadDone = len(c.loading) == 0
+		}
+	}
+}
+
+// loadStateLocked reports whether a blocking load is in flight, the title to
+// report for it, and whether there is nothing left to wait for.
+//
+// The caller holds c.mu. More than one load may be in flight; the first title
+// in sorted order is reported so the answer does not depend on map iteration.
+func (c *Client) loadStateLocked() (busy bool, title string, settled bool) {
+	for _, t := range c.loading {
+		if !busy || t < title {
+			title, busy = t, true
+		}
+	}
+	settled = (c.loadDone || c.gateRetired) && !busy
+	return busy, title, settled
+}
+
+// blocking reports the title when it announces a load, and "" otherwise.
+func (c *Client) blocking(title string) string {
+	t := strings.ToLower(strings.TrimSpace(title))
+	if t == "" {
+		return ""
+	}
+	for _, p := range c.cfg.BlockingProgress {
+		if strings.HasPrefix(t, p) {
+			return t
+		}
+	}
+	return ""
+}
+
+// Loading reports the title of a load still in flight, if any.
+func (c *Client) Loading() (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	busy, title, _ := c.loadStateLocked()
+	return title, busy
 }
 
 // handleRequest answers the handful of server -> client requests that a
@@ -598,6 +743,8 @@ type serverCapabilities struct {
 	Implementation bool
 	TypeDefinition bool
 	Hover          bool
+	InlayHint      bool
+	TypeHierarchy  bool
 	DocumentSymbol bool
 	Rename         bool
 	PrepareRename  bool
@@ -635,19 +782,17 @@ func clientCapabilities() map[string]any {
 			// Announcing willRename is what makes a server offer to update the
 			// imports that point at a renamed file. A server that does not
 			// support it simply never sends the request.
+			//
+			// The value is a plain bool, not a filter object: a *client*
+			// capability says only whether the client can handle the request
+			// (FileOperationClientCapabilities). The filters that narrow it are
+			// the server's, announced in its own capabilities. gopls decodes
+			// this field into a Go bool and rejects the whole initialize with
+			// "cannot unmarshal object into ... willRename of type bool", so a
+			// filter object here buys nothing and costs the handshake.
 			"fileOperations": map[string]any{
-				"willRename": map[string]any{
-					"dynamicRegistration": false,
-					"filters": []map[string]any{
-						{
-							"scheme": "file",
-							"pattern": map[string]any{
-								"glob":   "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
-								"format": "relative",
-							},
-						},
-					},
-				},
+				"dynamicRegistration": false,
+				"willRename":          true,
 			},
 		},
 		"textDocument": map[string]any{
@@ -666,7 +811,12 @@ func clientCapabilities() map[string]any {
 			"implementation": map[string]any{"linkSupport": false},
 			"references":     map[string]any{},
 			"hover":          map[string]any{"contentFormat": []string{"plaintext", "markdown"}},
-			"documentSymbol": map[string]any{"hierarchicalDocumentSymbolSupport": false},
+			"inlayHint":      map[string]any{"dynamicRegistration": false},
+			"typeHierarchy":  map[string]any{"dynamicRegistration": false},
+			// Hierarchical: the nested answer is the only one that says which
+			// members belong to which type, and that is what "list the members
+			// of T" needs. Flattening it back is a local loop.
+			"documentSymbol": map[string]any{"hierarchicalDocumentSymbolSupport": true},
 			"rename":         map[string]any{"prepareSupport": true},
 			"codeAction":     map[string]any{"codeActionLiteralSupport": map[string]any{"codeActionKind": map[string]any{"valueSet": []string{"", "quickfix", "refactor", "source", "source.organizeImports", "source.addMissingImports"}}}},
 			"formatting":     map[string]any{},
@@ -737,6 +887,122 @@ const DefaultSettle = 15 * time.Second
 // degrades to the name-based graph instead of reporting an exact emptiness.
 var ErrLoading = errors.New("lsp: server is still loading the project")
 
+// LoadingError is ErrLoading with the reason attached: the server said, in
+// $/progress, that it is still loading the project. It is separate from
+// ErrLoading because the honest note is different — "still loading" is a wait
+// that ends by itself, "did not load" is not.
+type LoadingError struct {
+	// Title is the progress title the server announced, for logs.
+	Title string
+	// Note is the short phrase for the user, e.g. "loading C# solution".
+	Note string
+}
+
+func (e *LoadingError) Error() string {
+	if e.Title != "" {
+		return "lsp: still loading (" + e.Title + ")"
+	}
+	return "lsp: still loading the project"
+}
+
+// Unwrap keeps errors.Is(err, ErrLoading) true for callers that only care that
+// nothing can be trusted yet.
+func (e *LoadingError) Unwrap() error { return ErrLoading }
+
+// DefaultLoadGrace bounds how long a query waits for a project that reports
+// itself as loading. It is short on purpose: a big solution takes tens of
+// seconds, and the first query in it is better answered from the name-based
+// graph with an honest note than made to wait for the whole load. Every query
+// after the load is free. Five seconds is the bet that a solution small enough
+// to load quickly does load in time, while a large one degrades instead of
+// stalling the tool.
+const DefaultLoadGrace = 5 * time.Second
+
+// loadGrace is how long a settling wait spends on the load gate: never more
+// than the settle budget it was given, and never more than the default.
+func loadGrace(settle time.Duration) time.Duration {
+	if settle <= 0 || settle > DefaultLoadGrace {
+		return DefaultLoadGrace
+	}
+	return settle
+}
+
+// WaitLoaded blocks while the server reports that it is still loading the
+// project, and returns LoadingError if the grace runs out first.
+//
+// It is a no-op for languages that declare no blocking progress (gopls), and a
+// no-op after the first successful load, so the steady-state cost is zero.
+//
+// A server that never reports progress — or a client that connected after the
+// load already finished — is not waited on beyond the first query: the absence
+// of progress is taken at face value and WaitSettled stays the gate.
+func (c *Client) WaitLoaded(ctx context.Context, grace time.Duration) error {
+	if len(c.cfg.BlockingProgress) == 0 {
+		return nil
+	}
+	if grace <= 0 {
+		grace = DefaultLoadGrace
+	}
+	deadline := time.Now().Add(grace)
+	for {
+		c.mu.Lock()
+		busy, title, settled := c.loadStateLocked()
+		c.mu.Unlock()
+		if settled {
+			return nil
+		}
+		if busy {
+			if !time.Now().Before(deadline) {
+				return c.loadingErr(title)
+			}
+		} else if !time.Now().Before(deadline) {
+			// Nothing was ever announced. Waiting longer would tax every query
+			// of a server that simply does not report its loads, so this client
+			// stops waiting for progress and leaves WaitSettled as the gate. A
+			// load announced later re-opens the gate: the client is retired
+			// only until the next blocking progress begins.
+			c.stopWaitingForProgress()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.closed:
+			return ErrLoading
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
+// stopWaitingForProgress retires the progress gate for this client, for a
+// server that turned out not to announce its loads at all. It is deliberately
+// not the same as "a load finished": it records that waiting is pointless here,
+// not that the project is loaded.
+func (c *Client) stopWaitingForProgress() {
+	c.mu.Lock()
+	c.gateRetired = true
+	c.mu.Unlock()
+}
+
+// loadingErr builds the error for a project that is still loading.
+func (c *Client) loadingErr(title string) error {
+	note := c.cfg.LoadingNote
+	if note == "" {
+		note = "still loading the project"
+	}
+	return &LoadingError{Title: title, Note: note}
+}
+
+// notReady is the error to report when the server has nothing to say about a
+// document: still loading when $/progress says so, otherwise the generic
+// ErrLoading.
+func (c *Client) notReady() error {
+	if title, busy := c.Loading(); busy {
+		return c.loadingErr(title)
+	}
+	return ErrLoading
+}
+
 // WaitSettled blocks until the server has published diagnostics for path at
 // least once, which is how every server signals it has analysed the document.
 //
@@ -746,6 +1012,17 @@ var ErrLoading = errors.New("lsp: server is still loading the project")
 // so any caller that is about to trust an empty answer must call this first and
 // degrade on ErrLoading.
 func (c *Client) WaitSettled(ctx context.Context, path string, settle time.Duration) error {
+	// A project that is still loading is not "not settled": waiting for
+	// diagnostics that cannot come yet would burn the whole settle budget and
+	// end in the same place, so the load gate is asked first.
+	//
+	// The wait is bounded by the caller's own budget. A caller that allows
+	// 120 ms (the impact footer of an edit that is already on disk) must not be
+	// made to wait seconds for a solution to load: it degrades now, and the
+	// next query finds the load already finished.
+	if err := c.WaitLoaded(ctx, loadGrace(settle)); err != nil {
+		return err
+	}
 	if err := c.ensureOpen(ctx, path); err != nil {
 		return err
 	}
@@ -767,10 +1044,18 @@ func (c *Client) WaitSettled(ctx context.Context, path string, settle time.Durat
 		seen := c.diagSeq[uri] > 0
 		c.mu.Unlock()
 		if seen {
+			// Diagnostics for this file can be published by the syntax pass
+			// before the project is loaded, so "the document was analysed" is
+			// not yet "the answer can be trusted". A load in flight is checked
+			// once more here, without waiting: this is the last moment before
+			// an empty list would be reported as a real emptiness.
+			if title, busy := c.Loading(); busy {
+				return c.loadingErr(title)
+			}
 			return nil
 		}
 		if !time.Now().Before(deadline) {
-			return ErrLoading
+			return c.notReady()
 		}
 		select {
 		case <-ctx.Done():

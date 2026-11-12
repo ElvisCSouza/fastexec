@@ -39,7 +39,7 @@ func useFakeServer(t *testing.T, env ...string) {
 	fakeLaunchEnv = env
 	launchFor = func(lang Language, root string) (Launch, bool) {
 		return Launch{
-			Name:       lang.Server,
+			Name:       lang.Primary().Name,
 			LanguageID: lang.ID,
 			Command:    os.Args[0],
 			Env:        append([]string{"FAKELSP_HELPER=1"}, fakeLaunchEnv...),

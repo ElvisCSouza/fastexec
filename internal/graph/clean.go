@@ -61,6 +61,33 @@ func Clean(root string) (CleanStats, error) {
 	return st, nil
 }
 
+// RepoRoots lista só os caminhos dos repositórios indexados, sem a contagem:
+// é o que o instalador de servidores de linguagem usa para detectar quais
+// linguagens o usuário já tem indexadas.
+func RepoRoots() ([]string, error) {
+	if !exists() {
+		return nil, nil
+	}
+	d, err := store()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Query(`SELECT DISTINCT repo_root FROM code_files ORDER BY repo_root`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var r string
+		if err := rows.Scan(&r); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // Repos lista os repositórios indexados com o número de arquivos de cada um.
 func Repos() ([]string, error) {
 	if !exists() {
