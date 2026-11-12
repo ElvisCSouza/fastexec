@@ -175,6 +175,17 @@ L3: public static async Task<Item> Fetch(int id, CancellationToken ct) {
 - The name is matched by name, not by type: treat the list as "look here", not as a compile error. A name declared
   in more than one place is not listed at all — the line says `name is ambiguous (K definitions): check callers with
   code_graph` instead, because the graph cannot tell which one the use belongs to.
+- When a **language server** for the edited file is already warm (see `code_graph`), the same line comes from the
+  type-checked answer instead, and says so — `Exact, gopls.` replaces `By name, not type-checked.`, the ambiguity
+  caveat disappears (each homonym is resolved separately) and an empty answer means "no other file uses it", so the
+  line is simply absent:
+
+  ```
+  [graph] Fetch signature changed: 3 use(s) in 3 file(s) may need update: a.go:12, b.go:40, +4 more (tests: 2) Exact, gopls.
+  ```
+
+  A server that is not already running is **not** started for this: the edit is already written, the reply may lose
+  precision but never time (~120 ms). Off, cold, still loading or erroring, the line stays exactly as above.
 - The edited file itself is never in the list; test files are counted apart (`tests: N`), and at most 5 locations
   are quoted before `+K more`. One warning per symbol, at most 3 per call (a batch edit can touch several).
 - Requires the repository to already have a graph index (a `.git` and a `graph.db` from a previous `code_graph`
@@ -244,6 +255,27 @@ files are reparsed):
 - `def`: where it is declared, with line range and signature;
 - `impact`: files that use what a file or symbol defines (check before refactoring);
 - `index`: full rebuild.
+
+### exact or by name
+
+`callers`, `def` and `impact` (of a symbol) answer from the repository's own **language server** when there is one
+for the language and it starts and loads: `=== callers of 'Fetch' (exact, gopls) ===`. The answer is then
+type-checked — two methods with the same name on different types are two different symbols, and the header says
+which server answered. The name-based graph remains the answer for everything else (`depth` > 1, `impact` of a file,
+a language with no server) and stays the fallback when the server cannot answer, in which case the old output comes
+back with one extra line naming the reason:
+
+```
+lsp unavailable (server not installed); by name
+lsp unavailable (project did not load); by name
+lsp unavailable (timed out); by name
+```
+
+That line is the whole honesty rule: a **partial** answer is never presented as exact — if one of the declarations
+of a homonymous name fails to resolve, the whole exact result is withheld and the by-name answer is given instead.
+The note is silent when there was no server to begin with (no server installed for the language, no declaration of
+that name in the index, `FASTEXEC_LSP=off`), because the by-name answer is then simply the answer. Servers are
+started on demand, kept warm for 15 minutes and never downloaded; `fastexec lsp doctor` shows what was found.
 
 `callers` takes an optional `depth` (1 = direct callers, the default and the same output as always; up to 4). With
 `depth` > 1 the answer is the transitive closure, deduplicated: one line per symbol, grouped by level (`depth 1:`,
@@ -330,7 +362,7 @@ loading it, `enable`/`disable` add or remove them from the tool list (the client
 ## Command line
 
 The same binary is a CLI: `fastexec exec [host] <command>`, `get`, `put`, `sql`, `job`, `ping`, `stats`, `graph`,
-`handoff`, `config`, `token`, `setup`, `doctor`, `daemon <status|start|stop>`, `version`. Run with no arguments
+`handoff`, `config`, `token`, `setup`, `doctor`, `lsp doctor`, `daemon <status|start|stop>`, `version`. Run with no arguments
 (or `mcp`) it is the MCP server.
 
 `fastexec graph callers <symbol> [repo_path] [depth=N]` is the same query as the tool, including `depth` > 1.
