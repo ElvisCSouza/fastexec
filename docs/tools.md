@@ -193,6 +193,13 @@ Declarations of a source file as `L<line>: <signature>`, or, for a folder, where
 dependency and build folders). Go, C/C++, TypeScript/JavaScript, Python, shell, PowerShell. Use it before reading a file
 to jump to the right lines.
 
+Markdown is accepted too: the output is its sections, one per heading, named by the heading path (`README.md > Install >
+Linux`) and rendered as `L<start>-L<end>: <heading>`. When the file has a reference that no longer lands — a link to a
+file that does not exist, or an anchor no section of the target matches — a last line
+`docs: N broken refs: README.md:12 -> setup.md (not found)` lists up to 5 (then `(+K more)`). That is how stale
+documentation surfaces without reading the file. A whole folder still lists code only; Markdown reaches you through
+`code_graph` (next section).
+
 ## code_graph
 
 A code graph of a local Git repository, built on first use and refreshed incrementally on every call (only changed
@@ -215,6 +222,23 @@ closure reaches further, one line `transitive: depth=3 reaches N more symbols.` 
 in the other cases. Homonyms reuse the same treatment as `depth` 1: a name declared in more than one type shows the
 call's receiver and the type it points at (`via x -> Type`, `-> ?` when undecided) and is listed in a final `NOTE:`
 line; no link is invented.
+
+The same graph carries the **documentation**: inside an indexed repository, every Markdown file becomes
+documentation nodes and edges, by deterministic rule, never by the model. Each section (a heading) is a node, named by
+the heading path, and the references a section makes are edges: `[x](other.md#anchor)` links between Markdown files
+(resolved relative to the file's own folder, GitHub-style, anchor included), `[[Wiki links]]`, and backticked
+`` `Name` `` / `` `pkg.Name()` `` / `` `path/file.go` `` that match **exactly** an indexed symbol name or an existing
+file of the repository (never fuzzy; front matter is ignored, and inside a code fence only paths count, since a bare
+identifier there is sample code). So without opening a single Markdown:
+
+- `def` and `callers` end with `docs: README.md#install, _docs/api.md (+K)` — up to 3 documents, each with the section
+  that holds the mention. That answers "where is this documented" in the same call that answers "where is it declared".
+- `impact` of a file shows the same line for the documents that cite it (link, wiki link or path mention).
+- `index` counts the Markdown it tracked, and `code_outline` reports the broken references of one file.
+
+The line is absent — and the rest of the output is byte for byte what it always was — in a repository with no
+documentation, so nothing grows for the code-only case. Only Markdown inside a Git repository is indexed
+(`node_modules`, `vendor`, `.git` and the like are skipped, as is any file over 512 KB).
 
 Go is parsed with `go/ast`; C/C++, TypeScript/JavaScript, Python, shell and PowerShell with line scanners,
 matched by name without type resolution (in C/C++: function and method definitions, classes, structs, unions,
