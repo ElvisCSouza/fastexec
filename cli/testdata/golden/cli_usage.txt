@@ -74,10 +74,13 @@ exit: 0
 $ fastexec config bogus
 exit: 1
 --- stdout
-Usage: fastexec config [show|example|init]
+Usage: fastexec config [show|example|init|set]
   show     effective configuration: file, hosts, default host, data folders, telemetry (default)
   example  print a sample config.json
   init     write the sample to the config file if it does not exist yet
+  set <key> <value>
+           write one setting into the config file, leaving the rest untouched
+           keys: dotnet_sdk (folder of a .NET SDK for the C# server; "-" clears it)
 --- stderr
 
 
