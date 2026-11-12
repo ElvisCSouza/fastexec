@@ -105,6 +105,15 @@ func runExact(ctx context.Context, root, symbol string, acquire acquireFunc, set
 		if server == "" {
 			server = c.Name()
 		}
+		// Servidor rodando em projeto ADIVINHADO (tsserver sem tsconfig/jsconfig): ele responde, mas
+		// a resposta cross-file pode estar incompleta, e uma lista incompleta marcada "exact" é pior
+		// que a resposta por nome. Degrada com o motivo, que é o que o usuário precisa ler para
+		// criar o config e passar a receber o exato.
+		warn := c.ProjectWarning()
+		if warn != "" {
+			release()
+			return nil, "", lsp.Unavailable("%s", warn)
+		}
 		err = stepExact(ctx, c, abs, name, d, settle, fn)
 		release()
 		if err != nil {

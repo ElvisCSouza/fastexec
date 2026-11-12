@@ -90,6 +90,11 @@ type Launch struct {
 	Args       []string // extra arguments
 	Env        []string // extra environment entries ("K=V")
 	Root       string   // repository root; also the process working directory
+	// InitializationOptions is sent verbatim as the `initializationOptions` of
+	// initialize. Nil means "send none", which is what every server that needs
+	// nothing gets. Some servers cannot start without it: the TypeScript one
+	// does not run at all unless it is told where its tsserver is.
+	InitializationOptions map[string]any
 }
 
 // Config is a Launch plus the runtime limits.
@@ -193,6 +198,18 @@ func (c *Client) Name() string { return c.cfg.Name }
 
 // LanguageID returns the languageId this server owns.
 func (c *Client) LanguageID() string { return c.cfg.LanguageID }
+
+// ProjectWarning is the honesty line for a server that is running on a guessed
+// project rather than on the project's own config, empty when there is nothing
+// to warn about. It is asked of the client, not of the caller's repository root,
+// because what matters is the root this server was actually started with.
+func (c *Client) ProjectWarning() string {
+	lang, ok := LanguageByID(c.cfg.LanguageID)
+	if !ok {
+		return ""
+	}
+	return ProjectWarning(lang, c.root)
+}
 
 // PID returns the OS process id, or 0 when not running.
 func (c *Client) PID() int {
@@ -430,6 +447,9 @@ func (c *Client) handshake(ctx context.Context, cn *conn) error {
 		"capabilities": clientCapabilities(),
 		"trace":        "off",
 	}
+	if len(c.cfg.InitializationOptions) > 0 {
+		params["initializationOptions"] = c.cfg.InitializationOptions
+	}
 	raw, err := cn.call(ctx, "initialize", params)
 	if err != nil {
 		return err
@@ -447,6 +467,11 @@ func (c *Client) handshake(ctx context.Context, cn *conn) error {
 			CodeActionProvider     capFlag         `json:"codeActionProvider"`
 			FormattingProvider     capFlag         `json:"documentFormattingProvider"`
 			DiagnosticProvider     json.RawMessage `json:"diagnosticProvider"`
+			Workspace              struct {
+				FileOperations struct {
+					WillRename json.RawMessage `json:"willRename"`
+				} `json:"fileOperations"`
+			} `json:"workspace"`
 		} `json:"capabilities"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
@@ -466,6 +491,10 @@ func (c *Client) handshake(ctx context.Context, cn *conn) error {
 		CodeAction:     cap.CodeActionProvider.present,
 		Formatting:     cap.FormattingProvider.present,
 		Diagnostics:    len(cap.DiagnosticProvider) > 0 && !bytes.Equal(bytes.TrimSpace(cap.DiagnosticProvider), []byte("null")),
+		// willRenameFiles is the only thing that makes a *file* rename update
+		// the imports pointing at it. Announced as either `true` or a filter
+		// object; anything non-null means the server answers the request.
+		WillRenameFiles: jsonPresent(cap.Workspace.FileOperations.WillRename),
 	}
 	c.mu.Unlock()
 
@@ -486,9 +515,10 @@ func (c *Client) handleNotify(method string, params json.RawMessage) {
 	if json.Unmarshal(params, &p) != nil || p.URI == "" {
 		return
 	}
+	key := uriKey(p.URI)
 	c.mu.Lock()
-	c.diags[p.URI] = p.Diagnostics
-	c.diagSeq[p.URI]++
+	c.diags[key] = p.Diagnostics
+	c.diagSeq[key]++
 	c.mu.Unlock()
 }
 
@@ -560,7 +590,10 @@ func (f capFlag) has(key string) bool {
 // serverCapabilities is the subset of server capabilities FastExec uses to
 // decide whether an operation is worth sending.
 type serverCapabilities struct {
-	References     bool
+	// WillRenameFiles is workspace.fileOperations.willRename: the server can
+	// compute the edits a file rename implies (the imports that point at it).
+	WillRenameFiles bool
+	References      bool
 	Definition     bool
 	Implementation bool
 	TypeDefinition bool
@@ -599,6 +632,23 @@ func clientCapabilities() map[string]any {
 				"failureHandling": "abort",
 			},
 			"didChangeConfiguration": map[string]any{"dynamicRegistration": false},
+			// Announcing willRename is what makes a server offer to update the
+			// imports that point at a renamed file. A server that does not
+			// support it simply never sends the request.
+			"fileOperations": map[string]any{
+				"willRename": map[string]any{
+					"dynamicRegistration": false,
+					"filters": []map[string]any{
+						{
+							"scheme": "file",
+							"pattern": map[string]any{
+								"glob":   "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+								"format": "relative",
+							},
+						},
+					},
+				},
+			},
 		},
 		"textDocument": map[string]any{
 			"synchronization": map[string]any{
@@ -643,15 +693,16 @@ func (c *Client) ensureOpen(ctx context.Context, path string) error {
 		return err
 	}
 	uri := PathToURI(abs)
+	key := uriKey(uri)
 
 	c.mu.Lock()
-	d := c.docs[uri]
+	d := c.docs[key]
 	c.mu.Unlock()
 
 	if d == nil {
 		d = &document{path: abs, uri: uri, version: 1, sent: content}
 		c.mu.Lock()
-		c.docs[uri] = d
+		c.docs[key] = d
 		c.mu.Unlock()
 		return c.notify(ctx, "textDocument/didOpen", map[string]any{
 			"textDocument": map[string]any{
@@ -702,7 +753,7 @@ func (c *Client) WaitSettled(ctx context.Context, path string, settle time.Durat
 	if err != nil {
 		return err
 	}
-	uri := PathToURI(abs)
+	uri := uriKey(PathToURI(abs))
 	if settle <= 0 {
 		settle = DefaultSettle
 	}
@@ -738,10 +789,11 @@ func (c *Client) closeDoc(ctx context.Context, path string) error {
 		return err
 	}
 	uri := PathToURI(abs)
+	key := uriKey(uri)
 	c.mu.Lock()
-	_, ok := c.docs[uri]
-	delete(c.docs, uri)
-	delete(c.diags, uri)
+	_, ok := c.docs[key]
+	delete(c.docs, key)
+	delete(c.diags, key)
 	c.mu.Unlock()
 	if !ok {
 		return nil

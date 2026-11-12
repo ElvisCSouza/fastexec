@@ -163,6 +163,71 @@ func TestApplyEditRefusesToOverwriteOnCreate(t *testing.T) {
 	}
 }
 
+// TestApplyEditNeverWritesIntoVendoredDependencies: a server that is asked to
+// update imports across a project can name a file inside node_modules, and those
+// edits must be refused as a whole — the dependency is not the user's file and
+// the next install would overwrite it anyway.
+func TestApplyEditNeverWritesIntoVendoredDependencies(t *testing.T) {
+	root := t.TempDir()
+	dep := writeFixture(t, root, filepath.Join("node_modules", "left-pad", "index.js"), "module.exports = 1;\n")
+	mine := writeFixture(t, root, "app.js", "const x = 1;\n")
+	before := readFile(t, dep)
+
+	we := &WorkspaceEdit{Changes: map[string][]TextEdit{
+		fileURI(mine): {editAt(0, 6, 7, "y")},
+		fileURI(dep):  {editAt(0, 20, 21, "2")},
+	}}
+	if _, err := ApplyWorkspaceEdit(we, ApplyOptions{Root: root, UndoDir: filepath.Join(t.TempDir(), "undo")}); err == nil {
+		t.Fatal("an edit inside node_modules was applied")
+	}
+	if got := readFile(t, dep); got != before {
+		t.Fatalf("the dependency was written: %q", got)
+	}
+	// The whole edit is refused, not just the vendored half: a half-applied
+	// rename would leave an import pointing at a path that moved.
+	if got := readFile(t, mine); got != "const x = 1;\n" {
+		t.Fatalf("the non-vendored file was written anyway: %q", got)
+	}
+
+	// Both ends of a rename, and a create/delete, go through the same gate. The
+	// options are permissive on purpose, so the refusal can only be the gate.
+	permissive := []byte(`{"overwrite":true,"ignoreIfNotExists":true,"recursive":true}`)
+	resourceOps := []struct {
+		name string
+		doc  DocumentChange
+	}{
+		{"rename out of node_modules", DocumentChange{Kind: "rename", OldURI: fileURI(dep), NewURI: fileURI(filepath.Join(root, "left-pad.js"))}},
+		{"rename into node_modules", DocumentChange{Kind: "rename", OldURI: fileURI(mine), NewURI: fileURI(filepath.Join(root, "node_modules", "app.js"))}},
+		{"create inside node_modules", DocumentChange{Kind: "create", URI: fileURI(filepath.Join(root, "node_modules", "evil.js"))}},
+		{"delete inside node_modules", DocumentChange{Kind: "delete", URI: fileURI(dep)}},
+	}
+	for _, tc := range resourceOps {
+		tc.doc.Options = permissive
+		we := &WorkspaceEdit{DocumentChanges: []DocumentChange{tc.doc}}
+		if _, err := ApplyWorkspaceEdit(we, ApplyOptions{Root: root, UndoDir: filepath.Join(t.TempDir(), "undo")}); err == nil {
+			t.Errorf("%s: applied, want a refusal", tc.name)
+		}
+	}
+	if got := readFile(t, dep); got != before {
+		t.Errorf("dependency = %q, want it still untouched", got)
+	}
+
+	// Case is not an escape hatch: the same tree is checked out on Windows and on
+	// Linux in this workspace.
+	odd := writeFixture(t, root, filepath.Join("Node_Modules", "x", "index.js"), "var a = 1;\n")
+	we = &WorkspaceEdit{Changes: map[string][]TextEdit{fileURI(odd): {editAt(0, 4, 5, "b")}}}
+	if _, err := ApplyWorkspaceEdit(we, ApplyOptions{Root: root}); err == nil {
+		t.Error("an edit inside Node_Modules was applied")
+	}
+
+	// A directory whose name merely contains the word is an ordinary directory.
+	plain := writeFixture(t, root, filepath.Join("node_modules_backup", "index.js"), "var a = 1;\n")
+	we = &WorkspaceEdit{Changes: map[string][]TextEdit{fileURI(plain): {editAt(0, 4, 5, "b")}}}
+	if _, err := ApplyWorkspaceEdit(we, ApplyOptions{Root: root, UndoDir: filepath.Join(t.TempDir(), "undo")}); err != nil {
+		t.Errorf("node_modules_backup was refused: %v", err)
+	}
+}
+
 func TestApplyEditsCreatesRenamesAndDeletes(t *testing.T) {
 	root := t.TempDir()
 	old := writeFixture(t, root, "old.go", "package demo\n\nvar Name = 1\n")

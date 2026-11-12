@@ -266,6 +266,9 @@ func ApplyWorkspaceEdit(we *WorkspaceEdit, opts ApplyOptions) (*ApplyResult, err
 	if err != nil {
 		return nil, err
 	}
+	if err := checkNoVendored(ops); err != nil {
+		return nil, err
+	}
 	if err := checkVersions(ops, opts.Versions); err != nil {
 		return nil, err
 	}
@@ -473,6 +476,43 @@ func checkVersions(ops []editOp, known map[string]int) error {
 		}
 	}
 	return nil
+}
+
+// vendoredDir is the one directory a language server is allowed to *read* and
+// never to write: a rename that updates imports can be talked into proposing
+// edits inside an installed dependency, and those are not the user's files —
+// they are replaced by the next `npm install`, and the fix is a version bump,
+// not a silent rewrite of a package.
+const vendoredDir = "node_modules"
+
+// checkNoVendored refuses a whole WorkspaceEdit when any target — the file being
+// edited, created, renamed or deleted, at either end of a rename — lives under a
+// node_modules directory. Whole edit, not the offending file: the operation is
+// the unit that has to be consistent, and applying the half that is not vendored
+// would leave a rename pointing at a path that changed.
+func checkNoVendored(ops []editOp) error {
+	for _, op := range ops {
+		for _, p := range []string{op.path, op.newPath} {
+			if p == "" || !isVendored(p) {
+				continue
+			}
+			return fmt.Errorf("lsp: refusing to write inside %s: %s (vendored dependencies are never edited)", vendoredDir, p)
+		}
+	}
+	return nil
+}
+
+// isVendored reports whether any component of path is a node_modules directory.
+// Case-insensitive on every platform on purpose: the same package tree is
+// checked out on Windows and on Linux in this workspace, and a renamed
+// Node_Modules would be the same mistake.
+func isVendored(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if strings.EqualFold(part, vendoredDir) {
+			return true
+		}
+	}
+	return false
 }
 
 func relTo(root, path string) string {

@@ -445,20 +445,35 @@ func (m *manager) AcquireFile(ctx context.Context, path string) (*Client, func()
 // RootFor is the repository root a server should be started for: the nearest
 // ancestor of path that carries a project marker for the language. Without a
 // marker, the file's own directory is the best we can honestly claim.
+//
+// A language may also declare StrictMarkers — the config file (tsconfig.json)
+// without which the server runs on a guessed project. Those win over the plain
+// markers at any distance: a monorepo with a package.json at the top and a
+// tsconfig.json three levels down belongs to the tsconfig, and starting tsserver
+// at the package.json would throw away the compiler options the answer depends
+// on. The nearest plain marker is remembered and returned only when no strict
+// marker exists on the way up.
 func RootFor(lang Language, path string) string {
 	dir := path
 	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
 		dir = filepath.Dir(path)
 	}
+	fallback := ""
 	for i := 0; i < maxRootDepth; i++ {
-		if HasMarker(lang, dir) {
+		if HasStrictMarker(lang, dir) {
 			return dir
+		}
+		if fallback == "" && HasMarker(lang, dir) {
+			fallback = dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir || parent == "" {
 			break
 		}
 		dir = parent
+	}
+	if fallback != "" {
+		return fallback
 	}
 	return filepath.Dir(path)
 }

@@ -34,13 +34,26 @@ type Language struct {
 	Name string
 	// Server is the conventional executable name, e.g. "gopls".
 	Server string
+	// Dir is the directory a user drops this server into under
+	// <data_dir>/lsp, when it is not the executable name. The approved
+	// TypeScript install lives in lsp/ts, not lsp/typescript-language-server.
+	Dir string
 	// Exts are the file extensions that make this language worth starting.
 	Exts []string
 	// Markers are files whose presence at the repository root means the project
 	// can actually be loaded by the server (go.mod, package.json, ...).
 	Markers []string
+	// StrictMarkers are the markers a server needs for an exact cross-file
+	// answer, when it also runs without them (tsconfig.json, jsconfig.json).
+	// RootFor prefers the nearest one; without it the server works on an
+	// implicit project and ProjectNote says so.
+	StrictMarkers []string
 	// Args are always passed to the server.
 	Args []string
+	// InitOptions builds the initializationOptions of one launch. It receives
+	// the resolved executable and the repository root, because some servers
+	// need to be told where their own backend is. Nil means "send none".
+	InitOptions func(bin, root string) map[string]any
 	// VersionArgs is how this server prints its version. The default is
 	// "--version"; gopls spells it differently.
 	VersionArgs []string
@@ -50,6 +63,11 @@ type Language struct {
 	// Note is a short honesty line shown by `lsp doctor` when the server is
 	// missing and no single command installs it.
 	Note string
+	// Details adds honesty lines to `lsp doctor` for a server that WAS found,
+	// when the install can still be incomplete in a way the version string does
+	// not show. The TypeScript entry is the one that needs it. Nil means "found
+	// is the whole story".
+	Details func(bin string) []string
 }
 
 // Languages is the full catalogue, in the order `lsp doctor` prints it.
@@ -73,10 +91,15 @@ var Languages = []Language{
 	},
 	{
 		ID: "typescript", Name: "TypeScript / JavaScript", Server: "typescript-language-server",
-		Exts:    []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"},
-		Markers: []string{"package.json", "tsconfig.json", "jsconfig.json"},
-		Args:    []string{"--stdio"},
-		Install: "npm install -g typescript typescript-language-server",
+		Dir:           "ts",
+		Exts:          []string{".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"},
+		Markers:       []string{"package.json", "tsconfig.json", "jsconfig.json"},
+		StrictMarkers: []string{"tsconfig.json", "jsconfig.json"},
+		Args:          []string{"--stdio"},
+		InitOptions:   tsInitOptions,
+		Details:       tsDoctorDetails,
+		Install:       "npm install -g typescript typescript-language-server",
+		Note:          "the server drives a tsserver: without typescript in the project (or next to the server) it starts and exits immediately",
 	},
 	{
 		ID: "python", Name: "Python", Server: "pylsp",
@@ -159,12 +182,20 @@ func Disabled() bool {
 	return false
 }
 
-// execName is the file name a server has on this platform.
-func execName(server string) string {
-	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(server), ".exe") {
-		return server + ".exe"
+// execNames lists the file names a server may have on this platform, in the
+// order they are looked for.
+//
+// On Windows the interesting one is not .exe: a server installed with npm is a
+// .cmd shim that runs node, and the name without extension is a shell script.
+// Both are runnable by exec.Command, so discovery must not stop at the .exe.
+func execNames(server string) []string {
+	if runtime.GOOS != "windows" {
+		return []string{server}
 	}
-	return server
+	if strings.HasSuffix(strings.ToLower(server), ".exe") {
+		return []string{server}
+	}
+	return []string{server + ".exe", server + ".cmd", server + ".bat", server}
 }
 
 // searchDirs is the fixed part of the search path, after the two FastExec-owned
@@ -218,41 +249,84 @@ func searchDirs() []string {
 // dataLSPDir is <data_dir>/lsp.
 func dataLSPDir() string { return filepath.Join(config.Home(), "lsp") }
 
+// expandedLSPPath turns every FASTEXEC_LSP_PATH entry into the directories a
+// node package could hide its executables in. The point is that
+//
+//	FASTEXEC_LSP_PATH=W:\Data\fx-lsp
+//
+// finds a server installed with
+//
+//	npm install --prefix W:\Data\fx-lsp\ts typescript-language-server
+//
+// without the user having to name the .bin directory itself. Entries that are
+// already a .bin or a plain directory still work: they are kept as they are by
+// searchDirs.
+func expandedLSPPath(lang Language) []string {
+	var out []string
+	for _, entry := range filepath.SplitList(os.Getenv("FASTEXEC_LSP_PATH")) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		for _, d := range []string{lang.Dir, lang.Server} {
+			if d == "" {
+				continue
+			}
+			out = append(out, filepath.Join(entry, d, "node_modules", ".bin"))
+		}
+		out = append(out, filepath.Join(entry, "node_modules", ".bin"))
+	}
+	return out
+}
+
 // Find locates the executable for a language. The second return is the list of
 // places that were searched, so a failure can be explained instead of guessed
 // at.
 func Find(lang Language) (string, []string, bool) {
-	name := execName(lang.Server)
 	var tried []string
+	names := execNames(lang.Server)
 
 	// 1. FastExec's own drop-in directory, including the usual sub-layouts of
-	// an extracted archive or a node package.
-	base := filepath.Join(dataLSPDir(), lang.Server)
-	for _, cand := range []string{
-		filepath.Join(base, name),
-		filepath.Join(base, "bin", name),
-		filepath.Join(base, lang.Server+"-"+runtime.GOOS+"-"+runtime.GOARCH, name),
-		filepath.Join(base, "node_modules", ".bin", name),
-		filepath.Join(base, "libexec", name),
-	} {
-		tried = append(tried, cand)
-		if isExecutable(cand) {
-			return cand, tried, true
+	// an extracted archive or a node package. lang.Dir is the short name a user
+	// may have used instead of the executable's ("ts" for the TypeScript
+	// server); both spellings are accepted.
+	dirs := []string{lang.Server}
+	if lang.Dir != "" && lang.Dir != lang.Server {
+		dirs = append([]string{lang.Dir}, dirs...)
+	}
+	for _, d := range dirs {
+		base := filepath.Join(dataLSPDir(), d)
+		for _, name := range names {
+			for _, cand := range []string{
+				filepath.Join(base, name),
+				filepath.Join(base, "bin", name),
+				filepath.Join(base, lang.Server+"-"+runtime.GOOS+"-"+runtime.GOARCH, name),
+				filepath.Join(base, "node_modules", ".bin", name),
+				filepath.Join(base, "libexec", name),
+			} {
+				tried = append(tried, cand)
+				if isExecutable(cand) {
+					return cand, tried, true
+				}
+			}
 		}
 	}
 
-	// 2. PATH.
+	// 2. PATH. LookPath already honours PATHEXT, so the .cmd shim of an npm
+	// install is found here on Windows.
 	if p, err := exec.LookPath(lang.Server); err == nil {
 		return p, tried, true
 	}
 	tried = append(tried, "PATH")
 
 	// 3. Known per-ecosystem directories.
-	for _, dir := range searchDirs() {
-		cand := filepath.Join(dir, name)
-		tried = append(tried, cand)
-		if isExecutable(cand) {
-			return cand, tried, true
+	for _, dir := range append(expandedLSPPath(lang), searchDirs()...) {
+		for _, name := range names {
+			cand := filepath.Join(dir, name)
+			tried = append(tried, cand)
+			if isExecutable(cand) {
+				return cand, tried, true
+			}
 		}
 	}
 	return "", tried, false
@@ -282,12 +356,17 @@ func LaunchFor(lang Language, root string) (Launch, bool) {
 	if !ok {
 		return Launch{}, false
 	}
+	var initOptions map[string]any
+	if lang.InitOptions != nil {
+		initOptions = lang.InitOptions(bin, root)
+	}
 	return Launch{
-		Name:       lang.Server,
-		LanguageID: lang.ID,
-		Command:    bin,
-		Args:       append([]string(nil), lang.Args...),
-		Root:       root,
+		Name:                  lang.Server,
+		LanguageID:            lang.ID,
+		Command:               bin,
+		Args:                  append([]string(nil), lang.Args...),
+		Root:                  root,
+		InitializationOptions: initOptions,
 	}, true
 }
 
@@ -355,7 +434,26 @@ func HasMarker(lang Language, root string) bool {
 	if len(lang.Markers) == 0 {
 		return true
 	}
-	for _, m := range lang.Markers {
+	return hasAnyMarker(lang.Markers, root)
+}
+
+// HasStrictMarker reports whether the root carries the config file that makes
+// the server answer exactly across files. It is a stricter question than
+// HasMarker: for the TypeScript server a package.json makes the project loadable
+// but leaves tsserver on a guessed project, which answers some cross-file
+// questions incompletely.
+func HasStrictMarker(lang Language, root string) bool {
+	if len(lang.StrictMarkers) == 0 {
+		return false
+	}
+	return hasAnyMarker(lang.StrictMarkers, root)
+}
+
+// hasAnyMarker is the shared body of HasMarker/HasStrictMarker. An empty list
+// means "" — the caller decides what that means, because "no markers declared"
+// is "always loads" for Markers and "no strict notion" for StrictMarkers.
+func hasAnyMarker(markers []string, root string) bool {
+	for _, m := range markers {
 		if strings.ContainsAny(m, "*?") {
 			if matches, _ := filepath.Glob(filepath.Join(root, m)); len(matches) > 0 {
 				return true

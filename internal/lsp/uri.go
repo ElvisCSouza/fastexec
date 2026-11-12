@@ -3,8 +3,32 @@ package lsp
 import (
 	"net/url"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
+
+// uriKey is the identity of a document: every map lookup and every comparison
+// between "our" URI and one that came back from the server goes through here.
+//
+// The two spellings are not the same string. typescript-language-server uses
+// vscode-uri, which on Windows lowercases the drive letter and percent-encodes
+// the colon ("file:///c%3A/dir/file.ts"), while PathToURI writes
+// "file:///C:/dir/file.ts". Comparing them byte for byte makes the published
+// diagnostics of a document invisible to the client that opened it — the file
+// then looks permanently un-analysed, and `WaitSettled` waits out its whole
+// deadline on a server that already answered.
+//
+// So: percent-decode always, and lowercase on Windows, where two URIs that
+// differ only in case are the same file by definition.
+func uriKey(uri string) string {
+	if unescaped, err := url.PathUnescape(uri); err == nil {
+		uri = unescaped
+	}
+	if runtime.GOOS == "windows" {
+		uri = strings.ToLower(uri)
+	}
+	return uri
+}
 
 // PathToURI converts an absolute filesystem path to a file:// URI.
 //

@@ -233,6 +233,57 @@ func (c *Client) Rename(ctx context.Context, path string, pos Position, newName 
 	return &we, nil
 }
 
+// FileRename is one old -> new pair of a file rename. Both are absolute paths;
+// the request carries them as file: URIs.
+type FileRename struct{ From, To string }
+
+// WillRenameFiles asks the server what a file rename implies: the imports and
+// re-exports that point at the file, including through a barrel. It is the same
+// question `git mv` cannot answer.
+//
+// Nothing is written: the rename itself is the caller's, and the returned edit
+// is applied (or not) through ApplyWorkspaceEdit. A server that does not
+// advertise the capability returns ErrUnsupported, which callers turn into the
+// by-name answer like any other degradation.
+func (c *Client) WillRenameFiles(ctx context.Context, renames []FileRename) (*WorkspaceEdit, error) {
+	if !c.capabilities().WillRenameFiles {
+		return nil, ErrUnsupported
+	}
+	if len(renames) == 0 {
+		return nil, nil
+	}
+	files := make([]map[string]any, 0, len(renames))
+	for _, r := range renames {
+		from, err := absPath(r.From)
+		if err != nil {
+			return nil, err
+		}
+		to, err := absPath(r.To)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, map[string]any{
+			"oldUri": PathToURI(from),
+			"newUri": PathToURI(to),
+		})
+	}
+	raw, err := c.call(ctx, "workspace/willRenameFiles", map[string]any{"files": files})
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, nil
+	}
+	var we WorkspaceEdit
+	if err := json.Unmarshal(raw, &we); err != nil {
+		return nil, err
+	}
+	if we.empty() {
+		return nil, nil
+	}
+	return &we, nil
+}
+
 // Diagnostics returns the problems the server reports for one file.
 //
 // Servers that support pull diagnostics are asked directly. Servers that only
@@ -261,8 +312,12 @@ func (c *Client) Diagnostics(ctx context.Context, path string, settle time.Durat
 		// Fall through to the push path rather than failing.
 	}
 
+	// The push path compares against what the server publishes, and the server
+	// spells the URI its own way: the key is the normalised form.
+	key := uriKey(uri)
+
 	c.mu.Lock()
-	before := c.diagSeq[uri]
+	before := c.diagSeq[key]
 	c.mu.Unlock()
 
 	if err := c.ensureOpen(ctx, path); err != nil {
@@ -275,8 +330,8 @@ func (c *Client) Diagnostics(ctx context.Context, path string, settle time.Durat
 	deadline := time.Now().Add(settle)
 	for {
 		c.mu.Lock()
-		seq := c.diagSeq[uri]
-		items := c.diags[uri]
+		seq := c.diagSeq[key]
+		items := c.diags[key]
 		c.mu.Unlock()
 		if seq > before {
 			return items, nil
@@ -330,7 +385,7 @@ func (c *Client) CodeActions(ctx context.Context, path string, rng Range, only [
 }
 
 func (c *Client) diagnosticsIn(abs string, rng Range) []Diagnostic {
-	uri := PathToURI(abs)
+	uri := uriKey(PathToURI(abs))
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []Diagnostic

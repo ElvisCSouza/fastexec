@@ -56,13 +56,23 @@ func lspDoctor(_ []string) {
 			}
 		case e.Version == "":
 			fmt.Printf("  %s found %s (version unreadable: %s)\n", name, e.Path, e.Problem)
+			printDetails(e)
 			found++
 		default:
 			fmt.Printf("  %s %s  %s\n", name, e.Version, e.Path)
+			printDetails(e)
 			found++
 		}
 	}
 	fmt.Printf("\n%d of %d language server(s) available; the rest fall back to the graph by name.\n",
 		found, len(entries))
 	fmt.Println("Nothing is downloaded automatically: install a server and re-run `fastexec lsp doctor`.")
+}
+
+// printDetails prints the extra lines a found server has to say about itself —
+// for the TypeScript server, which tsserver it will drive.
+func printDetails(e lsp.DoctorEntry) {
+	for _, d := range e.Details {
+		fmt.Printf("  %-24s   %s\n", "", d)
+	}
 }
