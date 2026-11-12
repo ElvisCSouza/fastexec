@@ -494,8 +494,18 @@ back with one extra line naming the reason:
 ```
 lsp unavailable (server not installed); by name
 lsp unavailable (project did not load); by name
+lsp unavailable (project did not load: <the last thing the server said>); by name
 lsp unavailable (timed out); by name
 ```
+
+When the project fails to load, the last line the server wrote on its own stderr — kept in memory, the last ~40
+lines, never in a log file — rides along in the note, because the server already knows why it gave up. Queries that
+arrive while the server is still starting wait for the same load gate instead of failing early: two exact queries at
+once both get the exact answer, not one failure and one success.
+
+`def` answers the whole symbol, not just where its signature starts (`344-526`, not `344-344`), and the exact `impact`
+names each use the way `callers` does (`- src/app.go:12 in ParseRecord (call)`, at most three uses per file and then
+`... N more use(s) in this file`) — a line saying `1 refs` would make you open the file to find out where.
 
 That line is the whole honesty rule: a **partial** answer is never presented as exact — if one of the declarations
 of a homonymous name fails to resolve, the whole exact result is withheld and the by-name answer is given instead.
@@ -533,8 +543,14 @@ as "no callers", so it is refused instead:
 
 ```
 lsp unavailable (no .NET SDK found (install one, or set FASTEXEC_DOTNET_SDK to its folder)); by name
+lsp unavailable (global.json pins SDK 7.0.102; installed: 8.0.404 (set rollForward or install 7.0.102)); by name
 lsp unavailable (restore needed: run dotnet restore (src/App/App.csproj)); by name
 ```
+
+A `global.json` that pins an SDK the machine does not have is named before anything else is tried: the file (in the
+root or above it) is read and compared against the installed SDKs, honouring the `rollForward` it declares, so the
+answer names the version instead of blaming the restore. That `global.json` is only read — the file belongs to the
+team and is never rewritten.
 
 FastExec never runs `dotnet restore` — that downloads packages, and downloading on someone's behalf is not its
 decision. The server loads the nearest `.sln` above the file (falling back to the nearest `.csproj`), because references

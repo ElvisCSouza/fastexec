@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -333,5 +334,82 @@ func TestManagerShutdownClosesEveryServer(t *testing.T) {
 	var ue *UnavailableError
 	if !errors.As(err, &ue) || ue.Reason != "shutting down" {
 		t.Fatalf("Acquire after Shutdown = %v, want a shutting-down UnavailableError", err)
+	}
+}
+
+// TestManagerStartsOneServerForConcurrentCallers: two queries arriving at a
+// cold root share one start instead of racing to spawn a server each.
+//
+// The race is not cosmetic. Two gopls processes indexing the same module contend
+// for the module cache and the CPU, so both settle late — the one that loses is
+// left orphaned, and the query that asked first is the one that reads
+// "project did not load".
+func TestManagerStartsOneServerForConcurrentCallers(t *testing.T) {
+	root := goModule(t)
+	lang := goLanguage(t)
+	m := newTestManager(t, time.Minute)
+	defer m.Shutdown()
+
+	// The stub holds the first handshake open so the second caller is certain to
+	// arrive while a start is in flight: a test that let the start finish first
+	// would pass with or without the latch.
+	inside := make(chan struct{})
+	proceed := make(chan struct{})
+	var calls int64
+	prev := launchFor
+	launchFor = func(l Language, r string) (Launch, bool) {
+		if atomic.AddInt64(&calls, 1) == 1 {
+			close(inside)
+			<-proceed
+		}
+		return Launch{
+			Name:       l.Primary().Name,
+			LanguageID: l.ID,
+			Command:    os.Args[0],
+			Env:        []string{"FAKELSP_HELPER=1"},
+			Root:       r,
+		}, true
+	}
+	t.Cleanup(func() { launchFor = prev })
+
+	type result struct {
+		client  *Client
+		release func()
+		err     error
+	}
+	acquire := func() <-chan result {
+		ch := make(chan result, 1)
+		go func() {
+			c, release, err := m.Acquire(context.Background(), root, lang)
+			ch <- result{c, release, err}
+		}()
+		return ch
+	}
+
+	first := acquire()
+	<-inside
+	second := acquire()
+	// Long enough that a rival start would already have happened: without the
+	// latch the second caller reaches the spawn in microseconds.
+	time.Sleep(100 * time.Millisecond)
+	close(proceed)
+
+	a, b := <-first, <-second
+	for i, r := range []result{a, b} {
+		if r.err != nil {
+			t.Fatalf("concurrent Acquire #%d: %v", i+1, r.err)
+		}
+		if r.release != nil {
+			defer r.release()
+		}
+	}
+	if got := atomic.LoadInt64(&calls); got != 1 {
+		t.Errorf("launch called %d times for two concurrent callers, want 1", got)
+	}
+	if a.client != b.client {
+		t.Error("the two callers got different servers for the same root")
+	}
+	if got := m.Servers(); len(got) != 1 {
+		t.Errorf("Servers() = %+v, want the single warm server", got)
 	}
 }

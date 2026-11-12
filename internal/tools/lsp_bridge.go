@@ -37,6 +37,10 @@ const (
 	// lspImpactMaxFiles limita a listagem por arquivo do impacto (o grafo usa 'max'; aqui o teto protege o
 	// tamanho da resposta quando um nome é usado em centenas de arquivos).
 	lspImpactMaxFiles = 60
+	// impactUsesPerFile é o teto de usos LISTADOS de cada arquivo. O teto de `impact` é em arquivos, e um
+	// símbolo usado cem vezes num arquivo só não pode virar cem linhas: os primeiros já dizem onde mexer, e o
+	// resto sai como contagem explícita — nunca resumido num "N refs" que esconde o segundo ponto de edição.
+	impactUsesPerFile = 3
 )
 
 // errNoAnchor: não há o que o servidor possa responder — o índice não conhece declaração com esse nome, ou
@@ -137,7 +141,7 @@ func stepExact(ctx context.Context, c *lsp.Client, abs, name string, d graph.Def
 	fn func(c *lsp.Client, abs string, d graph.DefSite) error) error {
 
 	if err := c.WaitSettled(ctx, abs, settle); err != nil {
-		return reasonErr(err)
+		return reasonErrFrom(c, err)
 	}
 	if d.Col == 0 {
 		// O arquivo mudou desde a indexação, ou a declaração é gerada, e o nome não está na linha que o
@@ -145,6 +149,29 @@ func stepExact(ctx context.Context, c *lsp.Client, abs, name string, d graph.Def
 		return lsp.Unavailable("declaration of '%s' is not where the index says (%s:%d)", name, d.File, d.Line)
 	}
 	return fn(c, abs, d)
+}
+
+// reasonErrFrom é o reasonErr com o servidor à mão: a nota de "não carregou" ganha a causa que o próprio
+// servidor escreveu no stderr.
+//
+// Sem isso o usuário recebe o sintoma e nenhuma pista, e a pista existe: o servidor a imprimiu antes de
+// desistir. Só a última linha que parece causa entra, e só neste ramo — nas outras degradações o FastExec
+// já sabe dizer o motivo, e a fala do servidor ali só gastaria token.
+func reasonErrFrom(c *lsp.Client, err error) error {
+	out := reasonErr(err)
+	if c == nil || !errors.Is(err, lsp.ErrLoading) {
+		return out
+	}
+	// O *LoadingError já traz a nota dele ("lsp loading C# solution…"): quem chega aqui como ErrLoading
+	// puro é o servidor que parou de carregar sem anunciar progresso nenhum.
+	var le *lsp.LoadingError
+	if errors.As(err, &le) {
+		return out
+	}
+	if cause := lsp.StderrCause(c.Stderr()); cause != "" {
+		return lsp.Unavailable("project did not load: %s", cause)
+	}
+	return out
 }
 
 // reasonErr reduz o erro do servidor à frase curta que cabe na nota de degradação.
@@ -203,7 +230,7 @@ func resolveUses(ctx context.Context, root, symbol string, acquire acquireFunc, 
 		func(c *lsp.Client, abs string, d graph.DefSite) error {
 			locs, err := c.References(ctx, abs, lsp.Position{Line: d.Line - 1, Character: d.Col - 1}, false)
 			if err != nil {
-				return reasonErr(err)
+				return reasonErrFrom(c, err)
 			}
 			for _, l := range locs {
 				if s, ok := relSite(root, l); ok {
@@ -300,18 +327,22 @@ func lspDefinition(root, symbol string) (string, error) {
 	// genérico não está no texto indexado) e as relações com os tipos que implementam ou são implementados.
 	sigOf := map[string]string{}
 	factsOf := map[string][]string{}
+	// O fim da faixa de cada declaração: o `def` responde o SÍMBOLO, e o símbolo tem tamanho. Sem isto a
+	// resposta saía "344-344" para um método de 180 linhas, que é a mesma pergunta respondida pela metade.
+	endOf := map[string]int{}
 	probe := newRelProbe(root)
 	defs, server, err := runExact(ctx, root, symbol, spawnAcquire, lspBridgeSettle,
 		func(c *lsp.Client, abs string, d graph.DefSite) error {
 			pos := lsp.Position{Line: d.Line - 1, Character: d.Col - 1}
 			got, err := c.Definition(ctx, abs, pos)
 			if err != nil {
-				return reasonErr(err)
+				return reasonErrFrom(c, err)
 			}
 			locs = append(locs, got...)
 			key := graph.SiteKey(graph.Site{File: d.File, Line: d.Line})
 			sigOf[key] = defSignature(ctx, c, abs, pos, d.Sig)
 			factsOf[key] = defFacts(ctx, probe, c, abs, d)
+			endOf[key] = defEndLine(probe.treeOf(ctx, c, abs), pos)
 			return nil
 		})
 	if err != nil {
@@ -350,7 +381,13 @@ func lspDefinition(root, symbol string) (string, error) {
 			if v := sigOf[key]; v != "" {
 				sig = v
 			}
-			fmt.Fprintf(&b, "- %s:%d-%d (%s)\n  %s\n", s.File, s.Line, d.Line, d.Kind, sig)
+			// O começo é a linha que o SERVIDOR devolveu (é a declaração, não o comentário acima dela); o fim
+			// vem da árvore de símbolos e, sem ela, cai na âncora do índice — a linha única de antes.
+			end := d.Line
+			if v := endOf[key]; v > end {
+				end = v
+			}
+			fmt.Fprintf(&b, "- %s:%d-%d (%s)\n  %s\n", s.File, s.Line, end, d.Kind, sig)
 			for _, l := range factsOf[key] {
 				b.WriteString("  " + l)
 			}
@@ -379,14 +416,22 @@ func lspImpact(root, target string, max int) (string, error) {
 		return "", err
 	}
 	var order []string
-	per := map[string]int{}
-	for _, s := range ans.sites {
-		if _, ok := per[s.File]; !ok {
+	seen := map[string]bool{}
+	byFile := map[string][]int{} // índices, em ans.sites, dos usos de cada arquivo
+	for i, s := range ans.sites {
+		if !seen[s.File] {
+			seen[s.File] = true
 			order = append(order, s.File)
 		}
-		per[s.File]++
+		byFile[s.File] = append(byFile[s.File], i)
 	}
 	sortFiles(order)
+	// A linha sozinha ("- arquivo.cs (1 refs)") obriga a abrir o arquivo para saber ONDE mexer, o que é
+	// exatamente o custo que a resposta exata existe para evitar. O formato passa a ser o do `callers`:
+	// arquivo:linha, o símbolo que contém o uso e a relação dele. O agrupamento por arquivo continua (o teto
+	// é em arquivos, como no grafo), e os usos de um mesmo arquivo saem um a um — o segundo uso de um símbolo
+	// costuma estar em OUTRA função, e escondê-lo atrás de "2 refs" esconderia metade do impacto.
+	infos := graph.AnnotateRefs(root, ans.name, ans.sites)
 
 	limit := lspImpactMaxFiles
 	if max > 0 && max < limit {
@@ -398,7 +443,30 @@ func lspImpact(root, target string, max int) (string, error) {
 	}
 	var b strings.Builder
 	for _, f := range shown {
-		fmt.Fprintf(&b, "- %s (%d refs)\n", f, per[f])
+		idxs := byFile[f]
+		extra := 0
+		if n := len(idxs); n > impactUsesPerFile {
+			idxs, extra = idxs[:impactUsesPerFile], n-impactUsesPerFile
+		}
+		for _, i := range idxs {
+			s := ans.sites[i]
+			label := ""
+			if i < len(infos) && infos[i].Label != "" {
+				label = " in " + infos[i].Label
+			}
+			rel := "reference"
+			if i < len(infos) && infos[i].Relation != "" {
+				rel = infos[i].Relation
+			}
+			fmt.Fprintf(&b, "- %s:%d%s (%s)\n", f, s.Line, label, rel)
+		}
+		if extra > 0 {
+			word := "uses"
+			if extra == 1 {
+				word = "use"
+			}
+			fmt.Fprintf(&b, "... %d more %s in this file\n", extra, word)
+		}
 	}
 	if n := len(order) - len(shown); n > 0 {
 		fmt.Fprintf(&b, "... %d more files\n", n)
@@ -426,11 +494,11 @@ func warmUses(ctx context.Context, root, abs, name string, line, col int) ([]gra
 	defer release()
 	server := c.Name()
 	if err := c.WaitSettled(ctx, abs, editImpactLSPBudget); err != nil {
-		return nil, "", reasonErr(err)
+		return nil, "", reasonErrFrom(c, err)
 	}
 	locs, err := c.References(ctx, abs, lsp.Position{Line: line - 1, Character: col - 1}, false)
 	if err != nil {
-		return nil, "", reasonErr(err)
+		return nil, "", reasonErrFrom(c, err)
 	}
 	var out []graph.Site
 	seen := map[string]bool{}

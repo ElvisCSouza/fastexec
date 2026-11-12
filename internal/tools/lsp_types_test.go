@@ -27,6 +27,11 @@ func TestInferCandidatesOnlyUndeclaredTypes(t *testing.T) {
 		{"go short decl", "\tx := service.Load()", []string{"x"}},
 		{"go multi", "\ta, b := f()", []string{"a", "b"}},
 		{"go range", "\tfor i, v := range xs {", []string{"i", "v"}},
+		// O descarte é o caso em que uma variável de verdade divide a linha com um nome que não
+		// guarda nada: a linha tem de sair com `err`, nunca com `_: int`.
+		{"go descarte", "\t_, err := f()", []string{"err"}},
+		{"go range com descarte", "\tfor _, v := range xs {", []string{"v"}},
+		{"go dois descartes", "\t_, _ := f()", nil},
 		{"go var", "\tvar total = 0", []string{"total"}},
 		{"go const", "\tconst pi = 3.14", []string{"pi"}},
 		{"go var com tipo escrito", "\tvar n int = 0", nil},

@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,14 +25,18 @@ import (
 
 // csharpCustomize completes a csharp-ls launch for one repository root.
 //
-// It decides three things in order, and the first one that fails ends the
+// It decides four things in order, and the first one that fails ends the
 // launch with a phrase the user can act on:
 //
 //  1. Is there a .NET SDK? Without one csharp-ls starts and then cannot load
 //     anything, which is worse than not starting.
-//  2. Was the project restored? A project without obj/project.assets.json
+//  2. Does a global.json pin an SDK this machine does not have? The SDK
+//     resolver refuses before MSBuild ever sees the project, so reporting
+//     "restore needed" — or letting the server start and answer nothing —
+//     sends the user to fix the wrong thing.
+//  3. Was the project restored? A project without obj/project.assets.json
 //     answers nothing until `dotnet restore` runs.
-//  3. Which solution to load. csharp-ls auto-discovers .csproj under its
+//  4. Which solution to load. csharp-ls auto-discovers .csproj under its
 //     working directory, but a .sln is what makes references exact across
 //     projects, so it is passed explicitly when there is one.
 func csharpCustomize(root string) (args, env []string, problem string) {
@@ -45,6 +51,14 @@ func csharpCustomize(root string) (args, env []string, problem string) {
 	env = append(env, "DOTNET_ROOT="+sdk)
 	if portable {
 		env = append(env, "PATH="+sdk+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+
+	// Checked before the restore, and reported instead of it: a pinned SDK that
+	// is not here breaks the launch itself, and the user who reads "restore
+	// needed" runs restore, watches it succeed, and gets the same empty answers.
+	// The pin belongs to the repository, so FastExec names it and never edits it.
+	if problem := pinnedSDKProblem(root, sdk); problem != "" {
+		return nil, env, problem
 	}
 
 	if project, ok := unrestored(root); ok {
@@ -81,6 +95,173 @@ func unrestored(root string) (string, bool) {
 // writes by hand (src/<Area>/<App>/App.csproj) and still shallow enough that a
 // monorepo is scanned in one directory read rather than a walk of everything.
 const maxProjectDepth = 4
+
+// maxGlobalJSONDepth bounds the walk up from the root looking for global.json.
+// The SDK resolver walks to the drive root; eight levels is already past any
+// repository layout and keeps a query on W:\ from reading the whole tree.
+const maxGlobalJSONDepth = 8
+
+// maxPinnedListed caps the installed versions named in the note. A machine with
+// a dozen SDKs would otherwise turn one line of degradation into a paragraph.
+const maxPinnedListed = 4
+
+// pinnedSDKProblem reports a global.json that pins an SDK this machine cannot
+// satisfy, in the words of the pin itself: which version was asked for, which
+// ones are here, and the two ways out. It is the difference between a user
+// running `dotnet restore` over and over and a user adding one line to a file
+// they own.
+//
+// It only reads. global.json belongs to the repository, and a tool that edited
+// it to make itself work would be changing the project's build for a query.
+func pinnedSDKProblem(root, sdkRoot string) string {
+	pinned, roll := pinnedSDK(root)
+	if pinned == "" {
+		return ""
+	}
+	installed := installedSDKs(sdkRoot)
+	for _, v := range installed {
+		if sdkSatisfies(pinned, v, roll) {
+			return ""
+		}
+	}
+	if len(installed) == 0 {
+		// Nothing to roll forward to: naming rollForward here would be advice
+		// that cannot work.
+		return "global.json pins SDK " + pinned + "; installed: none (install " + pinned + ")"
+	}
+	shown := installed
+	if len(shown) > maxPinnedListed {
+		shown = shown[:maxPinnedListed]
+	}
+	list := strings.Join(shown, ", ")
+	if len(shown) < len(installed) {
+		list += ", ..."
+	}
+	return "global.json pins SDK " + pinned + "; installed: " + list +
+		" (set rollForward or install " + pinned + ")"
+}
+
+// pinnedSDK reads the version and rollForward a global.json pins, walking up
+// from root the way the SDK resolver does. An unreadable or malformed file
+// answers nothing: a guess about which SDK was meant is worse than silence.
+func pinnedSDK(root string) (version, roll string) {
+	dir := root
+	for i := 0; i < maxGlobalJSONDepth; i++ {
+		body, err := os.ReadFile(filepath.Join(dir, "global.json"))
+		if err == nil {
+			var doc struct {
+				SDK struct {
+					Version     string `json:"version"`
+					RollForward string `json:"rollForward"`
+				} `json:"sdk"`
+			}
+			if json.Unmarshal(body, &doc) != nil {
+				return "", ""
+			}
+			if _, ok := sdkVersion(doc.SDK.Version); !ok {
+				return "", ""
+			}
+			return doc.SDK.Version, doc.SDK.RollForward
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "", ""
+}
+
+// installedSDKs lists the SDK versions under an SDK root, newest last. Both
+// shapes are accepted: an install root (…\dotnet\sdk\8.0.404) and a folder that
+// is already the sdk directory, which is how a portable SDK is sometimes
+// pointed at through FASTEXEC_DOTNET_SDK.
+func installedSDKs(sdkRoot string) []string {
+	dir := filepath.Join(sdkRoot, "sdk")
+	if filepath.Base(filepath.Clean(sdkRoot)) == "sdk" {
+		dir = sdkRoot
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			if _, ok := sdkVersion(e.Name()); ok {
+				out = append(out, e.Name())
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sdkSatisfies reports whether an installed version answers a pinned one under
+// the global.json rollForward policy. The policies are approximated by the part
+// of the version they hold fixed — major.minor.featureband.patch — which is
+// what decides whether the resolver accepts a version at all.
+func sdkSatisfies(pinned, installed, roll string) bool {
+	p, ok := sdkVersion(pinned)
+	if !ok {
+		return false
+	}
+	v, ok := sdkVersion(installed)
+	if !ok {
+		return false
+	}
+	for i := range p {
+		if v[i] < p[i] {
+			return false
+		}
+		if v[i] > p[i] {
+			break
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(roll)) {
+	case "disable":
+		// The pin is exact: the one case where a newer SDK is not an answer.
+		return v == p
+	case "feature", "latestfeature":
+		return v[0] == p[0] && v[1] == p[1]
+	case "minor", "latestminor":
+		return v[0] == p[0]
+	case "major", "latestmajor":
+		return true
+	default:
+		// "patch" (the default) and "latestPatch": the same feature band. A
+		// value nobody recognises is read as the default rather than as "no
+		// roll", because claiming a pin cannot be met is the worse mistake.
+		return v[0] == p[0] && v[1] == p[1] && v[2] == p[2]
+	}
+}
+
+// sdkVersion parses a dotted numeric SDK version into
+// major.minor.featureband.patch. A missing or non-numeric component is zero,
+// and a name that is not a version at all answers false.
+func sdkVersion(s string) ([4]int, bool) {
+	var out [4]int
+	s = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(s), "v"))
+	if s == "" {
+		return out, false
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) > len(out) {
+		return out, false
+	}
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	// "8.0.404" is major 8, minor 0, feature band 4, patch 4. Holding the band
+	// apart from the patch is what makes the default policy mean something.
+	out[3] += out[2] % 100
+	out[2] /= 100
+	return out, true
+}
 
 // projectNoise are directories that never hold a project the server loads:
 // build output (bin, obj), package caches, and version control. Pruning them is

@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -290,6 +291,91 @@ func TestApplyEditWritesAReversePatchThatUndoes(t *testing.T) {
 	}
 	if got := readFile(t, path); got != before {
 		t.Fatalf("after undo the file = %q, want the original %q", got, before)
+	}
+}
+
+// TestRefreshPatchCoversTheEditsThatCameAfter é o item D: a edição assistida aplica vários WorkspaceEdits em
+// sequência, e o patch anunciado depois do primeiro descrevia um arquivo que os seguintes já mudaram. Sem a
+// reescrita, o `git apply -R` do aviso não devolve o original.
+func TestRefreshPatchCoversTheEditsThatCameAfter(t *testing.T) {
+	root := t.TempDir()
+	undoDir := filepath.Join(t.TempDir(), "undo")
+	path := writeFixture(t, root, "a.go", "package demo\n\nvar Name = 1\nvar Keep = 2\n")
+	before := readFile(t, path)
+
+	// Edição 1: o rename do servidor. Grava o patch que vai ser anunciado.
+	rename := &WorkspaceEdit{Changes: map[string][]TextEdit{
+		fileURI(path): {editAt(2, 4, 8, "Title")},
+	}}
+	res, err := ApplyWorkspaceEdit(rename, ApplyOptions{Root: root, UndoDir: undoDir})
+	if err != nil {
+		t.Fatalf("ApplyWorkspaceEdit (rename): %v", err)
+	}
+	if res.PatchPath == "" {
+		t.Fatal("o rename não gravou patch")
+	}
+	stale := readFile(t, res.PatchPath)
+
+	// Edição 2: a formatação/quickfix do fim, que muda o arquivo depois do patch anunciado.
+	later := &WorkspaceEdit{Changes: map[string][]TextEdit{
+		fileURI(path): {editAt(3, 4, 8, "Keep2")},
+	}}
+	if _, err := ApplyWorkspaceEdit(later, ApplyOptions{Root: root, UndoDir: undoDir}); err != nil {
+		t.Fatalf("ApplyWorkspaceEdit (later): %v", err)
+	}
+	if got := readFile(t, path); got != "package demo\n\nvar Title = 1\nvar Keep2 = 2\n" {
+		t.Fatalf("arquivo depois das duas edições = %q", got)
+	}
+
+	// O patch velho é o defeito: ele fala do texto de antes da segunda edição.
+	stalePath := filepath.Join(undoDir, "stale.patch")
+	if err := os.WriteFile(stalePath, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Undo(stalePath, UndoOptions{Root: root}); err == nil {
+		t.Error("o patch velho devia ser recusado: o arquivo andou depois dele")
+	}
+
+	if err := RefreshPatch(res.PatchPath, root, path, before); err != nil {
+		t.Fatalf("RefreshPatch: %v", err)
+	}
+	secs, _, err := parsePatch(readFile(t, res.PatchPath))
+	if err != nil {
+		t.Fatalf("o patch reescrito não é legível: %v", err)
+	}
+	if len(secs) != 1 || secs[0].path != "a.go" {
+		t.Fatalf("seções do patch reescrito = %+v, queria só a.go", secs)
+	}
+
+	// Desfazer pelo patch do aviso devolve o original, byte a byte — pelo Undo do próprio FastExec...
+	if _, err := Undo(res.PatchPath, UndoOptions{Root: root}); err != nil {
+		t.Fatalf("Undo do patch reescrito: %v", err)
+	}
+	if got := readFile(t, path); got != before {
+		t.Fatalf("depois do undo o arquivo = %q, queria %q", got, before)
+	}
+
+	// ...e pelo `git apply -R` que a nota manda o modelo rodar.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git não instalado: conferido só pelo Undo")
+	}
+	if out, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	// Refaz as duas edições para ter o arquivo no estado final outra vez.
+	if _, err := ApplyWorkspaceEdit(rename, ApplyOptions{Root: root, UndoDir: undoDir}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyWorkspaceEdit(later, ApplyOptions{Root: root, UndoDir: undoDir}); err != nil {
+		t.Fatal(err)
+	}
+	// core.autocrlf=false: o arquivo do fixture é LF e o git apply, com o autocrlf do Windows, gravaria CRLF
+	// na volta. O Undo do FastExec não converte nada — aqui a comparação é byte a byte.
+	if out, err := exec.Command("git", "-c", "core.autocrlf=false", "-C", root, "apply", "-R", res.PatchPath).CombinedOutput(); err != nil {
+		t.Fatalf("git apply -R do patch do aviso: %v\n%s\npatch:\n%q", err, out, readFile(t, res.PatchPath))
+	}
+	if got := readFile(t, path); got != before {
+		t.Fatalf("depois do git apply -R o arquivo = %q, queria %q", got, before)
 	}
 }
 

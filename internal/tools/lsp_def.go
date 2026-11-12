@@ -368,6 +368,20 @@ func defSignature(ctx context.Context, c *lsp.Client, abs string, pos lsp.Positi
 	return text
 }
 
+// defEndLine devolve a última linha (1-based) do símbolo que a âncora declara, segundo a árvore de símbolos
+// do servidor — a mesma árvore que defFacts já busca, então não custa requisição nenhuma.
+//
+// É o que faz um `def` responder "344-526" em vez de "344-344": a pergunta é ONDE isso é declarado, e um
+// método de 180 linhas é declarado nas 180. Sem a árvore (servidor que não responde documentSymbol) o fim
+// fica com quem chamou, que é a linha da âncora — o que já se dizia antes.
+func defEndLine(tree []lsp.DocumentSymbol, pos lsp.Position) int {
+	sym, _, found := symAt(tree, pos)
+	if !found {
+		return 0
+	}
+	return sym.Range.End.Line + 1
+}
+
 // memberLines lista o conteúdo de um TIPO, um membro por linha e sem corpo: é o que o modelo pediria abrindo
 // o arquivo do tipo. A linha é o que o servidor diz (nome, o que é, e o tipo que ele declarou) mais a linha
 // onde ele está — que é o que permite ler só aquele membro.

@@ -333,3 +333,227 @@ func TestLoadableProjectsPrefersTheSolution(t *testing.T) {
 		t.Fatalf("loadableProjects with a solution naming nothing = %v, want the project under the root (%q)", got, want)
 	}
 }
+
+// sdkTree builds an install root shaped like a real one. <root>/sdk/<version>
+// directories are exactly what the resolver reads before it decides whether a
+// global.json pin can be met, so a fake here tests the real decision.
+func sdkTree(t *testing.T, versions ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, v := range versions {
+		if err := os.MkdirAll(filepath.Join(root, "sdk", v), 0o755); err != nil {
+			t.Fatalf("sdkTree: %v", err)
+		}
+	}
+	return root
+}
+
+// globalJSON writes the pin the repository owns. FastExec only ever reads it.
+func globalJSON(t *testing.T, dir, version, roll string) {
+	t.Helper()
+	body := `{"sdk":{"version":"` + version + `"`
+	if roll != "" {
+		body += `,"rollForward":"` + roll + `"`
+	}
+	writeFixture(t, dir, "global.json", body+"}}\n")
+}
+
+// TestCSharpCustomizeNamesThePinnedSDKItCannotSatisfy: when global.json pins an
+// SDK this machine does not have, the launch is the thing that is broken — and
+// the note must say so, because "restore needed" sends the user to run a
+// command that will succeed and change nothing.
+func TestCSharpCustomizeNamesThePinnedSDKItCannotSatisfy(t *testing.T) {
+	tests := []struct {
+		name string
+		pin  string
+		roll string
+		sdks []string
+		want string // "" means the pin is satisfiable and the launch goes ahead
+	}{
+		{
+			// The reported case: 7.0.102 pinned, only 8.x installed, and the
+			// default policy holds the feature band.
+			name: "a pin the default policy cannot reach",
+			pin:  "7.0.102",
+			sdks: []string{"8.0.100", "8.0.404"},
+			want: "global.json pins SDK 7.0.102; installed: 8.0.100, 8.0.404 (set rollForward or install 7.0.102)",
+		},
+		{
+			// Roll forward far enough and the pin stops being a problem: the
+			// answer must not nag about a file that is already correct.
+			name: "latestFeature reaches a newer band in the same minor",
+			pin:  "7.0.102",
+			roll: "latestFeature",
+			sdks: []string{"7.0.404"},
+		},
+		{
+			// latestFeature holds major.minor, so a newer major is still out of
+			// reach — this is the case a hand-written note gets wrong.
+			name: "latestFeature does not cross a minor",
+			pin:  "7.0.102",
+			roll: "latestFeature",
+			sdks: []string{"8.0.404"},
+			want: "global.json pins SDK 7.0.102; installed: 8.0.404 (set rollForward or install 7.0.102)",
+		},
+		{
+			name: "disable makes the pin exact",
+			pin:  "8.0.100",
+			roll: "disable",
+			sdks: []string{"8.0.404"},
+			want: "global.json pins SDK 8.0.100; installed: 8.0.404 (set rollForward or install 8.0.100)",
+		},
+		{
+			name: "an installed exact match satisfies disable",
+			pin:  "8.0.404",
+			roll: "disable",
+			sdks: []string{"8.0.404", "9.0.100"},
+		},
+		{
+			name: "latestMinor reaches a newer minor",
+			pin:  "8.0.100",
+			roll: "latestMinor",
+			sdks: []string{"8.0.404"},
+		},
+		{
+			name: "latestMajor crosses as far as it has to",
+			pin:  "7.0.102",
+			roll: "latestMajor",
+			sdks: []string{"8.0.404"},
+		},
+		{
+			// A policy nobody recognises is read as the default, not as "no
+			// roll": claiming a pin cannot be met is the worse mistake.
+			name: "an unknown policy is read as the default",
+			pin:  "8.0.100",
+			roll: "sideways",
+			sdks: []string{"8.0.404"},
+			want: "global.json pins SDK 8.0.100; installed: 8.0.404 (set rollForward or install 8.0.100)",
+		},
+		{
+			// With nothing here, naming rollForward would be advice that cannot
+			// work; installing the pinned version is the only way out.
+			name: "nothing installed at all",
+			pin:  "7.0.102",
+			want: "global.json pins SDK 7.0.102; installed: none (install 7.0.102)",
+		},
+		{
+			// The default policy accepts a newer patch inside the band.
+			name: "same band, newer patch",
+			pin:  "8.0.404",
+			sdks: []string{"8.0.410"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			globalJSON(t, root, tc.pin, tc.roll)
+			csproj(t, root, "demo.csproj")
+			sdk := sdkTree(t, tc.sdks...)
+			stubSDK(t, sdk, false)
+			if tc.want == "" {
+				// Restored, so a satisfiable pin has to leave the launch with
+				// nothing at all to complain about.
+				restored(t, root)
+			}
+
+			args, env, problem := csharpCustomize(root)
+			if tc.want == "" {
+				if problem != "" {
+					t.Fatalf("problem = %q, want the pin treated as satisfiable", problem)
+				}
+				// No .sln in the fixture, so a launch that goes ahead carries no
+				// arguments — but it does have to happen.
+				if len(args) != 0 {
+					t.Errorf("args = %v, want the launch to go ahead", args)
+				}
+				if got, ok := envValue(env, "DOTNET_ROOT"); !ok || got != sdk {
+					t.Errorf("DOTNET_ROOT = %q (present %v), want %q", got, ok, sdk)
+				}
+				return
+			}
+			if problem != tc.want {
+				t.Fatalf("problem = %q, want %q", problem, tc.want)
+			}
+			if strings.Contains(problem, "restore needed") {
+				t.Error("a pinned SDK was reported as a restore problem")
+			}
+			if len(args) != 0 {
+				t.Errorf("args = %v; nothing may be prepared for a launch that is refused", args)
+			}
+			// DOTNET_ROOT stays: the note is about which SDK was asked for, and
+			// the env is the other half of what the caller may want to see.
+			if got, ok := envValue(env, "DOTNET_ROOT"); !ok || got != sdk {
+				t.Errorf("DOTNET_ROOT = %q (present %v), want %q", got, ok, sdk)
+			}
+		})
+	}
+}
+
+// TestPinnedSDKWalkStopsAtTheNearestFile: the resolver walks up, so the pin
+// closest to the project is the one that counts — a global.json at the drive
+// root must not override the repository's own.
+func TestPinnedSDKWalkStopsAtTheNearestFile(t *testing.T) {
+	outer := t.TempDir()
+	globalJSON(t, outer, "9.0.100", "")
+	inner := filepath.Join(outer, "src", "App")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	globalJSON(t, inner, "7.0.102", "latestMajor")
+
+	version, roll := pinnedSDK(inner)
+	if version != "7.0.102" || roll != "latestMajor" {
+		t.Errorf("pinnedSDK = (%q, %q), want the nearest global.json", version, roll)
+	}
+
+	// Malformed or absent: silence, because a guess about which SDK was meant is
+	// worse than saying nothing.
+	broken := t.TempDir()
+	writeFixture(t, broken, "global.json", "{ this is not json\n")
+	if v, r := pinnedSDK(broken); v != "" || r != "" {
+		t.Errorf("pinnedSDK on a malformed file = (%q, %q), want silence", v, r)
+	}
+	if v, _ := pinnedSDK(t.TempDir()); v != "" {
+		t.Errorf("pinnedSDK without a file = %q, want silence", v)
+	}
+}
+
+// TestInstalledSDKsReadsBothRootShapes: FASTEXEC_DOTNET_SDK may point at an
+// install root (...\dotnet) or straight at its sdk folder, and the note must
+// list the same versions either way.
+func TestInstalledSDKsReadsBothRootShapes(t *testing.T) {
+	root := sdkTree(t, "8.0.404", "9.0.100", "not-a-version")
+	if got := installedSDKs(root); len(got) != 2 || got[0] != "8.0.404" || got[1] != "9.0.100" {
+		t.Errorf("installedSDKs(install root) = %v, want the two versions and no junk", got)
+	}
+	if got := installedSDKs(filepath.Join(root, "sdk")); len(got) != 2 {
+		t.Errorf("installedSDKs(sdk dir) = %v, want the same two versions", got)
+	}
+	if got := installedSDKs(filepath.Join(root, "missing")); got != nil {
+		t.Errorf("installedSDKs on a missing dir = %v, want none", got)
+	}
+}
+
+// TestInstalledSDKListIsCapped: one line of degradation must stay one line even
+// on a machine with a dozen SDKs.
+func TestInstalledSDKListIsCapped(t *testing.T) {
+	root := t.TempDir()
+	globalJSON(t, root, "7.0.102", "")
+	csproj(t, root, "demo.csproj")
+	sdk := sdkTree(t, "8.0.100", "8.0.200", "8.0.300", "8.0.400", "8.0.500", "8.0.600")
+	stubSDK(t, sdk, false)
+
+	_, _, problem := csharpCustomize(root)
+	if !strings.Contains(problem, "...") {
+		t.Errorf("problem = %q, want the list visibly truncated", problem)
+	}
+	for _, v := range []string{"8.0.500", "8.0.600"} {
+		if strings.Contains(problem, v) {
+			t.Errorf("problem = %q, want at most %d versions named", problem, maxPinnedListed)
+		}
+	}
+	if got := installedSDKs(sdk); len(got) != 6 {
+		t.Fatalf("fixture built %d SDKs, want 6", len(got))
+	}
+}

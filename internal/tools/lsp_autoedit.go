@@ -44,6 +44,10 @@ const (
 	// gravada e não se espera por diagnóstico).
 	lspAutoDiagBudget   = 1500 * time.Millisecond
 	lspAutoFormatBudget = 250 * time.Millisecond
+	// lspAutoBaseBudget é o "antes" dos diagnósticos quando o servidor nunca publicou nada deste arquivo. É
+	// curto de propósito: é um pedido a um servidor que já está de pé, e esperar mais que isso atrasaria a
+	// própria edição, que já foi gravada.
+	lspAutoBaseBudget = 500 * time.Millisecond
 	// lspAutoMaxLines: o rodapé inteiro cabe em três linhas.
 	lspAutoMaxLines = 3
 	lspAutoMaxSpots = 2
@@ -102,6 +106,8 @@ type autoEdit struct {
 	diagnosed bool            // o servidor já olhou este arquivo alguma vez
 	post      string          // texto que o servidor quer no arquivo editado, quando ele aceitou a edição
 	skip      map[string]bool // nomes que o aviso por nome NÃO deve repetir (o exato já respondeu)
+	phaseB    bool            // a fase B começou: o diagnóstico novo pode usar a última linha
+	undo      string          // patch anunciado ao modelo; precisa ser reescrito no fim (a formatação vem depois)
 	lines     []string
 }
 
@@ -179,7 +185,7 @@ func (a *autoEdit) spawn(budget time.Duration) bool {
 // baseline guarda o estado dos diagnósticos ANTES de qualquer byte mudar: sem ele, "erro novo" não tem
 // significado.
 func (a *autoEdit) baseline() {
-	if a.client == nil {
+	if a.client == nil || a.beforeMsg != nil {
 		return
 	}
 	a.beforeMsg = map[string]bool{}
@@ -187,6 +193,21 @@ func (a *autoEdit) baseline() {
 		a.beforeMsg[d.Message] = true
 	}
 	a.diagnosed = a.client.Diagnosed(a.abs)
+	// O push só cobre o que o servidor já abriu. Num arquivo que ele nunca viu não havia "antes" nenhum, e aí
+	// um erro novo fora do trecho editado era descartado como se fosse antigo — o build quebrava e a resposta
+	// não dizia nada. Perguntar agora, com o texto velho no disco, dá o "antes" que faltava — nos dois
+	// caminhos: no pull o servidor responde na hora, no push a pergunta reenvia o documento e espera o
+	// publish dele.
+	if !a.diagnosed {
+		ctx, cancel := context.WithTimeout(context.Background(), lspAutoBaseBudget)
+		defer cancel()
+		if items, err := a.client.Diagnostics(ctx, a.abs, lspAutoBaseBudget); err == nil {
+			a.diagnosed = true
+			for _, d := range items {
+				a.beforeMsg[d.Message] = true
+			}
+		}
+	}
 }
 
 // Text devolve o texto que deve ir para o disco. Em geral é o que o chamador pediu; depois de um rename
@@ -224,7 +245,13 @@ func (a *autoEdit) Close() {
 }
 
 func (a *autoEdit) note(format string, args ...any) {
-	if len(a.lines) >= lspAutoMaxLines {
+	// A fase A reserva a última linha: o erro que a edição criou é o aviso que não pode ser cortado pelo teto.
+	// Sem a reserva, "renomeou + arquivos mudados" já enchia as três linhas e o build quebrado saía calado.
+	max := lspAutoMaxLines
+	if a.client != nil && !a.phaseB {
+		max = lspAutoMaxLines - 1
+	}
+	if len(a.lines) >= max {
 		return
 	}
 	a.lines = append(a.lines, "[lsp] "+fmt.Sprintf(format, args...))
@@ -307,6 +334,7 @@ func (a *autoEdit) rename() {
 		total = len(files)
 	}
 	a.skip = map[string]bool{a.delta.name: true, a.delta.newName: true}
+	a.undo = res.PatchPath
 
 	spots, _ := we.Spots()
 	sites := relSites(a.root, spots)
@@ -359,11 +387,13 @@ func (a *autoEdit) signature() {
 	if err != nil {
 		return
 	}
+	// O chamador do PRÓPRIO arquivo conta: quem chama a assinatura antiga dentro do arquivo editado também
+	// quebra o build, e antes era justamente ele que ficava de fora do aviso.
 	sites := relSites(a.root, locs)
-	sites = withoutFile(sites, a.rel)
+	sites = withoutDecl(sites, a.rel, a.delta.line)
 	a.skip = map[string]bool{name: true}
 	if len(sites) == 0 {
-		a.note("%s: signature changed, no caller outside the file (exact)", name)
+		a.note("%s: signature changed, no caller (exact)", name)
 		return
 	}
 	a.note("%s: signature changed, %d caller(s) need adjustment (exact): %s%s; not changed by the server",
@@ -397,6 +427,7 @@ func (a *autoEdit) signatureAction(ctx context.Context) bool {
 			noteWrite(a.host, f)
 		}
 		a.skip = map[string]bool{a.delta.name: true}
+		a.undo = res.PatchPath
 		a.note("%s: signature change applied by the server (exact): %s; undo: git apply -R %s",
 			a.delta.name, act.Title, res.PatchPath)
 		a.changedLine(files, nil)
@@ -436,6 +467,7 @@ func (a *autoEdit) Finish() string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), lspAutoDiagBudget)
 	defer cancel()
+	a.phaseB = true
 
 	fresh := a.freshErrors(ctx)
 	fixed, importNote := a.importFix(ctx, fresh)
@@ -451,6 +483,13 @@ func (a *autoEdit) Finish() string {
 		a.note("%s", strings.Join(parts, "; "))
 	}
 	a.format()
+	// O patch anunciado antes da formatação descreveria um arquivo que não existe mais no disco: reescrever
+	// aqui é o que faz o `git apply -R` do aviso devolver o original.
+	if a.undo != "" {
+		if err := lsp.RefreshPatch(a.undo, a.root, a.abs, a.oldText); err != nil {
+			a.note("undo patch not updated: %s", shortErr(err))
+		}
+	}
 	return a.Note()
 }
 
@@ -869,6 +908,19 @@ func withoutFile(sites []graph.Site, rel string) []graph.Site {
 		if s.File != rel {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+// withoutDecl tira a própria declaração da lista de usos: o servidor pode devolvê-la junto (includeDeclaration
+// não é honrado por todo mundo), e ela não é um chamador que precise de ajuste.
+func withoutDecl(sites []graph.Site, rel string, line int) []graph.Site {
+	out := sites[:0:0]
+	for _, s := range sites {
+		if s.File == rel && s.Line == line {
+			continue
+		}
+		out = append(out, s)
 	}
 	return out
 }

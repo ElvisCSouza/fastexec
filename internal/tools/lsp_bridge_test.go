@@ -10,10 +10,12 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"homelab/fastexec/internal/graph"
 	"homelab/fastexec/internal/lsp"
@@ -58,6 +60,41 @@ func TestDegradationNote(t *testing.T) {
 	}
 	if !strings.HasPrefix(out, "=== callers of 'Fetch' (by name) ===") {
 		t.Fatalf("resposta por nome perdida na degradação:\n%s", out)
+	}
+}
+
+// TestLoadFailureCarriesTheServerCause é o item I: quando o projeto não carrega, a nota cita o que o próprio
+// servidor escreveu no stderr antes de desistir. Sem isso o usuário recebe o sintoma ("não carregou") e nenhuma
+// pista — e a pista existe, o servidor a imprimiu.
+func TestLoadFailureCarriesTheServerCause(t *testing.T) {
+	f := newLSPFixture(t, toolFakeCtl{Stderr: []string{
+		"info: starting up",
+		"fatal: cannot load module: go.mod requires go >= 1.24 (running go 1.22)",
+	}})
+	f.start()
+	// O stderr é drenado por uma goroutine do cliente: espera curta até ela alcançar o processo.
+	deadline := time.Now().Add(5 * time.Second)
+	for f.client.Stderr() == "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if f.client.Stderr() == "" {
+		t.Skip("o servidor falso não escreveu no stderr a tempo")
+	}
+
+	note := lsp.Degraded(reasonErrFrom(f.client, lsp.ErrLoading))
+	if !strings.Contains(note, "project did not load") ||
+		!strings.Contains(note, "go.mod requires go >= 1.24") {
+		t.Fatalf("nota de degradação sem a causa do servidor: %q", note)
+	}
+	// A fala do servidor entra uma vez só, e curta: a nota viaja na resposta do MCP.
+	if strings.Count(note, "fatal:") != 1 || len(note) > 240 {
+		t.Errorf("nota = %q, queria uma citação só e curta", note)
+	}
+
+	// Um projeto AINDA carregando já tem nota própria, e ela basta: a fala do servidor ali só gastaria token.
+	loading := &lsp.LoadingError{Title: "Loading packages", Note: "loading C# solution"}
+	if got := lsp.Degraded(reasonErrFrom(f.client, loading)); got != "lsp loading C# solution…; by name" {
+		t.Errorf("nota de carregamento = %q, queria a do LoadingError sem a causa", got)
 	}
 }
 
@@ -181,6 +218,34 @@ func CallBeta(b Beta) int { return b.Do() }
 `
 )
 
+// bridgeWide é um símbolo que ocupa VÁRIAS linhas de propósito: é o caso em que o `def` respondia a mesma
+// linha duas vezes ("344-344") e obrigava o modelo a ler o arquivo para descobrir onde o símbolo termina.
+const bridgeWide = `package demo
+
+func Wide(
+	a int,
+	b int,
+) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+`
+
+// bridgeMany usa o MESMO método em quatro funções de um arquivo só. É o caso em que agrupar por arquivo e
+// resumir em "- many.go (4 refs)" escondia três pontos de edição.
+const bridgeMany = `package demo
+
+func ManyA(a Alpha) int { return a.Do() }
+
+func ManyB(a Alpha) int { return a.Do() }
+
+func ManyC(a Alpha) int { return a.Do() }
+
+func ManyD(a Alpha) int { return a.Do() }
+`
+
 func writeGo(t *testing.T, root, name, src string) string {
 	t.Helper()
 	p := filepath.Join(root, filepath.FromSlash(name))
@@ -276,6 +341,39 @@ func TestBridgeDefinitionExact(t *testing.T) {
 	}
 }
 
+// TestBridgeDefinitionReportsTheWholeSymbol: um `def` responde ONDE o símbolo é declarado, e um símbolo de
+// onze linhas é declarado nas onze. A resposta de linha única (que era o achado da validação manual) obriga
+// quem lê a abrir o arquivo para achar o fim — exatamente o custo que a resposta exata existe para evitar.
+func TestBridgeDefinitionReportsTheWholeSymbol(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integração com gopls real")
+	}
+	root := realGoplsBridge(t)
+	writeGo(t, root, "wide.go", bridgeWide)
+
+	// A faixa esperada sai da própria fixture: a declaração começa na linha do `func` e termina na linha do
+	// fecha-chaves que fecha o corpo.
+	lines := strings.Split(strings.TrimRight(bridgeWide, "\n"), "\n")
+	start, end := 0, len(lines)
+	for i, l := range lines {
+		if strings.HasPrefix(l, "func Wide(") {
+			start = i + 1
+		}
+	}
+	if start == 0 || strings.TrimSpace(lines[end-1]) != "}" || end <= start {
+		t.Fatalf("fixture fora de forma: começo=%d fim=%d", start, end)
+	}
+
+	out, err := lspDefinition(root, "Wide")
+	if err != nil {
+		t.Fatalf("lspDefinition: %v", err)
+	}
+	want := fmt.Sprintf("wide.go:%d-%d", start, end)
+	if !strings.Contains(out, want) {
+		t.Fatalf("faixa da declaração ausente (quer %q):\n%s", want, out)
+	}
+}
+
 // TestBridgeEditFooterExact: o rodapé de edição usa o mesmo caminho, mas SEM iniciar servidor. Com um servidor
 // quente ele responde exato; sem servidor quente ele degrada na hora, e quem chama volta para a linha por nome.
 func TestBridgeEditFooterExact(t *testing.T) {
@@ -315,5 +413,58 @@ func TestBridgeEditFooterExact(t *testing.T) {
 		if s.File == "alpha.go" && s.Line == 5 {
 			t.Fatalf("a própria declaração voltou como uso: %+v", s)
 		}
+	}
+}
+
+// TestBridgeImpactNamesTheUse: o `impact` exato responde ONDE mexer, e "- caller.go (2 refs)" não diz isso — só
+// abrindo o arquivo. O formato passa a ser o do `callers` (arquivo:linha + o símbolo que contém o uso + a
+// relação), o agrupamento por arquivo continua e o teto de usos listados por arquivo sai como contagem.
+func TestBridgeImpactNamesTheUse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integração com gopls real")
+	}
+	root := realGoplsBridge(t)
+	// Quatro usos num arquivo só: o caso em que a resposta antiga dizia "- many.go (4 refs)" e escondia três
+	// dos quatro pontos de edição — que estão em quatro funções diferentes.
+	writeGo(t, root, "many.go", bridgeMany)
+
+	out, err := lspImpact(root, "Do", 0)
+	if err != nil {
+		t.Fatalf("lspImpact: %v", err)
+	}
+	if !strings.Contains(out, "=== impact of 'Do' (exact, gopls) ===") {
+		t.Fatalf("cabeçalho exato ausente:\n%s", out)
+	}
+	// As duas chamadas estão em caller.go:3 e caller.go:5, cada uma dentro de uma função diferente — é o
+	// rótulo do índice que diz qual.
+	for _, want := range []string{"caller.go:3 in CallAlpha (", "caller.go:5 in CallBeta ("} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("faltou %q em:\n%s", want, out)
+		}
+	}
+	// O agrupamento por arquivo continua (o teto de `impact` é em ARQUIVOS, como no grafo): as duas linhas são
+	// do mesmo arquivo, e ele não se repete.
+	if n := strings.Count(out, "caller.go:"); n != 2 {
+		t.Fatalf("esperava as duas linhas de caller.go, achei %d:\n%s", n, out)
+	}
+	// O teto de usos listados por arquivo: três dos quatro usos de many.go saem nomeados, e o quarto sai como
+	// contagem — nunca escondido atrás de "4 refs", que não diz onde mexer.
+	if !strings.Contains(out, "many.go:3 in ManyA (") {
+		t.Fatalf("primeiro uso de many.go ausente:\n%s", out)
+	}
+	if n := strings.Count(out, "many.go:"); n != 3 {
+		t.Fatalf("esperava três usos listados de many.go, achei %d:\n%s", n, out)
+	}
+	if !strings.Contains(out, "... 1 more use in this file") {
+		t.Fatalf("contagem do excedente ausente:\n%s", out)
+	}
+	// A forma antiga (só o arquivo, sem linha) não pode sobrar em nenhuma linha da resposta.
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "- ") && !strings.Contains(l, ".go:") {
+			t.Fatalf("linha sem arquivo:linha na resposta:\n%s", out)
+		}
+	}
+	if !strings.Contains(out, "Total: 2 files.") {
+		t.Fatalf("rodapé de arquivos ausente:\n%s", out)
 	}
 }
