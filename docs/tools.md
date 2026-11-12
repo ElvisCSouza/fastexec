@@ -102,6 +102,7 @@ Each one tells the model what it did and what to do next time.
 | edit by script (`Get-Content ... -replace ... Set-Content`, `sed -i`) | Hint to use `edit_file` with `edits` |
 | no `host`, remote `default_host`, Windows drive path in `command`/`argv`/`cwd` | Runs on host `local`, with a `[FastExec Auto-Remediation]` note telling the model to pass `host='local'` next time |
 | Unix-style line (`grep`/`wc`/`sort`/`sed`/`awk`/`cut`/`ls -la`, `$(...)`, single quotes, `/dev/null`, `find` with Unix flags, Git Bash path) with no cmd signal, on a Windows `local` host that has `bash` (Git for Windows) | `bash -lc <line>` is chosen **before** running: one execution, same cwd, same timeout, same guards. The output carries `[FastExec Auto-Remediation] Unix-style command ran in bash (<path>) instead of cmd.exe`, plus the path translation when one happened |
+| Line that starts with a POSIX assignment (`start=$(date +%s%N); …`), with a Unix signal, on a Windows `local` host | Goes to `bash -lc` even when the line also carries a `%NAME%`-looking token (`+%s%N` is not a cmd variable) or a program both shells know (`pwsh`). No valid `cmd.exe` line starts with `VAR=`, and the first token would become the `START` builtin, which swallows the rest of the line: the call would only answer on the timeout (measured: 300 s for a 50 s script) |
 | Unix tool missing on a Windows `local` host (`grep`, `rg`, `wc`, `head`, `tail`, `sed`, `awk`, `xargs`, `cat`, `ls`, `python`) on a command that failed with no stdout | `[FastExec Hint]` naming the tool, saying it does not exist here (commands run through `cmd.exe`) and giving the native alternative (`read_file`, `code_outline`, `file_ops`, or `pwsh` with `Select-String`/`Get-ChildItem` through `argv`+`input`); when `bash` exists on the host it also offers `argv ['bash','-lc','<the whole line>']` |
 | `find`/`sort` from System32 used with Unix flags (`-printf`, `-name`, `-rn`) | Same hint, saying the binary that ran is the Windows one and takes different flags |
 | Git Bash path (`/w/Data/x`, `/c/tmp/a.sh`) in `command` or `cwd` on the Windows `local` host | Translated to the Windows drive (`W:\Data\x`) before running, with a `[FastExec Auto-Remediation]` note showing what changed; skipped when the line hands the text to `bash`/`sh`/`wsl`, and skipped for the `command` when the line is bash-bound (there the POSIX path is the right one and only `cwd` is translated) |
@@ -158,6 +159,12 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
 
 - Actions: `start`, `wait`, `status`, `list`, `tail`, `stop`.
 - `wait` blocks up to 35 s and returns the progress and the log so far; it tells the model not to poll back to back.
+- Fast failure: a job that dies right after starting (missing interpreter, bad flag, file that is not there) answers
+  with the exit code and the log in the same call, instead of `started` followed by `status` + `tail`/`read_file`.
+  `start` waits ~1.5 s before answering; `status`, `wait` and `tail` do the same for a job that lived less than ~10 s
+  and left a short log (< 1 KB). When the exit code says the program does not exist (`python`, `pip`, `node`, `go`…),
+  the reply carries the same `[FastExec FastHint]` the `exec` tool already gives. A job that is still running answers
+  exactly as before, and `stop`ped jobs keep the old `STOPPED` reply.
 - Windows (`local`): a named Job Object per job, log file in `<data_dir>/jobs`, at most 12 running, 12 h lifetime,
   finished jobs kept 7 days; `stop` kills the whole tree.
 - Linux (local or remote): `systemd-run --user` units; logs from `journalctl`. Needs a systemd user instance.

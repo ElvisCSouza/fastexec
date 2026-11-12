@@ -102,6 +102,7 @@ type LocalJobMeta struct {
 	LogPath       string     `json:"log_path"`
 	State         string     `json:"state"`
 	EndedAt       *time.Time `json:"ended_at,omitempty"`
+	ExitCode      *int       `json:"exit_code,omitempty"` // nil = ainda não conhecido (job vivo ou saída não coletada)
 }
 
 // LocalJobInfo é o estado vivo de um job, já reconciliado com o kernel.
@@ -200,9 +201,79 @@ func logActivity(m LocalJobMeta) (time.Time, int64) {
 
 // inspect reconcilia o metadado com o kernel: abre o job pelo nome e conta processos ativos. Se o job acabou, grava
 // EXITED. Não aplica TTL (quem chama decide).
+// O Job Object conta processos vivos, não códigos de saída: quem inicia o job deixa uma goroutine esperando o processo
+// (recordExitWhenDone) e publica o rc aqui. Um leitor que precise do código espera nesse canal em vez de correr contra a
+// gravação do metadado. Só existe entrada para jobs iniciados por este processo; a espera é curta e só acontece uma vez.
+type exitSlot struct {
+	done chan struct{}
+	code int
+}
+
+var (
+	exitSlotsMu sync.Mutex
+	exitSlots   = map[string]*exitSlot{}
+)
+
+// exitSlotWait é o teto da espera pelo rc de um job que acabou de terminar (variável para os testes).
+var exitSlotWait = time.Second
+
+func putExitSlot(id string) *exitSlot {
+	s := &exitSlot{done: make(chan struct{})}
+	exitSlotsMu.Lock()
+	exitSlots[id] = s
+	exitSlotsMu.Unlock()
+	return s
+}
+
+func dropExitSlot(id string) {
+	exitSlotsMu.Lock()
+	delete(exitSlots, id)
+	exitSlotsMu.Unlock()
+}
+
+// exitCodePublished devolve o rc de um job iniciado por este processo, esperando (no máximo exitSlotWait) a goroutine
+// que espera o processo. ok=false quando não há nada a esperar ou quando o prazo passou.
+func exitCodePublished(id string) (int, bool) {
+	exitSlotsMu.Lock()
+	s := exitSlots[id]
+	exitSlotsMu.Unlock()
+	if s == nil {
+		return 0, false
+	}
+	select {
+	case <-s.done:
+		return s.code, true
+	case <-time.After(exitSlotWait):
+		return 0, false
+	}
+}
+
+// recordExitWhenDone espera o processo do job terminar e grava o rc (e o fim) no metadado. É a única fonte do código de
+// saída de um job local: sem isso o rc fica só no log, que o 'job start'/'status' não lê.
+func recordExitWhenDone(dir, id string, slot *exitSlot, cmd *exec.Cmd) {
+	code := exitCodeOf(cmd, cmd.Wait())
+	slot.code = code
+	close(slot.done)
+	m, err := loadMeta(dir, id)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	m.ExitCode, m.EndedAt = &code, &now
+	if m.State == jobStateRunning {
+		m.State = jobStateExited
+	}
+	_ = saveMeta(dir, m)
+}
+
+// inspect devolve o estado vivo de um job, já reconciliado com o kernel.
 func inspect(dir string, m LocalJobMeta) (LocalJobInfo, error) {
 	info := LocalJobInfo{Meta: m, State: m.State}
 	info.LastActivity, info.LogSize = logActivity(m)
+
+	if m.ExitCode != nil {
+		dropExitSlot(m.ID) // o rc já está no metadado: ninguém mais precisa esperar pela goroutine
+	}
 
 	h, isOwned := ownedHandle(m.JobObjectName)
 	var err error
@@ -235,8 +306,20 @@ func inspect(dir string, m LocalJobMeta) (LocalJobInfo, error) {
 	if m.State == jobStateRunning { // terminou sozinho
 		now := time.Now()
 		m.State, m.EndedAt = jobStateExited, &now
+		if code, ok := exitCodePublished(m.ID); ok {
+			m.ExitCode = &code
+			dropExitSlot(m.ID)
+		}
 		info.Meta, info.State = m, jobStateExited
 		_ = saveMeta(dir, m)
+	} else if m.ExitCode == nil {
+		// o metadado pode ter sido gravado (por quem detectou o fim) antes de a goroutine do processo publicar o rc
+		if code, ok := exitCodePublished(m.ID); ok {
+			m.ExitCode = &code
+			dropExitSlot(m.ID)
+			info.Meta = m
+			_ = saveMeta(dir, m)
+		}
 	}
 	return info, nil
 }
@@ -381,11 +464,15 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 	if aerr := job.assign(cmd.Process.Pid); aerr != nil {
 		// quase sempre o processo já terminou (comando que falha na hora); se ainda vive, não dá para gerenciá-lo: mata
 		done := make(chan struct{})
-		go func() { _ = cmd.Wait(); close(done) }()
+		code := 0
+		go func() {
+			code = exitCodeOf(cmd, cmd.Wait())
+			close(done)
+		}()
 		select {
 		case <-done: // saiu rápido: o job fica registrado como finalizado, com o log para consulta
 			now := time.Now()
-			meta.State, meta.EndedAt = jobStateExited, &now
+			meta.State, meta.EndedAt, meta.ExitCode = jobStateExited, &now, &code
 			if err := saveMeta(dir, meta); err != nil {
 				return nil, err
 			}
@@ -396,9 +483,10 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 			return nil, fmt.Errorf("could not assign the process to the job object (%v); process killed", aerr)
 		}
 	}
-	_ = cmd.Process.Release()
 	own(jobName, job.h) // a partir daqui o handle é guardado; o job vive enquanto este FastExec viver
 	keep = true
+	// Sem Release(): a goroutine espera o processo para guardar o rc. O handle é liberado no fim da espera.
+	go recordExitWhenDone(dir, id, putExitSlot(id), cmd)
 
 	if err := saveMeta(dir, meta); err != nil {
 		_ = terminateByName(jobName)
@@ -446,8 +534,18 @@ func handoffToJob(spec localSpec, start time.Time, cmd *exec.Cmd, job *jobObject
 		werr := <-done
 		out.detach()
 		errOut.detach()
-		fmt.Fprintf(f, "\n[exit %d]\n", exitCodeOf(cmd, werr))
+		code := exitCodeOf(cmd, werr)
+		fmt.Fprintf(f, "\n[exit %d]\n", code)
 		f.Close()
+		// o rc também vai para o metadado: 'status' responde na hora, sem ler o log
+		if m, lerr := loadMeta(dir, id); lerr == nil {
+			now := time.Now()
+			m.ExitCode, m.EndedAt = &code, &now
+			if m.State == jobStateRunning {
+				m.State = jobStateExited
+			}
+			_ = saveMeta(dir, m)
+		}
 	}()
 	return id, stdout, stderr, nil
 }

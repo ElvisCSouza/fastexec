@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,92 @@ var jobWaitMax = 45 * time.Second // + 5 s de folga do transporte remoto = 50 s,
 
 // waitTimeoutMarker é impresso pelo laço remoto quando o prazo do wait acaba com o job ainda ativo.
 const waitTimeoutMarker = "__FASTEXEC_WAIT_TIMEOUT__"
+
+// Marcadores da sondagem de largada do job Linux (job_quickexit.go): o mesmo dispatch diz se o unit sobreviveu, o rc e
+// a vida dele, sem round-trip nem turno extra.
+const (
+	jobRunningMarker = "__FASTEXEC_JOB_RUNNING__"
+	jobExitedMarker  = "__FASTEXEC_JOB_EXITED__"
+	jobLogMarker     = "__FASTEXEC_JOB_LOG__"
+)
+
+// linuxJobProbe: fragmento de shell que espera (só no start), pergunta ao systemd se o unit ainda roda e, quando ele já
+// parou, imprime rc, vida (timestamps monotônicos) e o começo do log. Nada é impresso quando o job continua.
+func linuxJobProbe(unit string, wait, withLog bool) string {
+	p := ""
+	if wait {
+		p = fmt.Sprintf("sleep %.1f; ", jobStartProbe.Seconds())
+	}
+	p += fmt.Sprintf("if systemctl --user is-active --quiet '%s.service'; then echo %s; else echo %s; systemctl --user show -p ExecMainStatus -p ActiveEnterTimestampMonotonic -p InactiveEnterTimestampMonotonic '%s.service';",
+		unit, jobRunningMarker, jobExitedMarker, unit)
+	if withLog {
+		p += fmt.Sprintf(" echo %s; journalctl --user-unit='%s.service' -n %d --no-pager;", jobLogMarker, unit, quickExitLines)
+	}
+	return p + " fi"
+}
+
+// splitLinuxProbe separa o texto útil (systemctl status, log) do bloco da sondagem e lê rc, vida e estado do unit.
+func splitLinuxProbe(out string) (before, state, log string, rc *int, life time.Duration, hasLife bool) {
+	i := strings.Index(out, jobExitedMarker)
+	if j := strings.Index(out, jobRunningMarker); i < 0 || (j >= 0 && j < i) {
+		i = j
+	}
+	if i < 0 {
+		return out, "", "", nil, 0, false
+	}
+	before, rest := out[:i], out[i:]
+	var start, stop int64
+	for _, line := range strings.Split(rest, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case line == jobRunningMarker:
+			state = jobStateRunning
+		case line == jobExitedMarker:
+			state = "EXITED"
+		case strings.HasPrefix(line, "ExecMainStatus="):
+			if v, err := strconv.Atoi(strings.TrimPrefix(line, "ExecMainStatus=")); err == nil {
+				rc = &v
+			}
+		case strings.HasPrefix(line, "ActiveEnterTimestampMonotonic="):
+			start, _ = strconv.ParseInt(strings.TrimPrefix(line, "ActiveEnterTimestampMonotonic="), 10, 64)
+		case strings.HasPrefix(line, "InactiveEnterTimestampMonotonic="):
+			stop, _ = strconv.ParseInt(strings.TrimPrefix(line, "InactiveEnterTimestampMonotonic="), 10, 64)
+		}
+	}
+	if stop > start {
+		life, hasLife = time.Duration(stop-start)*time.Microsecond, true
+	}
+	if k := strings.Index(rest, jobLogMarker); k >= 0 {
+		log = strings.TrimSpace(rest[k+len(jobLogMarker):])
+	}
+	return before, state, log, rc, life, hasLife
+}
+
+// linuxExitHead: cabeçalho "[job] EXITED rc=N after X s" (a vida pode não ser conhecida: unit que nunca ficou ativo).
+func linuxExitHead(rc *int, life time.Duration, hasLife bool) string {
+	head := fmt.Sprintf("[job] EXITED rc=%s", rcText(rc))
+	if hasLife {
+		head += " after " + human(life)
+	}
+	return head
+}
+
+// linuxExitTail: rc, vida e log de um job Linux que morreu na largada.
+func linuxExitTail(rc *int, life time.Duration, hasLife bool, label, log string) string {
+	var b strings.Builder
+	if hasLife {
+		fmt.Fprintf(&b, "rc=%s | ran %s | log %d B\n", rcText(rc), human(life), len(log))
+	} else {
+		fmt.Fprintf(&b, "rc=%s | log %d B\n", rcText(rc), len(log))
+	}
+	if ex := logExcerpt(log, quickExitLines, quickExitChars); ex != "" {
+		b.WriteString(ex + "\n")
+	}
+	if h := jobMissingToolHint(label, rc, log); h != "" {
+		b.WriteString(h + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
 func sanitizeUnit(id string) string {
 	s := strings.TrimSpace(id)
@@ -95,8 +182,8 @@ func handleJob(args JobArgs) (string, error) {
 		unit := sanitizeUnit(jobID)
 
 		b64Cmd := base64.StdEncoding.EncodeToString([]byte(args.Command))
-		cmd := fmt.Sprintf("%s systemd-run --user --unit='%s' --description='FastExec Job %s' /bin/bash -c \"$(echo '%s' | base64 -d)\"",
-			envPrefix, unit, unit, b64Cmd)
+		cmd := fmt.Sprintf("%s systemd-run --user --unit='%s' --description='FastExec Job %s' /bin/bash -c \"$(echo '%s' | base64 -d)\" && %s",
+			envPrefix, unit, unit, b64Cmd, linuxJobProbe(unit, true, true))
 
 		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
@@ -104,6 +191,12 @@ func handleJob(args JobArgs) (string, error) {
 		}
 		if res.ExitCode != 0 {
 			return fmt.Sprintf("[Job Start Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("could not start job: %s", res.Stderr)
+		}
+
+		if _, state, log, rc, life, hasLife := splitLinuxProbe(res.Stdout); state == "EXITED" && (!hasLife || life <= quickExitLife) {
+			// morreu na largada: rc e log no mesmo turno, em vez de "started" + status + tail
+			return fmt.Sprintf("%s\nUnit:    %s.service\nCommand: %s\n%s\nNext: job(action='tail', job_id='%s') for the whole log.",
+				linuxExitHead(rc, life, hasLife), unit, args.Command, linuxExitTail(rc, life, hasLife, args.Command, log), unit), nil
 		}
 
 		return fmt.Sprintf("[job] started\nUnit:    %s.service\nCommand: %s\nStatus:  job(action='status', job_id='%s')\nWait:    job(action='wait', job_id='%s')\nTail:    job(action='tail', job_id='%s')",
@@ -129,14 +222,24 @@ func handleJob(args JobArgs) (string, error) {
 		}
 		running := strings.Contains(out, waitTimeoutMarker)
 		out = strings.TrimSpace(strings.ReplaceAll(out, waitTimeoutMarker, ""))
-		return waitReport(unit, args.Host+"|"+unit, out, !running, ""), nil
+		before, state, _, rc, life, hasLife := splitLinuxProbe(out)
+		stateText := ""
+		if !running && state == "EXITED" {
+			stateText = linuxExitHead(rc, life, hasLife)
+			stateText = strings.TrimPrefix(stateText, "[job] ") // o waitReport já monta o cabeçalho
+		}
+		rep := waitReport(unit, args.Host+"|"+unit, before, !running, stateText)
+		if h := jobLogHint(args.Command, rc, before); h != "" {
+			rep += "\n" + h
+		}
+		return rep, nil
 
 	case "status":
 		unit := sanitizeUnit(args.JobID)
 		if args.JobID == "" {
 			return "", fmt.Errorf("action 'status' needs 'job_id'")
 		}
-		cmd := fmt.Sprintf("%s systemctl --user status '%s.service' --no-pager", envPrefix, unit)
+		cmd := fmt.Sprintf("%s systemctl --user status '%s.service' --no-pager; %s", envPrefix, unit, linuxJobProbe(unit, false, true))
 		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
 			return "", err
@@ -145,7 +248,12 @@ func handleJob(args JobArgs) (string, error) {
 		if out == "" {
 			out = res.Stderr
 		}
-		return out, nil
+		before, state, log, rc, life, hasLife := splitLinuxProbe(out)
+		if state == "EXITED" && (!hasLife || life <= quickExitLife) {
+			// terminou na largada: rc e log junto do status, sem precisar de 'tail'
+			return strings.TrimRight(before, "\n") + "\n" + linuxExitTail(rc, life, hasLife, args.Command, log), nil
+		}
+		return before, nil
 
 	case "list", "ls":
 		cmd := fmt.Sprintf("%s systemctl --user list-units 'job-*.service' --all --no-pager", envPrefix)
@@ -168,7 +276,7 @@ func handleJob(args JobArgs) (string, error) {
 		if lines <= 0 {
 			lines = 30
 		}
-		cmd := fmt.Sprintf("%s journalctl --user-unit='%s.service' -n %d --no-pager", envPrefix, unit, lines)
+		cmd := fmt.Sprintf("%s journalctl --user-unit='%s.service' -n %d --no-pager; %s", envPrefix, unit, lines, linuxJobProbe(unit, false, false))
 		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
 			return "", err
@@ -177,7 +285,17 @@ func handleJob(args JobArgs) (string, error) {
 		if out == "" {
 			out = res.Stderr
 		}
-		return out, nil
+		before, state, _, rc, life, hasLife := splitLinuxProbe(out)
+		if state == "EXITED" && (!hasLife || life <= quickExitLife) {
+			// morreu na largada: o tail já diz o rc e, se for ferramenta ausente, o que fazer
+			head := fmt.Sprintf("%s | unit=%s.service\n", linuxExitHead(rc, life, hasLife), unit)
+			rep := head + before
+			if h := jobLogHint(args.Command, rc, before); h != "" {
+				rep += "\n" + h
+			}
+			return rep, nil
+		}
+		return before, nil
 
 	case "stop", "kill":
 		unit := sanitizeUnit(args.JobID)

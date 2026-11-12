@@ -19,6 +19,7 @@ type LocalJobMeta struct {
 	LogPath       string     `json:"log_path"`
 	State         string     `json:"state"`
 	EndedAt       *time.Time `json:"ended_at,omitempty"`
+	ExitCode      *int       `json:"exit_code,omitempty"`
 }
 
 type LocalJobInfo struct {

@@ -13,10 +13,7 @@ func jobLabel(m transport.LocalJobMeta) string {
 	if m.Argv != nil {
 		s = strings.Join(m.Argv, " ")
 	}
-	if r := []rune(s); len(r) > 70 {
-		s = string(r[:70]) + "…"
-	}
-	return s
+	return clipLine(s, 70)
 }
 
 func human(d time.Duration) string {
@@ -60,12 +57,7 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 				return fmt.Sprintf("[job %s still running after %s; job(host='local', action='wait', job_id='%s') continues]\n%s", m.ID, human(wait), m.ID, tail), nil
 			}
 		}
-		note := ""
-		if m.State != "RUNNING" {
-			note = "\n(the process already exited; see the output with tail)"
-		}
-		return fmt.Sprintf("[job] started (local)\nid:      %s\ncommand: %s\nlog:     %s%s\nUse job(host='local', action='status'|'tail'|'wait'|'stop', job_id='%s')",
-			m.ID, jobLabel(*m), m.LogPath, note, m.ID), nil
+		return localStartReport(m), nil
 
 	case "status", "tail", "stop", "kill", "wait":
 		if args.JobID == "" {
@@ -78,6 +70,9 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		j, err := transport.LocalJobStatus(args.JobID)
 		if err != nil {
 			return "", err
+		}
+		if isQuickExit(j) {
+			return localJobExitReport(j), nil // rc + log na mesma resposta: sem 'tail' nem read_file
 		}
 		return statusLine(j), nil
 
@@ -92,6 +87,16 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 			return "", err
 		}
 		out = cleanOutput(out)
+		if j, jerr := transport.LocalJobStatus(args.JobID); jerr == nil && isQuickExit(j) {
+			head := fmt.Sprintf("%s rc=%s | id=%s | log %d B\n", j.State, rcText(j.Meta.ExitCode), j.Meta.ID, j.LogSize)
+			if out == "" {
+				out = "(empty log)"
+			}
+			if h := jobLogHint(jobLabel(j.Meta), j.Meta.ExitCode, out); h != "" {
+				out += "\n" + h
+			}
+			return capOutput(head + out), nil
+		}
 		if out == "" {
 			return "(log vazio)", nil
 		}
@@ -111,7 +116,11 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		}
 		tail, _ := transport.TailLocalJob(args.JobID, 20)
 		tail = capOutput(cleanOutput(tail))
-		return waitReport(j.Meta.ID, "local|"+j.Meta.ID, tail, finished, fmt.Sprint(j.State)), nil
+		rep := waitReport(j.Meta.ID, "local|"+j.Meta.ID, tail, finished, localStateText(j))
+		if h := jobLogHint(jobLabel(j.Meta), j.Meta.ExitCode, tail); h != "" {
+			rep += "\n" + h // morreu porque a ferramenta não existe: o wait já diz o que fazer
+		}
+		return rep, nil
 
 	case "list", "ls":
 		jobs, err := transport.LocalJobList()

@@ -378,6 +378,10 @@ var (
 	cmdNulRe  = regexp.MustCompile(`(?i)>\s*nul\b`)
 	cmdFlagRe = regexp.MustCompile(`(?i)(^|\s)/[dsbfiv](\s|$|")`)
 	cmdExtRe  = regexp.MustCompile(`(?i)\.(bat|cmd)\b`)
+	// posixAssignRe: linha que começa com atribuição POSIX (VAR=valor). O cmd.exe não tem essa sintaxe — lê o primeiro
+	// token como nome de comando — e é aí que o P3 do bench ciclo1b travava: 'start=$(date +%s%N); ...' virava o
+	// builtin START do cmd, que engole o resto da linha e nunca termina (a exec só voltava no timeout de 300 s).
+	posixAssignRe = regexp.MustCompile(`^\s*[A-Za-z_][A-Za-z0-9_]*=`)
 )
 
 // hasWindowsSignal: a linha carrega algo que só o cmd/PowerShell entende. Vence qualquer sinal Unix: na dúvida,
@@ -439,6 +443,11 @@ func hasUnixSignal(label string) bool {
 func unixStyleLine(label string) bool {
 	if strings.TrimSpace(label) == "" || hasUnixShellInvocation(label) {
 		return false
+	}
+	// Atribuição POSIX no começo vence o veto de cmd/PowerShell: nenhuma linha válida do cmd.exe começa com 'VAR='.
+	// Sem isso, 'start=$(date +%s%N); ...' ficava no cmd.exe (o '%s%' de '+%s%N' parece variável do cmd) e travava.
+	if posixAssignRe.MatchString(label) && hasUnixSignal(label) {
+		return true
 	}
 	return !hasWindowsSignal(label) && hasUnixSignal(label)
 }
