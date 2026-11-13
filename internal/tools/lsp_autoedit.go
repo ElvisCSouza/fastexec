@@ -460,6 +460,7 @@ func (a *autoEdit) rename() {
 	a.changedLine(files, outside)
 	a.keptLine(post)
 	a.leftoverCheck()
+	a.textSignatures() // snapshot de API com a assinatura exata: o servidor troca, o modelo não precisa abrir
 	a.textMentions()
 }
 

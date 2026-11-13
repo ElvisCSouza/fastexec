@@ -1,4 +1,4 @@
-﻿// callsite_rename.go: o modelo troca um nome de membro num ponto de uso (SelfLog.WriteLine -> SelfLog.Write) em vez de
+// callsite_rename.go: o modelo troca um nome de membro num ponto de uso (SelfLog.WriteLine -> SelfLog.Write) em vez de
 // pedir o rename pela declaração. A intenção é a mesma, e o caminho exato (rename do compilador) já existe: aqui só
 // se reconhece a intenção. Sem isso o modelo repete a troca arquivo por arquivo (20 edições, 158k tokens no CS4).
 //
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"homelab/fastexec/internal/graph"
 	"homelab/fastexec/internal/lsp"
 )
 
@@ -129,7 +130,23 @@ func (a *autoEdit) declaresName(ctx context.Context, pos lsp.Position) bool {
 		if err != nil {
 			return true
 		}
-		if s := string(b); maskWord(s, a.delta.newName) != s {
+		// Declarações, não texto: "Write" numa frase de comentário ("Write a message...") não é um membro.
+		if decls, _, ok := graph.ParseFile(p, b); ok {
+			for _, d := range decls {
+				if d.Name == a.delta.newName {
+					return true
+				}
+			}
+			continue
+		}
+		// Sem scanner para a linguagem: o texto sem comentários de linha é o melhor que se tem.
+		var code []string
+		for _, ln := range strings.Split(string(b), "\n") {
+			if t := strings.TrimSpace(ln); !strings.HasPrefix(t, "//") && !strings.HasPrefix(t, "#") {
+				code = append(code, ln)
+			}
+		}
+		if s := strings.Join(code, "\n"); maskWord(s, a.delta.newName) != s {
 			return true
 		}
 	}
