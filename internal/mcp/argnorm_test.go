@@ -156,7 +156,7 @@ func TestDispatchReadWithPascalCaseKeys(t *testing.T) {
 	args, _ := json.Marshal(map[string]any{"Path": p, "StartLine": 2, "EndLine": 3, "ByteOffset": 0})
 	res := DispatchTool("read_file", args)
 	text := res.Content[0].Text
-	if res.IsError || !strings.HasPrefix(text, "l2\nl3") || strings.Contains(text, "l4") {
+	if res.IsError || !strings.HasPrefix(text, "2\tl2\n3\tl3") || strings.Contains(text, "l4") {
 		t.Fatalf("range not honoured: %q", text)
 	}
 	if !strings.Contains(text, "[FastExec] Parameters adjusted") || !strings.Contains(text, "StartLine -> start_line") {

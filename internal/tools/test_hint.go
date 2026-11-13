@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -65,6 +66,37 @@ func isTestPath(rel string) bool {
 	return graph.TestFile(rel) || reTestDirLoose.MatchString(rel) || reTestFileLoose.MatchString(rel)
 }
 
+// genericNames: nomes de arquivo que se repetem em todo projeto. Teste de nome parecido só conta na mesma pasta.
+var genericNames = map[string]bool{
+	"main": true, "index": true, "util": true, "utils": true, "common": true, "helpers": true, "types": true,
+	"init": true, "app": true, "mod": true, "lib": true, "config": true, "program": true, "startup": true, "base": true,
+}
+
+// genericOnly: o teste só casou por nomes genéricos (nenhum nome específico do arquivo aparece no nome do teste).
+func genericOnly(lowerBase string, wants []string) bool {
+	for _, w := range wants {
+		if strings.Contains(lowerBase, w) && !genericNames[w] {
+			return false
+		}
+	}
+	return true
+}
+
+// sameLanguage: o teste está na linguagem do arquivo editado (um .zig não é coberto por main_test.go). TS e JS contam como uma.
+func sameLanguage(rel, testRel string) bool {
+	fam := func(e string) string {
+		e = strings.ToLower(e)
+		switch e {
+		case ".ts", ".tsx", ".js", ".jsx", ".mjs":
+			return ".js"
+		case ".kt", ".java", ".scala":
+			return ".jvm"
+		}
+		return e
+	}
+	return fam(filepath.Ext(rel)) == fam(filepath.Ext(testRel))
+}
+
 var relatedTestsSkipDirs = map[string]bool{
 	".git": true, "bin": true, "obj": true, "node_modules": true, ".vs": true, "packages": true, "target": true,
 }
@@ -100,7 +132,15 @@ func findRelatedTests(root, rel string, bases []string) []string {
 			return nil
 		}
 		r = filepath.ToSlash(r)
-		if r == rel || !isTestPath(r) || !nameHasAny(strings.ToLower(filepath.Base(r)), wants) {
+		if r == rel || !isTestPath(r) || !sameLanguage(rel, r) {
+			return nil
+		}
+		lower := strings.ToLower(filepath.Base(r))
+		if !nameHasAny(lower, wants) {
+			return nil
+		}
+		// "main", "index", "util"...: o nome não diz de quem é o teste; só vale na mesma pasta (main_test.go do pacote ao lado).
+		if genericOnly(lower, wants) && path.Dir(r) != path.Dir(rel) {
 			return nil
 		}
 		if _, err := os.Stat(p); err == nil {

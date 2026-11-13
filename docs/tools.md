@@ -439,7 +439,9 @@ Every `edit_file`, `write_file` (new files too) and `exec` that writes a `.go`/`
   A test is found by file name (`LengthValidator.cs` → `LengthValidatorTests.cs`); when no test carries the file's name,
   FastExec follows who uses the type — through the graph index when there is one, otherwise a bounded text scan — and
   points at the tests named after those files (`LevelOutputFormat.cs` is covered by `MessageTemplateTextFormatterTests.cs`
-  because `MessageTemplateTextFormatter` calls it). A test file that names the type itself wins over those. It only
+  because `MessageTemplateTextFormatter` calls it). A test file that names the type itself wins over those. Only tests
+  in the same language count (a `main.zig` is not covered by a Go `main_test.go`), and a generic file name (`main`,
+  `index`, `util`, `config`...) only matches a test in the same folder. It only
   names files by convention and never claims they cover the behaviour or pass; silent when nothing is found. Without
   it, a model tends to run the whole suite or write its own harness.
 - Up to 3 errors per file, 2 other files; the code line is trimmed to 80 characters. Dependents: when a signature was

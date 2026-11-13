@@ -444,7 +444,9 @@ fn runChild(
         } else |_| {}
     }
 
-    var holders = [_]posix.pid_t{0} ** 8;
+    // No Windows pid_t é um HANDLE (ponteiro) e não aceita 0; os donos do pipe só existem no POSIX (collectPosix).
+    const Holder = if (is_windows) u32 else posix.pid_t;
+    var holders = [_]Holder{0} ** 8;
     var n_bg: usize = 0;
     if (is_windows) {
         child.collectOutput(stdout, stderr, MAX_OUTPUT_LEN) catch |err| {
