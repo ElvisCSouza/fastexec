@@ -390,9 +390,6 @@ func (a *autoEdit) rename() {
 // textMentions avisa onde o nome antigo ainda aparece em arquivo que não é código (arquivo de aprovação de API,
 // doc, config): o rename do compilador não chega lá, e a frase "nada mais a mudar" seria falsa sem este aviso.
 func (a *autoEdit) textMentions() {
-	if len(a.lines) >= lspAutoMaxLines {
-		return
-	}
 	hits := textMentionSites(a.root, a.delta.name, 400*time.Millisecond)
 	if len(hits) == 0 {
 		return
@@ -401,7 +398,8 @@ func (a *autoEdit) textMentions() {
 	if n := len(hits) - 3; n > 0 {
 		line += fmt.Sprintf(", +%d more", n)
 	}
-	a.note("still named %s in non-code files (not renamed): %s", a.delta.name, line)
+	// Fora do teto das linhas [lsp]: DONE e "files changed" já o enchem, e este aviso é o que desmente o "nada mais a mudar".
+	a.extra = append(a.extra, fmt.Sprintf("[lsp] still named %s in non-code files (not renamed): %s", a.delta.name, line))
 }
 
 var textMentionExt = map[string]bool{".txt": true, ".md": true, ".json": true, ".xml": true, ".yml": true, ".yaml": true,
