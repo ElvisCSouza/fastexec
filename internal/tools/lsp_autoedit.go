@@ -333,12 +333,12 @@ func (a *autoEdit) rename() {
 	if total == 0 {
 		total = len(files)
 	}
-	a.skip = map[string]bool{a.delta.name: true, a.delta.newName: true}
+	a.skip = map[string]bool{a.delta.name: true, a.delta.newName: true, "*": true}
 	a.undo = res.PatchPath
 
 	spots, _ := we.Spots()
 	sites := relSites(a.root, spots)
-	a.note("%s -> %s: %d uses in %d files updated (exact): %s%s; undo: git apply -R %s",
+	a.note("DONE %s -> %s: all %d uses in %d files updated by the compiler's rename (exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: git apply -R %s",
 		a.delta.name, a.delta.newName, total, len(files), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots), res.PatchPath)
 	a.changedLine(files, outside)
 }

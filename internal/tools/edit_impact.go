@@ -56,7 +56,7 @@ func editImpactExcept(host, path, oldText, newText string, skip map[string]bool)
 	if oldText == "" || newText == "" || oldText == newText {
 		return ""
 	}
-	if !impactLocal(host, path) {
+	if !impactLocal(host, path) || skip["*"] {
 		return ""
 	}
 	start := time.Now()

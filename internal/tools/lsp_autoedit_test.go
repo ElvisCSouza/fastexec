@@ -194,7 +194,7 @@ func TestAutoRenameAppliesAndUndoes(t *testing.T) {
 	msg := f.edit("a.go", newA)
 
 	// Duas ocorrências (a do próprio arquivo e a de b.go) em dois arquivos.
-	if !strings.Contains(msg, "ParseLine -> ParseRecord: 2 uses in 2 files updated (exact)") {
+	if !strings.Contains(msg, "DONE ParseLine -> ParseRecord: all 2 uses in 2 files updated") {
 		t.Fatalf("rename note missing, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "undo: git apply -R ") {
@@ -466,7 +466,7 @@ func TestAutoRenameKeepsCRLF(t *testing.T) {
 	f.start()
 
 	msg := f.edit("a.go", strings.ReplaceAll(newA, "\n", "\r\n"))
-	if !strings.Contains(msg, "ParseLine -> ParseRecord: 2 uses in 2 files updated (exact)") {
+	if !strings.Contains(msg, "DONE ParseLine -> ParseRecord: all 2 uses in 2 files updated") {
 		t.Fatalf("rename did not run, got:\n%s", msg)
 	}
 	got := f.read("b.go")
