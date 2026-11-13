@@ -187,6 +187,9 @@ var Languages = []Language{
 		Servers: []Server{{
 			Name:        "gopls",
 			VersionArgs: []string{"version"},
+			// pull diagnostics: a resposta é da versão que o gopls tem, sem esperar o ~1 s de ociosidade que ele
+			// usa antes de publicar (diagnosticsDelay). Chave desconhecida é ignorada por gopls antigo.
+			InitOptions: map[string]any{"pullDiagnostics": true},
 			Install:     "go install golang.org/x/tools/gopls@latest",
 		}},
 	},

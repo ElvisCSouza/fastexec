@@ -175,6 +175,7 @@ type Client struct {
 	docs     map[string]*document // uri -> state
 	diags    map[string][]Diagnostic
 	diagSeq  map[string]uint64
+	diagVer  map[string]int // versão do documento a que o último publish se refere; -1 = o servidor não informou
 	// pulled is the last textDocument/diagnostic answer per file. It exists
 	// because a codeAction request has to carry the diagnostics of the range it
 	// asks about, and a pull-only server never pushes them: without this the
@@ -230,6 +231,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		docs:    make(map[string]*document),
 		diags:   make(map[string][]Diagnostic),
 		diagSeq: make(map[string]uint64),
+		diagVer: make(map[string]int),
 		pulled:  make(map[string][]Diagnostic),
 		loading: make(map[string]string),
 		stderr:  newRingBuffer(cfg.StderrBytes),
@@ -591,6 +593,11 @@ func (c *Client) handleDiagnostics(params json.RawMessage) {
 	c.mu.Lock()
 	c.diags[key] = p.Diagnostics
 	c.diagSeq[key]++
+	if p.Version != nil {
+		c.diagVer[key] = *p.Version
+	} else {
+		c.diagVer[key] = -1
+	}
 	c.mu.Unlock()
 }
 
@@ -847,13 +854,20 @@ func clientCapabilities(workDoneProgress bool) map[string]any {
 // ensureOpen makes sure the server has the current bytes of path. The file is
 // always read from disk: FastExec is the writer, so disk is the truth.
 func (c *Client) ensureOpen(ctx context.Context, path string) error {
+	_, err := c.ensureOpenSent(ctx, path)
+	return err
+}
+
+// ensureOpenSent is ensureOpen that also says whether it sent anything (didOpen or didChange). Nothing sent means
+// the server already had these exact bytes, so what it last published still describes them.
+func (c *Client) ensureOpenSent(ctx context.Context, path string) (bool, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return err
+		return false, err
 	}
 	content, err := os.ReadFile(abs)
 	if err != nil {
-		return err
+		return false, err
 	}
 	uri := PathToURI(abs)
 	key := uriKey(uri)
@@ -867,7 +881,7 @@ func (c *Client) ensureOpen(ctx context.Context, path string) error {
 		c.mu.Lock()
 		c.docs[key] = d
 		c.mu.Unlock()
-		return c.notify(ctx, "textDocument/didOpen", map[string]any{
+		return true, c.notify(ctx, "textDocument/didOpen", map[string]any{
 			"textDocument": map[string]any{
 				"uri":        uri,
 				"languageId": c.cfg.LanguageID,
@@ -877,14 +891,14 @@ func (c *Client) ensureOpen(ctx context.Context, path string) error {
 		})
 	}
 	if bytes.Equal(d.sent, content) {
-		return nil
+		return false, nil
 	}
 	c.mu.Lock()
 	d.version++
 	d.sent = content
 	version := d.version
 	c.mu.Unlock()
-	return c.notify(ctx, "textDocument/didChange", map[string]any{
+	return true, c.notify(ctx, "textDocument/didChange", map[string]any{
 		"textDocument":   map[string]any{"uri": uri, "version": version},
 		"contentChanges": []map[string]any{{"text": string(content)}},
 	})
