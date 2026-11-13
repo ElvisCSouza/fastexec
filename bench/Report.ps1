@@ -142,6 +142,19 @@ if ($gr.Count) {
   }
 }
 
+$lspTag = if ($Tag) { $Tag } else { [IO.Path]::GetFileNameWithoutExtension($File) }
+$lspLines = @(& (Join-Path $PSScriptRoot 'Lsp-Usage.ps1') -Tag $lspTag 2>$null)
+if ($lspLines.Count) {
+  Out ""
+  Out "## 7. Roslyn e servidores de linguagem: usado e exato?"
+  Out ""
+  Out "Conta as chamadas reais a ``code_graph`` (action callers) do braço FastExec e de onde veio cada resposta: **exata** (servidor de linguagem), **por nome** (índice) ou **LSP indisponível** (o servidor foi pedido e não respondeu; o motivo aparece abaixo). Sem isto, uma resposta por nome parece exata."
+  Out ""
+  Out '```'
+  foreach ($l in $lspLines) { Out ([string]$l) }
+  Out '```'
+}
+
 Out ""
 Out "## Como ler"
 Out ""

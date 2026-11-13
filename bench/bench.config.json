@@ -2,6 +2,7 @@
   "model": "claude-sonnet-5-5",
   "work_dir": "W:\\Data\\bench-v2",
   "daemon_addr": "127.0.0.1:9246",
+  "lsp_path": "W:\\Data\\fx-lsp",
   "fastexec_exe": "..\\..\\fastexec-private\\bin\\fastexec.exe",
   "arms": {
     "native":   { "label": "Claude nativo",         "mcp": false, "tools": ["Bash", "Read", "Glob", "Grep", "Edit", "Write"] },

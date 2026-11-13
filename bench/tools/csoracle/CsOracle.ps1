@@ -154,6 +154,10 @@ function global:Copy-CsRepo {
         $json = "{`n  `"sdk`": {`n    `"version`": `"$($d.sdk_version)`",`n    `"rollForward`": `"latestFeature`"`n  }`n}`n"
         Set-Content -LiteralPath $gj -Value $json -Encoding UTF8
     }
+    # Copia restaurada, como a de quem trabalha no repo: sem obj/project.assets.json o csharp-ls nao carrega
+    # ("restore needed") e o modo exato nunca e' exercitado. Restore offline (cache NuGet) e so' escreve obj/.
+    $sln = Get-ChildItem -LiteralPath $Dst -Filter *.sln -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($sln) { $null = Invoke-CsDotnet -CsArgs @('restore', $sln.FullName) -WorkDir $Dst -TimeoutSec 300 }
     return $Dst
 }
 

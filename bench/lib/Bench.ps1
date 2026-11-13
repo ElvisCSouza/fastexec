@@ -22,8 +22,10 @@ function Test-TcpOpen([string]$Addr) {
 function Start-BenchDaemon($Cfg, [string]$Fx, [string]$MetricsFile) {
   $data = Join-Path $Cfg.work_dir 'fx-data'; New-Item -ItemType Directory -Force $data | Out-Null
   $env:FASTEXEC_DAEMON_ADDR = $Cfg.daemon_addr; $env:FASTEXEC_DATA_DIR = $data; $env:FASTEXEC_HOME = (Join-Path $Cfg.work_dir 'fx-home'); Remove-Item Env:FASTEXEC_CONFIG -ErrorAction SilentlyContinue
+  # O LSP (Roslyn/csharp-ls, gopls) vive no daemon: sem estes dois o bench nunca exerce o modo exato (ciclo6: 0 respostas exatas em C#).
+  if ($Cfg.lsp_path) { $env:FASTEXEC_LSP_PATH = $Cfg.lsp_path }; if ($Cfg.dotnet -and $Cfg.dotnet.root) { $env:FASTEXEC_DOTNET_SDK = $Cfg.dotnet.root }
   try { $p = Start-Process -FilePath (Get-RunJobPath) -ArgumentList @('-m', $MetricsFile, '--', $Fx, 'daemon', 'run') -PassThru -WindowStyle Hidden }
-  finally { Remove-Item Env:FASTEXEC_DAEMON_ADDR, Env:FASTEXEC_DATA_DIR, Env:FASTEXEC_HOME -ErrorAction SilentlyContinue }
+  finally { Remove-Item Env:FASTEXEC_DAEMON_ADDR, Env:FASTEXEC_DATA_DIR, Env:FASTEXEC_HOME, Env:FASTEXEC_LSP_PATH, Env:FASTEXEC_DOTNET_SDK -ErrorAction SilentlyContinue }
   for ($i = 0; $i -lt 60 -and -not (Test-TcpOpen $Cfg.daemon_addr); $i++) { Start-Sleep -Milliseconds 100 }
   if (-not (Test-TcpOpen $Cfg.daemon_addr)) { throw 'daemon de benchmark nao subiu' }
   return $p

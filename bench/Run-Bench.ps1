@@ -62,6 +62,13 @@ $done = @{}; if (Test-Path $resFile) { foreach ($l in Get-Content $resFile) { if
 $repos = @($Tasks | ForEach-Object { $All[$_].repos } | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { $Fixtures[$_] })
 if ($repos.Count -and ($Arms -contains 'fastexec')) { Initialize-BenchGraph $cfg $Fx $repos }   # indice do code_graph aquecido fora da medicao
 
+# Portao do modo exato: tarefa C# no braco FastExec so roda se o Roslyn responde exato na copia que ela usa.
+# Deterministico, sem modelo, ~10 s. Ambiente quebrado nunca chega a gastar uma execucao paga.
+if (($Arms -contains 'fastexec') -and (@($Tasks | Where-Object { $_ -like 'CS*' }).Count -gt 0) -and -not $env:BENCH_SKIP_LSP_GATE) {
+  & (Join-Path $PSScriptRoot 'Test-LspReady.ps1') -Fx $Fx
+  if ($LASTEXITCODE -ne 0) { throw 'PREFLIGHT LSP: o modo exato do C# nao esta pronto (veja acima); nada foi executado' }
+}
+
 $spent = 0.0
 "Tag=$Tag  modelo=$modelUsed  cache=$([bool]$Cache)  fastexec=$fxSha  claude=$claudeVer  tarefas=$($Tasks -join ',')  reps=$Reps  tetos=run `$$MaxRunUsd / total `$$MaxTotalUsd"
 for ($rep = 1; $rep -le $Reps; $rep++) {
