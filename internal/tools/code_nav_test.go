@@ -251,6 +251,21 @@ func TestApplyGrepExcludes(t *testing.T) {
 	}
 }
 
+func TestIsMemberSearch(t *testing.T) {
+	cases := map[string]bool{
+		`findstr /s /n /c:"SelfLog.WriteLine" *.cs`:       true,
+		`grep -rn "SelfLog\.WriteLine(" --include=*.cs .`: true,
+		`grep -rn "foo.bar" .`:                            false,
+		`grep -rn "TODO" src`:                             false,
+		`dir /s Program.cs`:                               false,
+	}
+	for c, want := range cases {
+		if got := isMemberSearch(c); got != want {
+			t.Errorf("isMemberSearch(%q) = %v, quer %v", c, got, want)
+		}
+	}
+}
+
 func TestIsCallSearch(t *testing.T) {
 	cases := map[string]bool{
 		`grep -rn "HandleHandoff(" .`: true,

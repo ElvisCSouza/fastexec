@@ -419,6 +419,17 @@ func isDeclSearch(label string) bool {
 	return isTextSearch(label) && reDeclSearch.MatchString(label)
 }
 
+// reMemberSearch: o padrão buscado é um membro qualificado ("SelfLog.WriteLine"): quem busca assim costuma estar
+// prestes a renomeá-lo ou a mudar seus chamadores.
+var reMemberSearch = regexp.MustCompile(`\b[A-Z]\w+\\?\.[A-Z]\w+\b`)
+
+const memberSearchHint = "[FastExec FastHint] Call sites: tool 'code_graph' (action 'callers'). To rename it, edit_file the declaration (symbol='name'): callers are updated and checked automatically; no sed."
+
+// isMemberSearch: busca de texto por Tipo.Membro.
+func isMemberSearch(label string) bool {
+	return isTextSearch(label) && reMemberSearch.MatchString(label)
+}
+
 // isCallSearch: busca de texto cujo padrão parece chamada de função.
 func isCallSearch(label string) bool {
 	return isTextSearch(label) && reCallSearch.MatchString(label)

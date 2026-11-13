@@ -379,6 +379,8 @@ func execFailureHints(out, label, unixLbl string, res *transport.ExecResult) str
 		return add(editScriptHint)
 	case isDeclSearch(label):
 		return add(declSearchHint)
+	case isMemberSearch(label):
+		return add(memberSearchHint)
 	case isCallSearch(label):
 		return add(callSearchHint)
 	case isLineSliceRead(label):

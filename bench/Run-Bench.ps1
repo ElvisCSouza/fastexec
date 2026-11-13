@@ -78,8 +78,10 @@ for ($rep = 1; $rep -le $Reps; $rep++) {
       if ($spent -ge $MaxTotalUsd) { "PARADA: gasto `$$([math]::Round($spent, 3)) >= teto `$$MaxTotalUsd"; return }
       $dir = "$work\runs\$Tag\$id-$arm-r$rep"; if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }; New-Item -ItemType Directory -Force $dir | Out-Null
       $prompt = & $All[$id].Prepare $dir
-      # Projeto real tem git; sem .git o FastExec so valida sintaxe e nao faz rename/assinatura exatos. Os dois bracos recebem o mesmo repositorio.
-      if (-not (Test-Path (Join-Path $dir '.git')) -and (Get-ChildItem $dir -Recurse -Include *.cs,*.go -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+      # Sem git por padrao: o FastExec acha a raiz por marcadores (.sln, go.mod...) e as medias historicas do nativo
+      # foram feitas sem .git. Com .git o modelo passou a usar 'git stash/checkout' e desfez a propria correcao (CS6 v1).
+      # BENCH_GIT_INIT=1 recria o comportamento antigo (os dois bracos recebem o mesmo repositorio).
+      if ($env:BENCH_GIT_INIT -eq '1' -and -not (Test-Path (Join-Path $dir '.git')) -and (Get-ChildItem $dir -Recurse -Include *.cs,*.go -File -ErrorAction SilentlyContinue | Select-Object -First 1)) {
         git -C $dir init -q 2>$null; git -C $dir add -A 2>$null; git -C $dir -c user.name=bench -c user.email=bench@local commit -qm base 2>$null
       }
       $r = Invoke-Arm -Cfg $cfg -Arm $arm -Prompt $prompt -Dir $dir -Fx $Fx -MaxUsd $MaxRunUsd -Cache:$Cache -Provider $prov
