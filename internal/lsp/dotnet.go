@@ -53,6 +53,12 @@ func csharpCustomize(root string) (args, env []string, problem string) {
 		return nil, csharpEnv(sdk, portable), problems[0]
 	}
 	env = csharpEnv(sdk, portable)
+	if _, set := os.LookupEnv("TargetFramework"); !set {
+		// Sem isto, um projeto de vários destinos deixa o servidor com o workspace vazio (dotnet_tfm.go).
+		if tfm := multiTargetFramework(root, resolvedSDKMajor(root, sdk)); tfm != "" {
+			env = append(env, "TargetFramework="+tfm)
+		}
+	}
 
 	if sln := firstMatch(root, "*.sln"); sln != "" {
 		args = append(args, "--solution", sln)

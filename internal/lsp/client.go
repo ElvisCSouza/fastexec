@@ -566,6 +566,15 @@ func (c *Client) handleNotify(method string, params json.RawMessage) {
 		c.handleDiagnostics(params)
 	case "$/progress":
 		c.handleProgress(params)
+	case "window/logMessage", "window/showMessage":
+		// csharp-ls reports why a project did not load through logMessage, not stderr. Keeping it in
+		// the same buffer makes the failure reason reach StderrCause instead of vanishing.
+		var p struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(params, &p) == nil && p.Message != "" {
+			_, _ = c.stderr.Write([]byte("[server] " + strings.TrimSpace(p.Message) + "\n"))
+		}
 	}
 }
 
