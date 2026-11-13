@@ -391,12 +391,12 @@ func (a *autoEdit) signature() {
 	// quebra o build, e antes era justamente ele que ficava de fora do aviso.
 	sites := relSites(a.root, locs)
 	sites = withoutDecl(sites, a.rel, a.delta.line)
-	a.skip = map[string]bool{name: true}
+	a.skip = map[string]bool{name: true, "*": true}
 	if len(sites) == 0 {
-		a.note("%s: signature changed, no caller (exact)", name)
+		a.note("%s: signature changed, no caller (exact): nothing else to update", name)
 		return
 	}
-	a.note("%s: signature changed, %d caller(s) need adjustment (exact): %s%s; not changed by the server",
+	a.note("%s: signature changed; exactly %d caller(s) need the new arguments (complete list, no grep needed): %s%s",
 		name, len(sites), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots))
 }
 

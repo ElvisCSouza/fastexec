@@ -338,7 +338,7 @@ func TestAutoSignatureListsCallers(t *testing.T) {
 
 	msg := f.edit("a.go", "package main\n\nfunc ParseLine(n int) {}\n")
 
-	if !strings.Contains(msg, "ParseLine: signature changed, 2 caller(s) need adjustment (exact)") {
+	if !strings.Contains(msg, "ParseLine: signature changed; exactly 2 caller(s) need the new arguments") {
 		t.Fatalf("caller list missing, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "b.go:3, b.go:5") {
@@ -621,7 +621,7 @@ func UseBoth(b Both) int { return b.Run(1) }
 	if err != nil {
 		t.Fatalf("write_file: %v", err)
 	}
-	if !strings.Contains(msg, "Run: signature changed, 2 caller(s) need adjustment (exact)") {
+	if !strings.Contains(msg, "Run: signature changed; exactly 2 caller(s) need the new arguments") {
 		t.Fatalf("same-file caller missing from the warning, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "both.go:7") || !strings.Contains(msg, "other.go:3") {
