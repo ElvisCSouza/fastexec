@@ -140,6 +140,24 @@ func TestHandleReadFileWithSymbol(t *testing.T) {
 	}
 }
 
+// symbol='Old' + replacement='New' (só um identificador) é renomear, não trocar o corpo inteiro pelo nome (CS4 v4).
+func TestHandleEditFileSymbolBareIdentifierRenames(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "m.py")
+	content := "def helper():\n    return 42\n\ndef main():\n    print(helper())\n"
+	_ = os.WriteFile(p, []byte(content), 0o644)
+	msg, err := HandleEditFile(EditFileArgs{Path: p, Symbol: "helper", Replacement: "assist"})
+	if err != nil {
+		t.Fatalf("rename por symbol falhou: %v", err)
+	}
+	if !strings.Contains(msg, `Renamed func "helper" to "assist"`) {
+		t.Errorf("mensagem: %s", msg)
+	}
+	got, _ := os.ReadFile(p)
+	if !strings.Contains(string(got), "def assist():\n    return 42") {
+		t.Errorf("o corpo tem de ficar intacto:\n%s", got)
+	}
+}
+
 func TestHandleEditFileWithExplicitSymbol(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "module.py")
 	content := "def helper():\n    return 42\n\ndef main():\n    print(helper())\n"

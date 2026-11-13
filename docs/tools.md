@@ -358,6 +358,12 @@ DONE ParseLine -> ParseRecord: all 8 uses in 5 files updated by the compiler's r
 ✓ compila
 ```
 
+- **Rename, also with a rewritten comment.** `edit_file symbol='ParseLine' replacement='ParseRecord'` (the replacement
+  is a bare identifier) renames the declaration instead of replacing its whole body. A rename edit that also rewrites
+  the comment right above the declaration (one contiguous hunk, even if it adds or removes lines) is still a rename:
+  the server's text is applied and the model's hunk is put back on top. After the rename, a
+  `[lsp] still named ParseLine in non-code files (not renamed): ...` line lists `.txt/.md/.json/.xml/.yml`
+  files (API approval files, docs) that keep the old name; the scan is capped at 400 ms.
 - **Rename.** Only the identifier changed: `prepareRename` + `rename` are asked, and the resulting `WorkspaceEdit`
   is **written** into every file it covers, not merely listed. The acceptance rule is the safety rule: the server's
   version of the edited file must be the text being written once both names are forgotten, so an edit that changes

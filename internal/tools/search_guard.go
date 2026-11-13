@@ -423,7 +423,7 @@ func isDeclSearch(label string) bool {
 // prestes a renomeá-lo ou a mudar seus chamadores.
 var reMemberSearch = regexp.MustCompile(`\b[A-Z]\w+\\?\.[A-Z]\w+\b`)
 
-const memberSearchHint = "[FastExec FastHint] Call sites: tool 'code_graph' (action 'callers'). To rename it, edit_file the declaration (symbol='name'): callers are updated and checked automatically; no sed."
+const memberSearchHint = "[FastExec FastHint] Call sites: tool 'code_graph' (action 'callers'). To rename it: edit_file on its declaration file with symbol='Old', replacement='New'; callers are updated and checked automatically; no sed."
 
 // isMemberSearch: busca de texto por Tipo.Membro.
 func isMemberSearch(label string) bool {

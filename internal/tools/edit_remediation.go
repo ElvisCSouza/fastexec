@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"homelab/fastexec/internal/codescan"
 	"homelab/fastexec/internal/graph"
@@ -287,6 +288,41 @@ func selectSymbol(path, data, symbol string) (string, bool, error) {
 	return hdr + block, true, nil
 }
 
+// isBareIdentifier: uma única palavra de identificador (sem espaço, parêntese ou chave).
+func isBareIdentifier(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || unicode.IsLetter(r) || (i > 0 && unicode.IsDigit(r)) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// renameDeclHeader troca a primeira ocorrência inteira de name na primeira linha do bloco da declaração.
+func renameDeclHeader(block, name, newName string) (string, bool) {
+	end := strings.IndexByte(block, '\n')
+	if end < 0 {
+		end = len(block)
+	}
+	head := block[:end]
+	for from := 0; from < len(head); {
+		i := strings.Index(head[from:], name)
+		if i < 0 {
+			return "", false
+		}
+		at := from + i
+		if wordEdge(head, at-1) && wordEdge(head, at+len(name)) {
+			return head[:at] + newName + head[at+len(name):] + block[end:], true
+		}
+		from = at + 1
+	}
+	return "", false
+}
+
 // editSymbol substitui o corpo completo de uma declaração de símbolo no conteúdo pelo replacement.
 func editSymbol(path, content, symbol, replacement string) (string, string, error) {
 	if symbol == "" {
@@ -334,6 +370,15 @@ func editSymbol(path, content, symbol, replacement string) (string, string, erro
 	startByte := spans[match.Line-1].startByte
 	endByte := spans[match.EndLine-1].fullEnd
 	oldBlock := content[startByte:endByte]
+
+	// Uma declaração não é uma palavra só: se o replacement é um identificador, o pedido é renomear (o modelo manda
+	// symbol='WriteLine', replacement='Write'). Trocar o corpo inteiro por esse nome apagava o método.
+	if newName := strings.TrimSpace(replacement); newName != symbol && match.Name != newName && isBareIdentifier(newName) {
+		if nb, ok := renameDeclHeader(oldBlock, match.Name, newName); ok {
+			msg := fmt.Sprintf("%s Renamed %s %q to %q (line %d); the name is the only change.", editSummary(path, 1, 1, 1), match.Kind, match.Name, newName, match.Line)
+			return content[:startByte] + nb + content[endByte:], msg, nil
+		}
+	}
 
 	_, r := matchEOL(content, oldBlock, replacement)
 	if !strings.HasSuffix(r, "\n") && strings.HasSuffix(oldBlock, "\n") {
