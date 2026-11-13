@@ -381,10 +381,52 @@ func (a *autoEdit) rename() {
 
 	spots, _ := we.Spots()
 	sites := relSites(a.root, spots)
-	a.note("DONE %s -> %s: all %d uses in %d files updated by the compiler's rename (exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: exec '%s'",
-		a.delta.name, a.delta.newName, total, len(files), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots), UndoCommand)
+	// Recibo: a conta que o modelo faria com o grep dele (a declaração mais os chamadores) já vem fechada.
+	uses := fmt.Sprintf("%d uses", total)
+	if len(n) > 0 && total >= 1 {
+		calls := fmt.Sprintf("%d call sites", total-1)
+		if total == 2 {
+			calls = "1 call site"
+		}
+		uses = fmt.Sprintf("%d uses (declaration + %s)", total, calls)
+	}
+	a.note("DONE %s -> %s: all %s in %d files updated by the compiler's rename (exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: exec '%s'",
+		a.delta.name, a.delta.newName, uses, len(files), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots), UndoCommand)
 	a.changedLine(files, outside)
+	a.keptLine(post)
 	a.textMentions()
+}
+
+// keptLine diz o que, no arquivo editado, continua com o nome antigo de propósito: o membro homônimo de outro tipo
+// (output.WriteLine do TextWriter) que o servidor não renomeou. É a conferência que o modelo repete a cada rodada.
+func (a *autoEdit) keptLine(post string) {
+	var kept []string
+	for i, ln := range strings.Split(post, "\n") {
+		if strings.Contains(ln, a.delta.name) && maskWord(ln, a.delta.name) != ln {
+			t := strings.TrimSpace(ln)
+			if strings.HasPrefix(t, "//") {
+				continue // comentário não é uso
+			}
+			kept = append(kept, fmt.Sprintf("%s:%d `%s`", filepath.Base(a.abs), i+1, cutRunes(t, 60)))
+		}
+	}
+	if len(kept) == 0 {
+		return
+	}
+	line := joinFirst(kept, 2)
+	if n := len(kept) - 2; n > 0 {
+		line += fmt.Sprintf(", +%d more", n)
+	}
+	a.extra = append(a.extra, "[lsp] kept on purpose (another type's member, not this symbol): "+line)
+}
+
+// cutRunes corta s em n runas, com reticências.
+func cutRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // textMentions avisa onde o nome antigo ainda aparece em arquivo que não é código (arquivo de aprovação de API,
@@ -435,7 +477,8 @@ func textMentionSites(root, name string, budget time.Duration) []string {
 		}
 		for i, ln := range strings.Split(string(b), "\n") {
 			if strings.Contains(ln, name) && maskWord(ln, name) != ln {
-				out = append(out, fmt.Sprintf("%s:%d", relToRoot(root, p), i+1))
+				// A linha vai junto: com ela o modelo edita direto, sem abrir o arquivo antes e depois.
+				out = append(out, fmt.Sprintf("%s:%d `%s`", relToRoot(root, p), i+1, cutRunes(strings.TrimSpace(ln), 80)))
 				break // uma linha por arquivo basta para o modelo achar o resto
 			}
 		}

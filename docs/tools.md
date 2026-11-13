@@ -353,10 +353,17 @@ of the previous section is not repeated for names the server already answered fo
 ```
 [edit_file] W:\src\a.go: +1 -1 lines, 1 hunk(s).
 L3: func ParseRecord() {}
-DONE ParseLine -> ParseRecord: all 8 uses in 5 files updated by the compiler's rename (exact; same-named members of other types untouched): a.go:3, b.go:40, +3 more. Nothing else to change: do not grep or re-check. undo: exec 'fastexec undo'
+DONE ParseLine -> ParseRecord: all 8 uses (declaration + 7 call sites) in 5 files updated by the compiler's rename (exact; same-named members of other types untouched): a.go:3, b.go:40, +3 more. Nothing else to change: do not grep or re-check. undo: exec 'fastexec undo'
 [lsp] files changed: callers.go, main.go; re-read before editing them
-✓ compila
+[lsp] kept on purpose (another type's member, not this symbol): a.go:12 `r.ParseLine(x)`
+[lsp] still named ParseLine in non-code files (not renamed): docs/api.approved.txt:9 `func ParseLine(s string) Record`
+✓ compila: 0 erros neste arquivo e nos outros 4 tocados (código verificado pelo servidor; texto não)
 ```
+
+The reply is written to be *believed*, so the model does not re-run the checks it would otherwise run itself: the
+count is reconciled (declaration + call sites), the same-named member it would grep for is named as kept, the text
+file that still needs a hand edit comes with its line (no need to open it), and the final line states how many files
+were checked and that text files were not.
 
 - **Rename, also with a rewritten comment.** `edit_file symbol='ParseLine' replacement='ParseRecord'` (the replacement
   is a bare identifier) renames the declaration instead of replacing its whole body. A rename edit that also rewrites

@@ -1,9 +1,27 @@
 package tools
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+// O que fica com o nome antigo de propósito (outro tipo) e a linha do arquivo de texto vêm na resposta do rename.
+func TestRenameReceiptKeptAndTextSnippet(t *testing.T) {
+	a := &autoEdit{abs: "/x/SelfLog.cs", delta: declDelta{name: "WriteLine", newName: "Write"}}
+	a.keptLine("class A {\n  // WriteLine antigo\n  void M() { output.WriteLine(m); }\n  void Write() { }\n}\n")
+	if len(a.extra) != 1 || !strings.Contains(a.extra[0], "SelfLog.cs:3 `void M() { output.WriteLine(m); }`") || strings.Contains(a.extra[0], ":2 ") {
+		t.Fatalf("kept line wrong (comment must not count): %q", a.extra)
+	}
+	root := t.TempDir()
+	_ = os.WriteFile(filepath.Join(root, "api.approved.txt"), []byte("x\n    public static void WriteLine(string format) { }\n"), 0o644)
+	hits := textMentionSites(root, "WriteLine", time.Second)
+	if len(hits) != 1 || hits[0] != "api.approved.txt:2 `public static void WriteLine(string format) { }`" {
+		t.Fatalf("text mention must carry the line, got %q", hits)
+	}
+}
 
 // Renomear e reescrever o comentário da declaração na mesma edição (CS4: SelfLog.WriteLine -> Write) continua sendo rename.
 func TestRenameWithDocCommentChange(t *testing.T) {

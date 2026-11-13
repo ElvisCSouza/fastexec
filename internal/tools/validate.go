@@ -407,6 +407,11 @@ func (a *autoEdit) statusLine(s1 layer1, semantic semanticResult) string {
 		if a.depsUnverified > 0 || (a.delta.kind == declSigned && len(a.deps) > 0) {
 			return "✓ compila (este arquivo) · chamadores não verificados: confira os listados acima"
 		}
+		// Rename aplicado e todos os arquivos tocados consultados sem erro: o número e o alcance são a prova que o
+		// modelo iria buscar com um build. Texto (.txt, .md, config) fica de fora e é dito.
+		if a.delta.kind == declRenamed && a.post != "" && len(a.deps) > 0 {
+			return fmt.Sprintf("✓ compila: 0 erros neste arquivo e nos outros %d tocados (código verificado pelo servidor; texto não)", len(a.deps))
+		}
 		return "✓ compila"
 	case semPending:
 		if s1.ok {
