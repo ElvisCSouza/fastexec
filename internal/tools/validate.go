@@ -401,8 +401,11 @@ func (a *autoEdit) statusLine(s1 layer1, semantic semanticResult) string {
 		if !a.worthyOK() {
 			return ""
 		}
-		if a.depsUnverified > 0 {
-			return "✓ compila · chamadores não verificados"
+		// Assinatura mudada (não o rename, que o servidor já aplicou nos usos): os chamadores estavam na lista do aviso, e \"nenhum erro neles\" logo
+		// depois da edição pode ser só o servidor ainda não ter reanalisado. Dizer \"compila\" sem ressalva faria a LLM
+		// acreditar que os chamadores estão certos (o CS3 v6 viu exatamente isso).
+		if a.depsUnverified > 0 || (a.delta.kind == declSigned && len(a.deps) > 0) {
+			return "✓ compila (este arquivo) · chamadores não verificados: confira os listados acima"
 		}
 		return "✓ compila"
 	case semPending:

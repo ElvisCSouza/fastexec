@@ -119,6 +119,18 @@ func TestValidateFixAfterReportedErrorSaysCompiles(t *testing.T) {
 	}
 }
 
+// Assinatura mudada sem erro mostrado nos chamadores: nunca "✓ compila" sem ressalva; rename aplicado continua confiante.
+func TestStatusLineSignatureNeverClaimsCallersAreFine(t *testing.T) {
+	a := &autoEdit{delta: declDelta{kind: declSigned}, deps: map[string]*depState{"x.go": {}}}
+	if got := a.statusLine(layer1{ok: true}, semOK); !strings.Contains(got, "chamadores não verificados") {
+		t.Fatalf("a signature change must not say a bare compila, got %q", got)
+	}
+	r := &autoEdit{delta: declDelta{kind: declRenamed}, deps: map[string]*depState{"x.go": {}}}
+	if got := r.statusLine(layer1{ok: true}, semOK); got != "✓ compila" {
+		t.Fatalf("an applied rename keeps the plain status, got %q", got)
+	}
+}
+
 // A mensagem longa perde o meio, não o fim: o nome do parâmetro que falta fica na linha.
 func TestShortMsgKeepsTheTail(t *testing.T) {
 	msg := "Não há nenhum argumento fornecido que corresponda ao parâmetro formal necessário 'throwOnInvalid' de 'LogEventProperty.IsValidName(string?, bool)'"
