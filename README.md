@@ -251,7 +251,9 @@ gain is smallest on short tasks, where there is little to cut.
 open-source fixtures, 2 to 5 repetitions per task, cache off. The confidence interval exists because the sample is
 small. Other models, other repositories and real sessions will differ; the figure to trust is the one you measure on
 your own work with `fastexec monitor`. This round measured build `core-f5d1719`; the release adds one later change
-(compact `dotnet build` and `dotnet test` output, including localized messages), which the round did not measure.## Tools
+(compact `dotnet build` and `dotnet test` output, including localized messages), which the round did not measure. A smaller C# follow-up on later builds (only the FastExec arm re-run, against the
+recorded native mean) is described in
+[`benchmark/`](benchmark/README.md#c-follow-up-13-november-2026-build-core-6544137-and-later).## Tools
 
 The assistant sees eight compact tools, plus modules it loads only when needed.
 
