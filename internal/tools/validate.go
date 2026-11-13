@@ -144,6 +144,7 @@ func (a *autoEdit) layer1(text string) layer1 {
 		}
 		a.extra = append(a.extra, errLine(a.relOrBase(), e.line, e.id, e.msg, srcLine(text, e.line), ""))
 	}
+	markOutstanding(a.abs)
 	return layer1{blocked: true, state: st}
 }
 
@@ -210,6 +211,7 @@ func (a *autoEdit) layer2(text string, s1 layer1) (verified bool) {
 			ln := d.Range.Start.Line + 1
 			a.extra = append(a.extra, errLine(a.relOrBase(), ln, diagID(d), d.Message, srcLine(cur, ln), ""))
 		}
+		markOutstanding(a.abs)
 		return true
 	}
 	a.format()
@@ -319,6 +321,7 @@ func (a *autoEdit) checkDependents() (unverified int) {
 			rel = filepath.Base(f)
 		}
 		a.extra = append(a.extra, errLine(rel, ln, diagID(d), d.Message, src, "(efeito da sua edição)"))
+		markOutstanding(f)
 		if len(errs) > 1 {
 			hidden += len(errs) - 1
 		}
@@ -428,7 +431,35 @@ func (a *autoEdit) statusLine(s1 layer1, semantic semanticResult) string {
 }
 
 func (a *autoEdit) worthyOK() bool {
-	return a.isNew || a.delta.kind != declNone || len(a.deps) > 0
+	return a.isNew || a.delta.kind != declNone || len(a.deps) > 0 || clearOutstanding(a.abs)
+}
+
+// outstanding guarda os arquivos para os quais o FastExec JA mostrou um erro. A edição que o conserta não pode ficar
+// em silêncio: sem "✓ compila" a LLM não sabe se o erro sumiu e gasta um build para descobrir.
+var outstanding = struct {
+	sync.Mutex
+	files map[string]bool
+}{files: map[string]bool{}}
+
+func markOutstanding(abs string) {
+	if abs == "" {
+		return
+	}
+	outstanding.Lock()
+	outstanding.files[filepath.Clean(abs)] = true
+	outstanding.Unlock()
+}
+
+// clearOutstanding diz se havia erro mostrado para abs e já o tira da lista.
+func clearOutstanding(abs string) bool {
+	outstanding.Lock()
+	defer outstanding.Unlock()
+	abs = filepath.Clean(abs)
+	if !outstanding.files[abs] {
+		return false
+	}
+	delete(outstanding.files, abs)
+	return true
 }
 
 type semanticResult int

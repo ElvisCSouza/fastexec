@@ -96,6 +96,29 @@ func TestValidateWithoutGitUsesProjectMarkers(t *testing.T) {
 	}
 }
 
+// Depois de mostrar um erro, a edição que o conserta recebe "✓ compila": silêncio ali obrigaria a LLM a rodar um build.
+func TestValidateFixAfterReportedErrorSaysCompiles(t *testing.T) {
+	f := newLSPFixture(t, toolFakeCtl{}).start()
+	bad := f.create("n.go", "package main\n\nfunc F() {}\n//ERR undefined: conta\n")
+	if !strings.Contains(bad, "undefined: conta") {
+		t.Fatalf("setup: the error must be reported first, got:\n%s", bad)
+	}
+	good, err := HandleWriteFile(WriteFileArgs{Host: "local", Path: f.path("n.go"), Content: "package main\n\nfunc F() {}\n", Overwrite: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(good, "✓ compila") {
+		t.Fatalf("the fix must be confirmed, got:\n%s", good)
+	}
+	again, err := HandleWriteFile(WriteFileArgs{Host: "local", Path: f.path("n.go"), Content: "package main\n\nfunc F() { _ = 1 }\n", Overwrite: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(again, "✓ compila") {
+		t.Fatalf("an ordinary clean edit must stay silent once the error is confirmed fixed, got:\n%s", again)
+	}
+}
+
 // FASTEXEC_LSP=off desliga tudo: nenhuma linha nova.
 func TestValidateOffMeansNothing(t *testing.T) {
 	f := newLSPFixture(t, toolFakeCtl{})
