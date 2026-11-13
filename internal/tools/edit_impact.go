@@ -211,18 +211,40 @@ func relToRoot(root, path string) string {
 // fora) ou kind diferente = mudou; sumiu = removida ou renomeada. Símbolo novo não entra. A ordem é a do arquivo
 // antigo, então a mesma edição gera sempre a mesma resposta.
 func changedDecls(old, neu []codescan.Decl) []impactSymbol {
-	byName := make(map[string]codescan.Decl, len(neu))
+	// Nome repetido é o normal em C# (sobrecargas, construtor com o nome da classe): comparar "a última declaração
+	// com esse nome" acusava assinatura mudada em método que ninguém tocou. Primeiro some o que é idêntico
+	// (nome+tipo+assinatura, contando repetições); só o que sobra é mudança ou remoção.
+	type declID struct{ name, kind, sig string }
+	same := make(map[declID]int, len(neu))
+	left := make(map[string]int, len(neu)) // por nome: quantas novas sobraram sem par idêntico
 	for _, d := range neu {
-		byName[d.Name] = d
+		same[declID{d.Name, d.Kind, d.Sig}]++
+	}
+	var unmatched []codescan.Decl
+	for _, d := range old {
+		id := declID{d.Name, d.Kind, d.Sig}
+		if same[id] > 0 {
+			same[id]--
+			continue
+		}
+		unmatched = append(unmatched, d)
+	}
+	for id, n := range same {
+		if n > 0 {
+			left[id.name] += n
+		}
 	}
 	var out []impactSymbol
-	for _, d := range old {
-		n, ok := byName[d.Name]
-		switch {
-		case !ok:
-			out = append(out, impactSymbol{name: d.Name, removed: true})
-		case n.Sig != d.Sig || n.Kind != d.Kind:
+	seen := map[string]bool{}
+	for _, d := range unmatched {
+		if seen[d.Name] {
+			continue
+		}
+		seen[d.Name] = true
+		if left[d.Name] > 0 {
 			out = append(out, impactSymbol{name: d.Name})
+		} else {
+			out = append(out, impactSymbol{name: d.Name, removed: true})
 		}
 	}
 	return out

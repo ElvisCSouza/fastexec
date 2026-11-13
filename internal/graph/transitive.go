@@ -223,8 +223,8 @@ func keysOf(level []callerSite) []string {
 // deepExtraLines é quantas linhas dos níveis 2+ a saída mostra (o nível 1 só é limitado por 'max'); deepTestFiles, quantos
 // arquivos de teste a linha "tests:" nomeia. Um depth=4 num símbolo popular passava de 19 KB (120 referências).
 const (
-	deepExtraLines = 40
-	deepTestFiles  = 8
+	deepExtraLines = 20
+	deepTestFiles  = 5
 )
 
 // renderDeep escreve a saída de depth>1: cabeçalho, linha "tests:", cada nível e o rodapé.
