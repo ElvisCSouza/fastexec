@@ -91,7 +91,10 @@ func HandleCodeOutline(args CodeOutlineArgs) (string, error) {
 		shown, ends := outlineSpans(path, src, lang, args.Symbol)
 		out := renderFileEnds(shown, max, args.Symbol, ends)
 		if args.Symbol != "" && strings.HasPrefix(out, "(no declaration matching") {
-			return out + outlineElsewhere(path, args.Symbol, max), nil
+			if elsewhere := outlineElsewhere(path, args.Symbol, max); elsewhere != "" {
+				return out + elsewhere, nil
+			}
+			return out + outlineSimilar(path, args.Symbol), nil
 		}
 		// O outline mostra só os cabeçalhos; o corpo da declaração mostrada é onde vivem os `x := ...`.
 		// A linha "types:" fecha esse buraco sem obrigar outra leitura.
@@ -119,6 +122,39 @@ func outlineElsewhere(file, symbol string, max int) string {
 		return ""
 	}
 	return "\n[FastExec] Not declared in this file; declared elsewhere in the repo (paths relative to " + root + "):\n" + found
+}
+
+// outlineSimilar: nada com esse nome no arquivo nem no repositório. Lista até 5 declarações do índice com nome parecido
+// (path:L<n>: assinatura), da mais parecida para a menos, até ~400 caracteres. Só o que já está no índice e ainda
+// existe no disco; nunca indexa. Vazio se não há repositório indexado ou nada se parece (a mensagem fica a de antes).
+func outlineSimilar(path, symbol string) string {
+	root, ok := graph.ResolveRepoRoot(path)
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	for _, s := range graph.SimilarSymbols(root, symbol, 5) {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(s.File))); err != nil {
+			continue
+		}
+		line := fmt.Sprintf("%s:L%d: %s\n", s.File, s.Line, truncRunes(s.Signature, 120))
+		if b.Len() > 0 && b.Len()+len(line) > 400 {
+			break
+		}
+		b.WriteString(line)
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "\n[FastExec] No exact declaration; similar names in the index (paths relative to " + root + "):\n" +
+		strings.TrimRight(b.String(), "\n")
+}
+
+func truncRunes(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }
 
 func unsupportedErr(path string) error {
@@ -361,7 +397,7 @@ func outlineTree(root, symbol string, max int) (string, error) {
 	}
 	if total == 0 {
 		if symbol != "" {
-			return fmt.Sprintf("(no declaration matching %q in %d files)", symbol, len(files)), nil
+			return fmt.Sprintf("(no declaration matching %q in %d files)", symbol, len(files)) + outlineSimilar(root, symbol), nil
 		}
 		return fmt.Sprintf("(no declarations found in %d files)", len(files)), nil
 	}
