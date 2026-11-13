@@ -125,6 +125,7 @@ type autoEdit struct {
 	extra          []string            // linhas de erro/estado; não entram no teto das notas, são o que a LLM precisa ler
 	deps           map[string]*depState // arquivos que a edição pode ter quebrado (D8), com o "antes" de cada um
 	depsUnverified int                 // quantos desses o servidor não respondeu a tempo
+	depScan        int                 // teto de arquivos conferidos (0 = validateDepScan); o rename pelo compilador confere todos
 	ident          string              // quem edita (canal/conversa); "" = desconhecido, e aí nada é omitido
 }
 
@@ -416,6 +417,7 @@ func (a *autoEdit) rename() {
 	if err != nil {
 		n = nil
 	}
+	a.depScan = validateRenameScan
 	a.captureDeps(a.sitesAbs(files)) // D8: depois do rename exato, os arquivos que ele tocou são conferidos
 	for _, f := range files {
 		captureUndo(f) // o desfazer em memória (lastedit.go) precisa do conteúdo de antes de cada arquivo que o rename vai gravar

@@ -41,6 +41,11 @@ const (
 	validateCodeMax = 80 // largura da linha de código depois do │
 	// validateDepScan: quantos chamadores o servidor é consultado (o que passa disso não é verificado).
 	validateDepScan = 5
+	// validateRenameScan: no rename pelo compilador TODOS os arquivos de código alterados são conferidos; o número
+	// que o servidor afirma tem de bater com o que a LLM vê ("nos outros 5" de 15 a fazia rodar o build).
+	validateRenameScan = 60
+	// validateDepTotal: teto de espera somando os arquivos; o que passa disso conta como não verificado.
+	validateDepTotal = 3 * time.Second
 	// validateDepBudget: espera por arquivo dependente. A edição já está gravada: o rodapé pode perder precisão,
 	// nunca tempo.
 	validateDepBudget = 400 * time.Millisecond
@@ -282,8 +287,13 @@ func (a *autoEdit) checkDependents() (unverified int) {
 	}
 	sort.Strings(files)
 	shown, hidden := 0, 0
+	deadline := time.Now().Add(validateDepTotal)
 	for _, f := range files {
 		st := a.deps[f]
+		if time.Now().After(deadline) {
+			unverified++
+			continue
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), validateDepBudget*2)
 		items, ok, _ := a.client.DiagnosticsSince(ctx, f, st.seq, validateDepBudget)
 		cancel()
@@ -357,7 +367,11 @@ func (a *autoEdit) captureDeps(files []string) {
 		a.deps = map[string]*depState{}
 	}
 	for _, f := range files {
-		if len(a.deps) >= validateDepScan {
+		limit := validateDepScan
+		if a.depScan > 0 {
+			limit = a.depScan
+		}
+		if len(a.deps) >= limit {
 			return
 		}
 		if f == a.abs {
@@ -410,7 +424,7 @@ func (a *autoEdit) statusLine(s1 layer1, semantic semanticResult) string {
 		// Rename aplicado e todos os arquivos tocados consultados sem erro: o número e o alcance são a prova que o
 		// modelo iria buscar com um build. Texto (.txt, .md, config) fica de fora e é dito.
 		if a.delta.kind == declRenamed && a.post != "" && len(a.deps) > 0 {
-			return fmt.Sprintf("✓ compila: 0 erros neste arquivo e nos outros %d tocados (código verificado pelo servidor; texto não)", len(a.deps))
+			return fmt.Sprintf("✓ compila: 0 erros nos %d arquivos de código alterados, todos conferidos pelo compilador (não só este); o rename não precisa de build para ser confirmado (texto não é verificado)", len(a.deps)+1)
 		}
 		return "✓ compila"
 	case semPending:

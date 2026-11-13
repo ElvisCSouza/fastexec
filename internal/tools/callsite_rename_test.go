@@ -102,6 +102,10 @@ func TestCallSiteRenameCompletesAndOmitsUnseen(t *testing.T) {
 	if !strings.Contains(msg, "a.go:3, +1 more") {
 		t.Fatalf("the edited file stays in the receipt, the unseen one only counts:\n%s", msg)
 	}
+	// O número do "compila" é o dos arquivos de código alterados (a.go + lib.go = 2), não um subconjunto.
+	if !strings.Contains(msg, "✓ compila: 0 erros nos 2 arquivos de código alterados") {
+		t.Fatalf("compile line must count every changed code file:\n%s", msg)
+	}
 }
 
 // Se o modelo abriu lib.go, a cópia dele ficou velha: aí o aviso de "releia" fica.
