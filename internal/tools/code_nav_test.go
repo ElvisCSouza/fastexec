@@ -201,11 +201,11 @@ func TestNeedsGrepExcludes(t *testing.T) {
 		"grep --recursive -e foo .",
 		"grep -rn foo . 2>/dev/null",
 		"grep -rn -A 3 foo .",
+		"grep -rn --exclude-dir=.git foo .", // só .git excluído: bin/obj ainda entram
 	}
 	nao := []string{
 		"grep -n foo file.go",
 		"grep -rn foo src",
-		"grep -rn --exclude-dir=node_modules foo .",
 		"rg foo",
 		"git grep foo",
 		"grep -rn foo internal/",

@@ -157,7 +157,9 @@ func isDotPath(p string) bool { return p == "." || p == "./" || p == `.\` }
 // needsGrepExcludes: grep recursivo, sem --exclude-dir próprio, sobre a raiz (caminho ausente ou ".").
 func needsGrepExcludes(tokens []string) bool {
 	g, ok := parseGrepArgs(tokens)
-	if !ok || !g.recursive || g.excludeDir {
+	// Mesmo com --exclude-dir próprio (só .git, em geral) o ruído de build continua entrando: bin/obj trouxeram .xml
+	// de documentação para o contexto, que é reenviado em todo turno. Quem varre a raiz não quer o que é gerado.
+	if !ok || !g.recursive {
 		return false
 	}
 	if len(g.paths) == 0 {

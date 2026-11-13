@@ -58,6 +58,8 @@ type toolFakeCtl struct {
 	Rename map[string][]toolFakeEdit `json:"rename"`
 	// References são os usos devolvidos por textDocument/references, por arquivo.
 	References map[string][]toolFakeEdit `json:"references"`
+	// Definition é o arquivo onde textDocument/definition diz que o símbolo é declarado.
+	Definition string `json:"definition"`
 	// Actions são os code actions devolvidos para qualquer range.
 	Actions []toolFakeAction `json:"actions"`
 	// Format são as edições de formatação.
@@ -219,6 +221,7 @@ func (s *toolFakeSrv) capabilities() map[string]any {
 	caps := map[string]any{
 		"textDocumentSync":           1,
 		"referencesProvider":         true,
+		"definitionProvider":         true,
 		"renameProvider":             map[string]any{"prepareProvider": true},
 		"codeActionProvider":         true,
 		"documentFormattingProvider": true,
@@ -304,6 +307,14 @@ func (s *toolFakeSrv) operation(m *toolFakeMsg) {
 			changes[uri] = edits
 		}
 		s.reply(id, map[string]any{"changes": changes})
+
+	case "textDocument/definition":
+		// Roteirizado: ctl.Definition é o arquivo (relativo à raiz) onde o símbolo é declarado; vazio = o próprio documento.
+		uri := p.TextDocument.URI
+		if s.ctl.Definition != "" {
+			uri = pathURI(s.file(s.ctl.Definition))
+		}
+		s.reply(id, []map[string]any{{"uri": uri, "range": toolFakeRange(0, 0, 1)}})
 
 	case "textDocument/references":
 		var loc []map[string]any

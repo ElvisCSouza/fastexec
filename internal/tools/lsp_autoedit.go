@@ -89,6 +89,9 @@ type declDelta struct {
 	// extra: além do nome, a edição mexeu num trecho contíguo junto da declaração (o comentário dela, por exemplo).
 	// O rename automático aplica o texto do servidor e depois repõe esse trecho (mergeResidual).
 	extra bool
+	// site: o rename veio de um ponto de uso (callsite_rename.go), não da declaração; qual é o que vem antes do ponto.
+	site bool
+	qual string
 }
 
 // autoEdit é o estado de uma edição assistida. nil é um estado válido e o normal: sem servidor, sem edição
@@ -122,11 +125,18 @@ type autoEdit struct {
 	extra          []string            // linhas de erro/estado; não entram no teto das notas, são o que a LLM precisa ler
 	deps           map[string]*depState // arquivos que a edição pode ter quebrado (D8), com o "antes" de cada um
 	depsUnverified int                 // quantos desses o servidor não respondeu a tempo
+	ident          string              // quem edita (canal/conversa); "" = desconhecido, e aí nada é omitido
 }
 
 // autoEditBegin abre uma edição assistida e roda a fase A. Devolve nil quando não há nada exato a fazer — e aí
 // a resposta da tool fica idêntica à de antes desta tarefa.
 func autoEditBegin(host, path, oldText, newText string) *autoEdit {
+	return autoEditBeginFor("", host, path, oldText, newText)
+}
+
+// autoEditBeginFor é autoEditBegin sabendo quem edita: com ident, o que o modelo viu ou não viu decide o que a
+// resposta precisa dizer (seen_ledger.go).
+func autoEditBeginFor(ident, host, path, oldText, newText string) *autoEdit {
 	if newText == "" || oldText == newText || lsp.Disabled() || !impactLocal(host, path) {
 		return nil
 	}
@@ -159,7 +169,7 @@ func autoEditBegin(host, path, oldText, newText string) *autoEdit {
 		return nil
 	}
 	a := &autoEdit{host: host, path: path, abs: abs, root: root, oldText: oldText, newText: newText,
-		isNew: isNew, noRoot: !hasRoot, lang: lang.ID}
+		isNew: isNew, noRoot: !hasRoot, lang: lang.ID, ident: ident}
 	if !hasRoot {
 		return a // fora de repositório só há a camada 1
 	}
@@ -172,6 +182,11 @@ func autoEditBegin(host, path, oldText, newText string) *autoEdit {
 		return a
 	}
 	a.delta = declDeltaOf(a.rel, oldText, newText)
+	if a.delta.kind == declNone {
+		if d, ok := callSiteDelta(oldText, newText); ok {
+			a.delta = d
+		}
+	}
 	a.tract = tractRange(oldText, newText)
 
 	// Servidor quente primeiro: se já existe um para este projeto, o "antes" dos diagnósticos sai de graça.
@@ -280,6 +295,43 @@ func (a *autoEdit) Close() {
 	a.release, a.client = nil, nil
 }
 
+// visibleSites são os locais que valem citar: o arquivo editado e os que o modelo abriu. Citar o que ele nunca abriu
+// só o leva a abrir (seen_ledger.go); sem identidade, nada é omitido.
+func (a *autoEdit) visibleSites(sites []graph.Site) []graph.Site {
+	if a.ident == "" {
+		return sites
+	}
+	var out []graph.Site
+	for _, s := range sites {
+		if s.File == a.rel || seenBy(a.ident, a.host, filepath.Join(a.root, filepath.FromSlash(s.File))) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (a *autoEdit) shownSites(sites []graph.Site) string {
+	return joinSites(firstSites(a.visibleSites(sites), lspAutoMaxSpots))
+}
+
+// moreSites conta o que ficou de fora da lista, inclusive o que foi omitido por não ter sido aberto.
+func (a *autoEdit) moreSites(sites []graph.Site) string {
+	shown := len(firstSites(a.visibleSites(sites), lspAutoMaxSpots))
+	if n := len(sites) - shown; n > 0 {
+		return fmt.Sprintf(", +%d more", n)
+	}
+	return ""
+}
+
+// warn é note para o que dá errado no rename. Quando o rename veio de um ponto de uso (a edição do modelo vale como foi
+// pedida), o fracasso é silencioso: sem isso toda troca de Console.WriteLine por Console.Write viraria um aviso.
+func (a *autoEdit) warn(format string, args ...any) {
+	if a.delta.site {
+		return
+	}
+	a.note(format, args...)
+}
+
 func (a *autoEdit) note(format string, args ...any) {
 	// A fase A reserva a última linha: o erro que a edição criou é o aviso que não pode ser cortado pelo teto.
 	// Sem a reserva, "renomeou + arquivos mudados" já enchia as três linhas e o build quebrado saía calado.
@@ -296,7 +348,7 @@ func (a *autoEdit) note(format string, args ...any) {
 // rename é o item (1): aplicar o WorkspaceEdit do servidor, não só listar.
 func (a *autoEdit) rename() {
 	if a.client == nil {
-		a.note("%s -> %s: no language server for this project; not renamed (by name)", a.delta.name, a.delta.newName)
+		a.warn("%s -> %s: no language server for this project; not renamed (by name)", a.delta.name, a.delta.newName)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), lspAutoRenameBudget)
@@ -306,17 +358,22 @@ func (a *autoEdit) rename() {
 	// que o servidor aponta evita renomear o homônimo errado.
 	rng, _, err := a.client.PrepareRename(ctx, a.abs, pos)
 	if err != nil {
-		a.note("%s -> %s not applied: %s", a.delta.name, a.delta.newName, shortErr(err))
+		a.warn("%s -> %s not applied: %s", a.delta.name, a.delta.newName, shortErr(err))
 		return
 	}
 	if rng == nil {
-		a.note("%s -> %s not applied: the server does not rename this symbol; by name", a.delta.name, a.delta.newName)
+		a.warn("%s -> %s not applied: the server does not rename this symbol; by name", a.delta.name, a.delta.newName)
+		return
+	}
+	// Rename a partir de um ponto de uso: antes de mexer na declaração, ter certeza de que o nome novo não é outro
+	// membro que já existe (callsite_rename.go).
+	if a.delta.site && a.declaresName(ctx, rng.Start) {
 		return
 	}
 	we, err := a.client.Rename(ctx, a.abs, rng.Start, a.delta.newName)
 	if err != nil || we == nil {
 		if err != nil {
-			a.note("%s -> %s not applied: %s", a.delta.name, a.delta.newName, shortErr(err))
+			a.warn("%s -> %s not applied: %s", a.delta.name, a.delta.newName, shortErr(err))
 		}
 		return
 	}
@@ -329,12 +386,16 @@ func (a *autoEdit) rename() {
 		post, ok = mergeResidual(post, a.oldText, a.newText, a.delta.name, a.delta.newName, a.delta.line)
 	}
 	if err != nil || !ok || !maskProof(a.newText, post, a.delta.name, a.delta.newName) {
-		a.note("%s -> %s not applied: the server's edit does not match the change asked; by name", a.delta.name, a.delta.newName)
+		a.warn("%s -> %s not applied: the server's edit does not match the change asked; by name", a.delta.name, a.delta.newName)
 		return
 	}
 	files := we.Files()
+	// O servidor não achou nada além do que o modelo já trocou (um arquivo, mesmo texto): não há o que completar.
+	if a.delta.site && len(files) <= 1 && post == a.newText {
+		return
+	}
 	if len(files) > lspAutoRenameMaxFiles {
-		a.note("%s -> %s: %d files would change, above the limit of %d; not applied (by name)",
+		a.warn("%s -> %s: %d files would change, above the limit of %d; not applied (by name)",
 			a.delta.name, a.delta.newName, len(files), lspAutoRenameMaxFiles)
 		return
 	}
@@ -361,7 +422,7 @@ func (a *autoEdit) rename() {
 	}
 	res, err := a.client.ApplyEdit(we, lsp.ApplyOptions{Root: a.root})
 	if err != nil {
-		a.note("%s -> %s not applied: %s", a.delta.name, a.delta.newName, shortErr(err))
+		a.warn("%s -> %s not applied: %s", a.delta.name, a.delta.newName, shortErr(err))
 		return
 	}
 	a.post = post
@@ -390,8 +451,12 @@ func (a *autoEdit) rename() {
 		}
 		uses = fmt.Sprintf("%d uses (declaration + %s)", total, calls)
 	}
-	a.note("DONE %s -> %s: all %s in %d files updated by the compiler's rename (exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: exec '%s'",
-		a.delta.name, a.delta.newName, uses, len(files), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots), UndoCommand)
+	done := "DONE %s -> %s: all %s in %d files updated by the compiler's rename (exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: exec '%s'"
+	if a.delta.site {
+		done = "DONE %s -> %s: your edit was a rename of the member, so the declaration and all %s in %d files changed at once (compiler's rename; exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: exec '%s'"
+	}
+	a.note(done,
+		a.delta.name, a.delta.newName, uses, len(files), a.shownSites(sites), a.moreSites(sites), UndoCommand)
 	a.changedLine(files, outside)
 	a.keptLine(post)
 	a.leftoverCheck()
@@ -416,11 +481,21 @@ func enclosingName(decls []codescan.Decl, line, end int) string {
 // aparece no código do projeto. Zero fecha a dúvida sem ele abrir nada; o número de arquivos varridos diz o alcance.
 // Sem tipo dono (função de topo) ou estourado o tempo, nada é dito: nunca afirma o que não conferiu.
 func (a *autoEdit) leftoverCheck() {
-	decls, _, ok := graph.ParseFile(a.rel, []byte(a.oldText))
-	if !ok {
-		return
+	owner := ""
+	if a.delta.site {
+		// ponto de uso: o dono é o que vem antes do ponto, e só serve quando parece nome de tipo (Serilog.SelfLog.X é tipo;
+		// logger.X é variável e a busca por texto não diz nada sobre ela)
+		owner = a.delta.qual
+		if owner == "" || owner[0] < 'A' || owner[0] > 'Z' {
+			return
+		}
+	} else {
+		decls, _, ok := graph.ParseFile(a.rel, []byte(a.oldText))
+		if !ok {
+			return
+		}
+		owner = enclosingName(decls, a.delta.line, a.delta.endLine)
 	}
-	owner := enclosingName(decls, a.delta.line, a.delta.endLine)
 	if owner == "" {
 		return
 	}
@@ -430,6 +505,11 @@ func (a *autoEdit) leftoverCheck() {
 		return
 	}
 	if len(hits) == 0 {
+		// O grep que o modelo já rodou, refeito: a resposta vem na mesma moeda em que ele ia conferir.
+		if g, ok := grepFor(a.ident, q); ok {
+			a.extra = append(a.extra, fmt.Sprintf("[lsp] check: your grep `%s` found %d lines in %d files; same search now: 0 (rescanned %d %s files)", q, g.lines, g.files, scanned, filepath.Ext(a.abs)))
+			return
+		}
 		a.extra = append(a.extra, fmt.Sprintf("[lsp] check: 0 `%s` left in %d %s files", q, scanned, filepath.Ext(a.abs)))
 		return
 	}
@@ -585,10 +665,19 @@ func (a *autoEdit) changedLine(files []string, outside []string) {
 	var rel []string
 	for _, f := range files {
 		if r := relToRoot(a.root, f); r != "" && r != a.rel {
+			// Arquivo que o modelo nunca abriu não tem cópia velha na cabeça dele: dizer que mudou só o leva a ler o que
+			// nunca leu (seen_ledger.go). Sem identidade (ident vazio) nada é omitido.
+			if a.ident != "" && !seenBy(a.ident, a.host, f) {
+				continue
+			}
 			rel = append(rel, r)
 		}
 	}
+	if len(rel) == 0 && len(outside) == 0 {
+		return
+	}
 	if len(rel) == 0 {
+		a.note("already modified outside FastExec: %s", joinFirst(outside, 3))
 		return
 	}
 	sort.Strings(rel)

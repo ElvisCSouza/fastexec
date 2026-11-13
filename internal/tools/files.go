@@ -309,7 +309,8 @@ func handleReadFile(args ReadFileArgs) (string, error) {
 	}
 	// A hint only for the same read made again (same file AND same selection): reading a file in different
 	// ranges is what read_file is for and must not be called re-reading.
-	if noteRead(identity(args.Caller, args.Conv), args.Host, args.Path+"|"+readSignature(args)) == rereadHintAt {
+		noteSeen(identity(args.Caller, args.Conv), args.Host, args.Path)
+		if noteRead(identity(args.Caller, args.Conv), args.Host, args.Path+"|"+readSignature(args)) == rereadHintAt {
 		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] This exact read was made 3 times; the text is the same unless the file changed. To locate code without re-reading: code_outline(path, symbol='name') gives the line; read_file(pattern='regex', context=3) returns only matching lines."
 	}
 	return out, err
@@ -730,8 +731,9 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		ae := autoEditBegin(host, args.Path, content, newContent)
+		ae := autoEditBeginFor(identity(args.Caller, args.Conv), host, args.Path, content, newContent)
 		defer ae.Close()
+		noteSeen(identity(args.Caller, args.Conv), host, args.Path)
 		newContent = ae.Text(newContent)
 		// o aviso de impacto lê o texto decodificado, antes de encodeForWrite (edit_impact.go)
 		if h := editImpactExcept(host, args.Path, content, newContent, ae.SkipNames()); h != "" {
@@ -829,8 +831,9 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		newLines += editLineCount(r)
 	}
 
-	ae := autoEditBegin(host, args.Path, content, newContent)
+	ae := autoEditBeginFor(identity(args.Caller, args.Conv), host, args.Path, content, newContent)
 	defer ae.Close()
+	noteSeen(identity(args.Caller, args.Conv), host, args.Path)
 	newContent = ae.Text(newContent)
 	proof := editProof(newContent, applied, enc)
 	// o aviso de impacto lê o texto decodificado, antes de encodeForWrite (edit_impact.go)

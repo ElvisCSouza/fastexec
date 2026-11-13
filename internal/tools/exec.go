@@ -231,6 +231,9 @@ func handleExec(args ExecArgs) (string, error) {
 		return withHostNote(shellNote, handoffResult(*res, timeout), nil), nil
 	}
 
+	if !res.TimedOut && isTextSearch(label) {
+		noteGrep(identity(args.Caller, args.Conv), label, res.Stdout) // antes do corte: a conta que o rename refaz é a inteira
+	}
 	searchHint := ""
 	if !res.TimedOut && !searchGuardOff() && isTextSearch(label) {
 		if cut, total, truncated := truncateSearchOutput(res.Stdout); truncated {

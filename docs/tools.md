@@ -365,6 +365,14 @@ count is reconciled (declaration + call sites), the same-named member it would g
 file that still needs a hand edit comes with its line (no need to open it), and the final line states how many files
 were checked and that text files were not.
 
+- **Rename started from a call site.** An `edit_file` whose only change is one member name swapped for another after a
+  dot (`SelfLog.WriteLine(` -> `SelfLog.Write(`) is recognised as the rename of that member: the compiler's rename
+  runs from that use, so the declaration and every other use change in the same call. It stays silent and leaves the
+  model's edit alone when the new name already exists next to the declaration (`Log.Info` -> `Log.Debug` is a choice,
+  not a rename), when the server cannot rename the symbol, or when the edit changes anything else. Files the model never
+  opened are not named in the reply (naming them only invites reading them); files it did open keep the "re-read" line.
+  If the model had already grepped the old name, the check line answers that same search ("your grep ... found N lines
+  in M files; same search now: 0").
 - **Rename, also with a rewritten comment.** `edit_file symbol='ParseLine' replacement='ParseRecord'` (the replacement
   is a bare identifier) renames the declaration instead of replacing its whole body. A rename edit that also rewrites
   the comment right above the declaration (one contiguous hunk, even if it adds or removes lines) is still a rename:
