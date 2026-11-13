@@ -272,6 +272,12 @@ func handleExec(args ExecArgs) (string, error) {
 	}
 	if !searchGuardOff() {
 		out = execFailureHints(out, label, unixLbl, res)
+		// Busca por "Tipo.Membro": o hint genérico de rename vira a chamada pronta, com o arquivo da declaração.
+		if res.ExitCode == 0 && !res.TimedOut && strings.Contains(out, memberSearchHint) {
+			if plan := memberRenamePlan(args.Cwd, label); plan != "" {
+				out = strings.Replace(out, memberSearchHint, plan, 1)
+			}
+		}
 	}
 	if res.ExitCode != 0 && !res.TimedOut {
 		if hint := checkCompileOrTestFailure(args.Cwd, label, out); hint != "" {
