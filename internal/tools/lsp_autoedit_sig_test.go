@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"homelab/fastexec/internal/codescan"
+	"homelab/fastexec/internal/graph"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,35 @@ func TestRenameReceiptKeptAndTextSnippet(t *testing.T) {
 	hits := textMentionSites(root, "WriteLine", time.Second)
 	if len(hits) != 1 || hits[0] != "api.approved.txt:2 `public static void WriteLine(string format) { }`" {
 		t.Fatalf("text mention must carry the line, got %q", hits)
+	}
+}
+
+// A prova do grep: "Tipo.nomeAntigo" restante no código, e o tipo dono achado pelo bloco que contém o método.
+func TestQualifiedLeftoversAndOwner(t *testing.T) {
+	decls, _, ok := graph.ParseFile("A.cs", []byte("class SelfLog {\n    public static void Write() {\n    }\n}\n"))
+	if !ok {
+		t.Skip("no C# scanner")
+	}
+	var m codescan.Decl
+	for _, d := range decls {
+		if d.Name == "Write" {
+			m = d
+		}
+	}
+	if got := enclosingName(decls, m.Line, m.EndLine); got != "SelfLog" {
+		t.Fatalf("owner = %q, want SelfLog", got)
+	}
+	root := t.TempDir()
+	_ = os.WriteFile(filepath.Join(root, "a.cs"), []byte("class A { void M() { SelfLog.Write(1); output.WriteLine(2); } }"), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "b.cs"), []byte("class B { void M() { MySelfLog.WriteLine(3); } }"), 0o644)
+	scanned, hits, done := qualifiedLeftovers(root, ".cs", "SelfLog.WriteLine", time.Second)
+	if scanned != 2 || !done || len(hits) != 0 {
+		t.Fatalf("MySelfLog.WriteLine is another type: want 0 hits in 2 files, got scanned=%d hits=%v", scanned, hits)
+	}
+	_ = os.WriteFile(filepath.Join(root, "c.cs"), []byte("x\nclass C { void M() { SelfLog.WriteLine(4); } }"), 0o644)
+	_, hits, _ = qualifiedLeftovers(root, ".cs", "SelfLog.WriteLine", time.Second)
+	if len(hits) != 1 || hits[0] != "c.cs:2" {
+		t.Fatalf("want c.cs:2, got %v", hits)
 	}
 }
 

@@ -394,7 +394,96 @@ func (a *autoEdit) rename() {
 		a.delta.name, a.delta.newName, uses, len(files), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots), UndoCommand)
 	a.changedLine(files, outside)
 	a.keptLine(post)
+	a.leftoverCheck()
 	a.textMentions()
+}
+
+// enclosingName devolve o nome do menor bloco que contém a declaração (o tipo dono do método), "" se for de topo.
+func enclosingName(decls []codescan.Decl, line, end int) string {
+	best, bestSpan := "", 1<<30
+	for _, d := range decls {
+		if d.Name == "" || (d.Line == line && d.EndLine == end) {
+			continue
+		}
+		if d.Line <= line && d.EndLine >= end && d.EndLine-d.Line < bestSpan {
+			best, bestSpan = d.Name, d.EndLine-d.Line
+		}
+	}
+	return best
+}
+
+// leftoverCheck é a prova que o modelo buscaria com grep: depois do rename, quantas vezes "Tipo.nomeAntigo" ainda
+// aparece no código do projeto. Zero fecha a dúvida sem ele abrir nada; o número de arquivos varridos diz o alcance.
+// Sem tipo dono (função de topo) ou estourado o tempo, nada é dito: nunca afirma o que não conferiu.
+func (a *autoEdit) leftoverCheck() {
+	decls, _, ok := graph.ParseFile(a.rel, []byte(a.oldText))
+	if !ok {
+		return
+	}
+	owner := enclosingName(decls, a.delta.line, a.delta.endLine)
+	if owner == "" {
+		return
+	}
+	q := owner + "." + a.delta.name
+	scanned, hits, done := qualifiedLeftovers(a.root, filepath.Ext(a.abs), q, 500*time.Millisecond)
+	if !done {
+		return
+	}
+	if len(hits) == 0 {
+		a.extra = append(a.extra, fmt.Sprintf("[lsp] check: 0 `%s` left in %d %s files", q, scanned, filepath.Ext(a.abs)))
+		return
+	}
+	line := joinFirst(hits, 3)
+	if n := len(hits) - 3; n > 0 {
+		line += fmt.Sprintf(", +%d more", n)
+	}
+	a.extra = append(a.extra, fmt.Sprintf("[lsp] check: %d `%s` still in code (string, reflection or not bound): %s", len(hits), q, line))
+}
+
+// qualifiedLeftovers varre os arquivos com a extensão dada procurando q como palavra inteira. done=false se o tempo acabou.
+func qualifiedLeftovers(root, ext, q string, budget time.Duration) (scanned int, hits []string, done bool) {
+	deadline := time.Now().Add(budget)
+	done = true
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			done = false
+			return filepath.SkipAll
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "bin", "obj", "node_modules", "vendor", ".vs":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(p), ext) {
+			return nil
+		}
+		b, e := os.ReadFile(p)
+		if e != nil {
+			return nil
+		}
+		scanned++
+		s := string(b)
+		for from := 0; from < len(s); {
+			i := strings.Index(s[from:], q)
+			if i < 0 {
+				break
+			}
+			at := from + i
+			if wordEdge(s, at-1) && wordEdge(s, at+len(q)) {
+				ln := 1 + strings.Count(s[:at], "\n")
+				hits = append(hits, fmt.Sprintf("%s:%d", relToRoot(root, p), ln))
+				break // uma por arquivo basta
+			}
+			from = at + 1
+		}
+		return nil
+	})
+	return scanned, hits, done
 }
 
 // keptLine diz o que, no arquivo editado, continua com o nome antigo de propósito: o membro homônimo de outro tipo
