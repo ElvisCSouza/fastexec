@@ -219,7 +219,7 @@ func (a *autoEdit) layer2(text string, s1 layer1) (verified bool) {
 // layer2Result roda a camada 2 e classifica o que a LLM pode (ou não) concluir.
 func (a *autoEdit) layer2Result(text string, s1 layer1) semanticResult {
 	if a.noRoot {
-		return semNone // fora de repositório só há a camada 1
+		return semNoProject // fora de repositório só há a camada 1, e a LLM é avisada de que os tipos não foram verificados
 	}
 	if !fileInProject(a.abs, a.root, a.lang) {
 		return semNoProject
@@ -408,6 +408,12 @@ func (a *autoEdit) statusLine(s1 layer1, semantic semanticResult) string {
 		}
 		return "· tipos pendentes (servidor carregando)"
 	case semNoProject:
+		if !s1.ok {
+			return ""
+		}
+		if !a.isNew && !once("noproject|"+filepath.Dir(a.abs)) {
+			return "" // edição de arquivo existente: avisa uma vez por pasta, não a cada edição
+		}
 		return "✓ sintaxe · tipos não verificados (arquivo fora do projeto)"
 	case semNoServer:
 		if !once("noserver|" + a.lang) {
