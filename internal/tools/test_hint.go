@@ -39,7 +39,10 @@ func (a *autoEdit) relatedTestsLine() string {
 	if len(base) < 4 || !once("tests|"+a.abs) {
 		return ""
 	}
-	tests := findRelatedTests(a.root, rel, base)
+	tests := findRelatedTests(a.root, rel, []string{base})
+	if len(tests) == 0 {
+		tests = testsOfUsers(a.root, rel, base, ext)
+	}
 	if len(tests) == 0 {
 		return ""
 	}
@@ -66,9 +69,17 @@ var relatedTestsSkipDirs = map[string]bool{
 	".git": true, "bin": true, "obj": true, "node_modules": true, ".vs": true, "packages": true, "target": true,
 }
 
-// findRelatedTests anda pela pasta e junta os arquivos de teste cujo nome contém o do arquivo editado.
-func findRelatedTests(root, rel, base string) []string {
-	want := strings.ToLower(base)
+// findRelatedTests anda pela pasta e junta os arquivos de teste cujo nome contém algum dos nomes pedidos.
+func findRelatedTests(root, rel string, bases []string) []string {
+	wants := make([]string, 0, len(bases))
+	for _, b := range bases {
+		if b = strings.ToLower(b); len(b) >= 4 {
+			wants = append(wants, b)
+		}
+	}
+	if len(wants) == 0 {
+		return nil
+	}
 	var out []string
 	visited := 0
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -89,7 +100,7 @@ func findRelatedTests(root, rel, base string) []string {
 			return nil
 		}
 		r = filepath.ToSlash(r)
-		if r == rel || !isTestPath(r) || !strings.Contains(strings.ToLower(filepath.Base(r)), want) {
+		if r == rel || !isTestPath(r) || !nameHasAny(strings.ToLower(filepath.Base(r)), wants) {
 			return nil
 		}
 		if _, err := os.Stat(p); err == nil {
