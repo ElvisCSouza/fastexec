@@ -777,6 +777,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 	var notes []string
 	// applied: em que posição do conteúdo final cada troca começou (a prova citada na resposta)
 	applied := make([]int, 0, len(ops))
+	already := 0 // trocas cujo texto novo já estava no arquivo
 	for i, op := range ops {
 		label := "target"
 		if len(ops) > 1 {
@@ -805,6 +806,13 @@ func handleEditFile(args EditFileArgs) (string, error) {
 				}
 			}
 		}
+		if n == 0 && len(strings.TrimSpace(r)) >= 12 && strings.Contains(newContent, r) {
+			// O alvo sumiu e o texto novo já está no arquivo: alguém já fez esta edição (o rename do compilador,
+			// numa edição anterior, é o caso típico: o modelo ainda tinha a lista de arquivos a editar). "Não achei" seria
+			// um erro falso; "já aplicado" é o estado real.
+			already++
+			continue
+		}
 		if n == 0 {
 			msg := fmt.Sprintf("%s not found in '%s'; nothing was written", label, args.Path)
 			if h := nearMiss(newContent, op.Target); h != "" {
@@ -829,6 +837,13 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		applied = append(applied, at)
 		oldLines += editLineCount(t)
 		newLines += editLineCount(r)
+	}
+
+	if already == len(ops) {
+		return fmt.Sprintf("[edit_file] %s: already applied, nothing changed. The file already has the replacement text and the target is gone (an earlier edit, such as the compiler's rename, did it). Do not repeat this edit.", args.Path), nil
+	}
+	if already > 0 {
+		notes = append(notes, fmt.Sprintf("%d of the edits were already applied and were skipped", already))
 	}
 
 	ae := autoEditBeginFor(identity(args.Caller, args.Conv), host, args.Path, content, newContent)
