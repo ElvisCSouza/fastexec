@@ -71,7 +71,10 @@ func memberRenamePlan(cwd, label string) string {
 	}
 	root, ok := graph.ResolveRepoRoot(dir)
 	if !ok {
-		return ""
+		// Pasta sem .git (workspace avulso, bench): o code_graph já indexa assim; sem isso o plano nunca aparecia.
+		if root, ok = graph.ResolveStandaloneRoot(dir); !ok {
+			return ""
+		}
 	}
 	if _, err := graph.Sync(root, graph.SyncBudget); err != nil {
 		return ""

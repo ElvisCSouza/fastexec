@@ -1,6 +1,8 @@
 package tools
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -39,5 +41,27 @@ func TestMemberRenamePlanPicksOwnerByQualifier(t *testing.T) {
 	}
 	if got := memberRenamePlan(repo, `grep -rn "Nothing.WriteLine" .`); got != "" {
 		t.Fatalf("unknown owner must fall back to the generic hint, got:\n%s", got)
+	}
+}
+
+// Pasta sem .git (o workspace do bench, um download): o plano pronto também vem, pela indexação avulsa.
+func TestMemberRenamePlanWorksWithoutGit(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"src/Debugging/SelfLog.cs":   "namespace S\n{\n    public static class SelfLog\n    {\n        public static void WriteLine(string format)\n        {\n        }\n    }\n}\n",
+		"test/Support/NullWriter.cs": "namespace S\n{\n    public class NullWriter\n    {\n        public void WriteLine(string v)\n        {\n        }\n    }\n}\n",
+	}
+	for rel, body := range files {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := memberRenamePlan(dir, `cd `+filepath.ToSlash(dir)+` && grep -rn "SelfLog.WriteLine" --include=*.cs .`)
+	if !strings.Contains(plan, "SelfLog.WriteLine is declared in src/Debugging/SelfLog.cs:5") {
+		t.Fatalf("plan without git wrong:\n%s", plan)
 	}
 }
