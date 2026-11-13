@@ -9,6 +9,8 @@ import (
 )
 
 var (
+	// reExactHeader: the header a code_graph answer carries when a language server (csharp-ls, gopls, ...) gave it.
+	reExactHeader = regexp.MustCompile(`^=== \w+ of '[^']*' \(exact, ([a-z0-9._-]+)\) ===`)
 	reGraphKB   = regexp.MustCompile(`\((\d+) KB\)`)
 	reRewriteKB = regexp.MustCompile(`\(avoidable (\d+) KB\)`)
 )
@@ -17,6 +19,19 @@ var (
 // auto-remediation (wrapped file reads), after its header line. 'rewrite' marks a write_file that rewrote a file
 // it mostly kept (rewrite_hint.go).
 func graphDecision(out string) string {
+	if strings.HasPrefix(out, "=== ") {
+		// code_graph answers: which engine answered. 'exact:<server>' is the language server, 'unavailable' is a
+		// server that was wanted and could not answer (the reason is in the text), 'by-name' is the index.
+		if m := reExactHeader.FindStringSubmatch(out); m != nil {
+			return "exact:" + m[1]
+		}
+		if strings.Contains(out, "\nlsp unavailable (") {
+			return "unavailable"
+		}
+		if strings.Contains(out[:min(len(out), 120)], " of '") {
+			return "by-name"
+		}
+	}
 	switch {
 	case strings.HasPrefix(out, tools.GraphMarkOutline) || strings.Contains(out, "\n"+tools.GraphMarkOutline):
 		return "outline"
