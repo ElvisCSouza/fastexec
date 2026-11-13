@@ -296,6 +296,51 @@ func parseIdentSearch(cmd string) (searchReq, bool) {
 	return searchReq{pattern: p, paths: f.paths, list: f.list, count: f.count}, true
 }
 
+// splitLeadingCd separa `cd <pasta> && <resto>` (também `cd /d <pasta> && ...`) em resto e pasta.
+func splitLeadingCd(cmd string) (rest, dir string, ok bool) {
+	s := strings.TrimSpace(cmd)
+	if !strings.HasPrefix(s, "cd ") {
+		return "", "", false
+	}
+	i := strings.Index(s, "&&")
+	if i < 0 {
+		return "", "", false
+	}
+	d := strings.TrimSpace(s[3:i])
+	d = strings.TrimSpace(strings.TrimPrefix(d, "/d "))
+	d = strings.Trim(d, "\"'")
+	r := strings.TrimSpace(s[i+2:])
+	if d == "" || r == "" || strings.ContainsAny(d, ";|&<>") {
+		return "", "", false
+	}
+	return r, d, true
+}
+
+// implementersHint: para um tipo, quem o implementa ou estende (exato, do servidor de linguagem) dentro da pasta
+// buscada. Acompanha a lista crua de um grep -l: é a pergunta que costuma vir logo depois dela. "" sem servidor,
+// sem resposta ou sem implementador.
+func implementersHint(root, symbol, sub string) string {
+	ex, err := lspCallers(root, symbol, 0, 1)
+	if err != nil || ex == "" {
+		return ""
+	}
+	var files []string
+	for _, l := range strings.Split(filterExactToSub(groupCallerSites(ex), sub), "\n") {
+		if strings.HasPrefix(l, "- ") && strings.Contains(l, "(implements)") {
+			path := strings.TrimPrefix(l, "- ")
+			if i := strings.IndexAny(path, " :"); i >= 0 {
+				path = path[:i]
+			}
+			files = append(files, path)
+		}
+	}
+	if len(files) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s: %d file(s) declare a type that implements or extends '%s' (exact, language server): %s",
+		GraphMarkSearch, len(files), graph.LastName(symbol), strings.Join(files, ", "))
+}
+
 // isHeadLimit: o segmento é só `head -N`, `head -n N` ou `head -nN` (sem arquivo, sem outra opção).
 func isHeadLimit(seg string) bool {
 	w := shellWords(seg)
@@ -523,6 +568,19 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	if t, err := transport.ResolveHost(args.Host); err != nil || !t.IsLocal {
 		return "", false, "" // o grafo indexa só repositórios locais
 	}
+	// `cd <pasta> && grep ...` é a forma que o modelo escreve quando não passa o cwd: a pasta vira o cwd da busca e
+	// o comando original continua sendo o que o rodapé manda repetir com --raw.
+	escapeLabel := label
+	if rest, dir, ok := splitLeadingCd(label); ok {
+		d := windowsPathForNativeRead(dir)
+		if !filepath.IsAbs(d) {
+			if args.Cwd == "" {
+				return "", false, ""
+			}
+			d = filepath.Join(args.Cwd, d)
+		}
+		label, args.Cwd = rest, d
+	}
 	req, symbol, fr, fileish := parseAnySearch(label)
 	if !symbol && !fileish {
 		script, _ := unwrapShell(args, true)
@@ -600,7 +658,7 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	}
 
 	if fileish {
-		return answerFileSearch(root, sub, where, fr.needle, withRawEscape(label), announce)
+		return answerFileSearch(root, sub, where, fr.needle, withRawEscape(escapeLabel), announce)
 	}
 	defs, err := graph.Definitions(root, req.pattern)
 	if err != nil {
@@ -614,7 +672,13 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 		// é um subconjunto (CS1: 2 arquivos contra 12 do grep) e, apresentada como resposta, custa uma volta extra
 		// para o modelo descobrir que faltou. A lista bruta é a resposta; o grafo contribui com onde o símbolo é
 		// declarado, que o grep não diz.
-		return "", false, notes(announce, defsHint(defs))
+		hint := defsHint(defs)
+		if anyTypeDef(defs) {
+			if imp := implementersHint(root, req.pattern, sub); imp != "" {
+				hint += "\n" + imp
+			}
+		}
+		return "", false, notes(announce, hint)
 	}
 	key := fmt.Sprintf("search|%s|%s", strings.ToLower(args.Cwd), strings.ToLower(label)) // sem identidade: ver graph_first.go
 	if graphRepeat(key) {
@@ -627,7 +691,7 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 		if ex, err := lspCallers(root, req.pattern, 0, 1); err == nil && ex != "" {
 			if body := filterExactToSub(groupCallerSites(ex), sub); body != "" {
 				head := fmt.Sprintf("%s: '%s' in %s — %s; exact references (language server)", GraphMarkSearch, req.pattern, where, defPhrase(defs))
-				footer := "comments and strings are not listed. For the raw search: " + withRawEscape(label)
+				footer := "comments and strings are not listed. For the raw search: " + withRawEscape(escapeLabel)
 				return capAnswerTo(head+"\n"+body, footer, graphExactMax), true, ""
 			}
 		}
@@ -641,7 +705,7 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	if len(counts) == 0 && anyTypeDef(defs) {
 		return "", false, notes(announce, zeroRefHint(defs))
 	}
-	return buildSymbolAnswer(root, where, req, defs, counts, withRawEscape(label), announce), true, ""
+	return buildSymbolAnswer(root, where, req, defs, counts, withRawEscape(escapeLabel), announce), true, ""
 }
 
 // overBudgetNote diz o que aconteceu quando a passada de frescor não coube no teto. Distinguir "ainda não existe" de
