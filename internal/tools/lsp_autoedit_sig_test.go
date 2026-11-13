@@ -23,6 +23,15 @@ func TestRenameWithDocCommentChange(t *testing.T) {
 	if got != want {
 		t.Fatalf("merge = %q, want %q", got, want)
 	}
+	// o comentário perde uma linha: as declarações de baixo descem uma linha e o rename continua valendo
+	short := strings.Replace(neu, "    /// The suffix was removed.\n    /// </remarks>\n", "    /// </remarks>\n", 1)
+	d3 := declDeltaOf("A.cs", old, short)
+	if d3.kind != declRenamed || !d3.extra {
+		t.Fatalf("a shifted file must still be a rename, got %+v", d3)
+	}
+	if got, ok := mergeResidual(post, old, short, d3.name, d3.newName, d3.line); !ok || !strings.Contains(got, "Write(f);") || strings.Contains(got, "suffix") {
+		t.Fatalf("shifted merge failed: ok=%v %q", ok, got)
+	}
 	// duas regiões mudadas longe uma da outra: sem prova de trecho único, não é rename
 	far := strings.Replace(neu, "public static void Enable() { }", "public static void Enable() { int x; }", 1)
 	if d2 := declDeltaOf("A.cs", old, far); d2.kind == declRenamed && d2.extra {

@@ -644,11 +644,6 @@ func declDeltaOf(rel, oldText, newText string) declDelta {
 	return removedDelta(rel, oldText, oldDecls, newDecls)
 }
 
-type declKey struct {
-	line, end int
-	kind      string
-}
-
 // renameDelta reconhece a edição que trocou o nome de UMA declaração e nada mais: as outras continuam no mesmo
 // lugar, com o mesmo tipo e a mesma assinatura, e o texto inteiro bate quando se apaga a diferença entre os
 // dois nomes.
@@ -656,20 +651,16 @@ func renameDelta(rel, oldText, newText string, oldDecls, newDecls []codescan.Dec
 	if len(oldDecls) != len(newDecls) {
 		return declDelta{}, false
 	}
-	byKey := make(map[declKey]int, len(newDecls))
-	for i, d := range newDecls {
-		byKey[declKey{d.Line, d.EndLine, d.Kind}] = i
-	}
-	used := make([]bool, len(newDecls))
+	// As declarações casam pela ordem de aparição: a edição não mudou a quantidade delas, e um comentário que ganha
+	// ou perde uma linha desloca todas as de baixo (casar por linha derrubava o rename nesse caso). Quem garante o
+	// resto é a prova do texto inteiro (maskProof) ou do trecho único (residualHunk), logo abaixo.
 	var oldOne, newOne codescan.Decl
 	diff := 0
-	for _, d := range oldDecls {
-		i, ok := byKey[declKey{d.Line, d.EndLine, d.Kind}]
-		if !ok || used[i] {
+	for i, d := range oldDecls {
+		nd := newDecls[i]
+		if d.Kind != nd.Kind {
 			return declDelta{}, false
 		}
-		used[i] = true
-		nd := newDecls[i]
 		if d.Name == nd.Name && d.Sig == nd.Sig {
 			continue
 		}
