@@ -241,6 +241,11 @@ A folder is not a file: the call is refused saying which tool to use instead (`f
 search line through `exec`) — `pattern` looks inside a single file only. Before, the raw OS error came back, and on
 Windows that is the localized `Função incorreta`, which tells the model nothing.
 
+**Short slices come numbered.** A `start_line`/`end_line` slice, or `ranges` spanning at most 200 lines, returns each line as
+`<line>\t<text>`. The model then quotes the line it was shown instead of counting from the top of the slice (an
+off-by-one in an answer such as `file.cs:305` is the failure this removes). Longer slices, `offset`/`limit` reads and
+whole files come back unnumbered, exactly as before.
+
 **A path that does not exist suggests candidates.** The error keeps its own message and gains up to five existing
 paths, one per line, after `not found; did you mean:`. Candidates come from two places: the file's folder and its
 ancestors up to the repository root (or three levels up when there is no repository), matched by same base name
@@ -429,6 +434,14 @@ Every `edit_file`, `write_file` (new files too) and `exec` that writes a `.go`/`
 - Statuses: `✓ compila` (types verified) or `✓ sintaxe · tipos pendentes (servidor carregando)`. In the second case
   the result arrives **once** on the next FastExec reply as `⏱ diagnóstico tardio Foo.cs: ...`, if the file did not
   change meanwhile.
+- **Tests that cover the file.** The first edit of a code file that is not itself a test appends one line, once per
+  file: `tests for this file: test/Foo.Tests/FooTests.cs — run only them: dotnet test --filter "FullyQualifiedName~FooTests" (not the whole suite)`.
+  A test is found by file name (`LengthValidator.cs` → `LengthValidatorTests.cs`); when no test carries the file's name,
+  FastExec follows who uses the type — through the graph index when there is one, otherwise a bounded text scan — and
+  points at the tests named after those files (`LevelOutputFormat.cs` is covered by `MessageTemplateTextFormatterTests.cs`
+  because `MessageTemplateTextFormatter` calls it). A test file that names the type itself wins over those. It only
+  names files by convention and never claims they cover the behaviour or pass; silent when nothing is found. Without
+  it, a model tends to run the whole suite or write its own harness.
 - Up to 3 errors per file, 2 other files; the code line is trimmed to 80 characters. Dependents: when a signature was
   changed, removed or renamed, new errors in up to 5 dependent files appear as `(efeito da sua edição)`.
 - The language server is pre-warmed in the background on the first read/outline/graph/edit in a repo.
@@ -474,6 +487,11 @@ dependency and build folders). Go, C/C++, C#, TypeScript/JavaScript, Python, she
 and Razor (`.razor`/`.cshtml`). In a stylesheet a declaration is a class or id selector (one per name, so `.a, .b`
 gives two) and each `--var`; in HTML/Razor it is an `id`, and in JSX/TSX a component or a custom hook. Use it before
 reading a file to jump to the right lines.
+
+A `symbol` that is declared nowhere answers `(no declaration matching "X")` and, when the repository is already
+indexed, up to five declarations whose name contains the request or shares a CamelCase word with it
+(`LoggerLevelOverrideMap` → `LevelOverrideMap`), best first, as `path:L<line>: <signature>`. The index is only read,
+never built or refreshed for a question that already failed, and the line is absent when nothing resembles the name.
 
 Markdown is accepted too: the output is its sections, one per heading, named by the heading path (`README.md > Install >
 Linux`) and rendered as `L<start>-L<end>: <heading>`. When the file has a reference that no longer lands — a link to a
