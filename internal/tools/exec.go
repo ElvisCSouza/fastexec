@@ -209,6 +209,9 @@ func handleExec(args ExecArgs) (string, error) {
 		}
 	}
 
+	// D9: o que o exec gravar em arquivo .go/.cs é validado depois (exec_validate.go).
+	watch := execWatchBegin(args.Host, label, args.Cwd)
+
 	var (
 		res *transport.ExecResult
 		err error
@@ -327,6 +330,15 @@ func handleExec(args ExecArgs) (string, error) {
 		}
 		if !outputFilterOff() { // saída íntegra pedida: nada de trocar o texto por um stub de repetição
 			out = dedupExecOutput(args, label, out)
+		}
+	}
+	if !res.TimedOut {
+		if v := watch.Finish(); v != "" {
+			out = strings.TrimRight(out, "\r\n")
+			if out != "" {
+				out += "\n"
+			}
+			out += v
 		}
 	}
 	// Rodapé do tempo (elapsed.go) por ÚLTIMO: depois do '[exit N]', das notas de remediação e do dedup — se ele

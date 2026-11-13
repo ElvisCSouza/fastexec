@@ -353,8 +353,9 @@ of the previous section is not repeated for names the server already answered fo
 ```
 [edit_file] W:\src\a.go: +1 -1 lines, 1 hunk(s).
 L3: func ParseRecord() {}
-[lsp] ParseLine -> ParseRecord: 8 uses in 5 files updated (exact): a.go:3, b.go:40, +3 more; undo: git apply -R C:\Users\me\AppData\Local\fastexec\undo\20261112-101520.118.patch
+DONE ParseLine -> ParseRecord: all 8 uses in 5 files updated by the compiler's rename (exact; same-named members of other types untouched): a.go:3, b.go:40, +3 more. Nothing else to change: do not grep or re-check. undo: git apply -R C:\Users\me\AppData\Local\fastexec\undo\20261112-101520.118.patch
 [lsp] files changed: callers.go, main.go; re-read before editing them
+✓ compila
 ```
 
 - **Rename.** Only the identifier changed: `prepareRename` + `rename` are asked, and the resulting `WorkspaceEdit`
@@ -369,25 +370,46 @@ L3: func ParseRecord() {}
 - The reverse patch is always written: `undo: git apply -R <patch>` restores every file the server touched, and the
   edited file with it. The files that changed are named, because the model's copy of them is stale.
 - **Signature.** The header changed: if the server offers a ready-made refactor it is applied (same patch/undo
-  line); otherwise the exact callers come back as `signature changed, 3 caller(s) need adjustment (exact): a.go:12,
-  b.go:40` — the callers are **not** rewritten by guessing.
+  line); otherwise the exact callers come back as `Save: signature changed; exactly 3 caller(s) need the new arguments
+  (complete list, no grep needed): a.go:12, b.go:40` — the callers are **not** rewritten by guessing (FastExec cannot
+  choose the value of a new parameter). Overloads are paired by order, so a same-named overload is not blamed.
 - **Imports.** A new unresolved-symbol error is offered to the server's quickfix, and only import-shaped actions are
   accepted: `[lsp] added import "fmt"` (or `removed unused import`, `organized the imports`) — and only when the
   server classifies it that way. Arbitrary quickfixes are never applied.
-- **Diagnostics.** After the write, the errors are compared with the ones published before it: only the **new** ones
-  are reported, `[lsp] diagnostics: 2 errors (a.go:12: undefined: x; a.go:20: ...)` (up to 3, then `+N more`). An
-  error that was already there, with the same message, stays silent. The whole check is capped at ~1.5 s: past that
-  it is dropped, never waited for.
+- **Diagnostics.** See *Validation of the written code* below: errors only, never warnings/info/hints.
 - **Formatting.** Only when the file was already formatted and the server's edits fall inside the range that was
   edited: `[lsp] formatted the edited range (2 edit(s))`. A whole-file reformat is not a side effect of a two-line
   edit.
 - **Removal.** A declaration that disappeared and is still used comes back as `removed but still used 3 time(s)
   (exact): a.go:12, b.go:40`, which is what `exec_delete_impact` guessed before when a server is around.
 
-An edit with no semantic effect — a body, a comment, whitespace — always answers byte for byte the same as before
-this existed. So does an edit where the server has nothing to say, or where the server is missing, cold and not
-needed, still loading, or slower than its budget: every step above fails into silence or into one warning line, and
-**no step can ever lose the edit**, which is already on disk by then. `FASTEXEC_LSP=off` turns all of it off.
+No step can ever lose the edit, which is already on disk by then (it is never reverted; the undo patch stays).
+`FASTEXEC_LSP=off` turns all of it off, validation included.
+
+#### Validation of the written code
+
+Every `edit_file`, `write_file` (new files too) and `exec` that writes a `.go`/`.cs` file ends with a footer of
+**errors only**, never silence:
+
+```
+✗ Foo.cs:30 CS1002 ; expected │ var x = 1
+✗ Bar.cs:44 CS7036 no argument given for 'ct' (effect of your edit)
+```
+
+- **Layer 1, exact syntax, in ms, no project needed:** Go by `go/parser`; C# by `fx-roslyn`, a helper built once from
+  the SDK's Roslyn and kept resident. With a syntax error the semantic layer stays quiet (it would be cascade noise).
+- **Layer 2, semantics, by the language server:** only a diagnostic of the right document version is accepted
+  (stale publishes are discarded); gopls runs in pull mode. A new file is validated whole, every error counts as
+  new; a file outside any project gets syntax only.
+- Statuses: `✓ compila` (types verified) or `✓ sintaxe · tipos pendentes (servidor carregando)`. In the second case
+  the result arrives **once** on the next FastExec reply as `⏱ diagnóstico tardio Foo.cs: ...`, if the file did not
+  change meanwhile.
+- Up to 3 errors per file, 2 other files; the code line is trimmed to 80 characters. Dependents: when a signature was
+  changed, removed or renamed, new errors in up to 5 dependent files appear as `(efeito da sua edição)`.
+- The language server is pre-warmed in the background on the first read/outline/graph/edit in a repo.
+- **exec:** the files a command line mentions are compared by mtime/size before and after; only the ones it changed
+  are validated as new files. Code written by a program the line merely runs (a generator) is not mentioned and is not
+  seen.
 
 ## write_file
 
