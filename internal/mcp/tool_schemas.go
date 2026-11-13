@@ -14,7 +14,7 @@ package mcp
 var serverTools = []ToolSchema{
 	{
 		Name:        "exec",
-		Description: "Run a command on a host and return its output ({exec_default}). 'command' is a shell line (cmd.exe on Windows 'local'); 'argv' runs with no shell, nothing interpreted. Use 'job' for anything over {job_over}.",
+		Description: "Run a command on a host and return its output ({exec_default}). 'command' is a shell line (cmd.exe on Windows 'local'); 'argv' runs with no shell. Use 'job' for anything over {job_over}.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -64,7 +64,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "code_graph",
-		Description: "Code graph of a local repo, refreshed on each call: 'callers' (where a symbol is used), 'def' (where declared), 'impact' (files that use what a file or symbol defines; check before refactoring), 'index' (rebuild). Matched by name, no type resolution.",
+		Description: "Code graph of a local repo (auto-refreshed): 'callers' (where a symbol is used), 'def' (where declared), 'impact' (files that use what a file or symbol defines; check before refactoring), 'index' (rebuild). Exact (LSP) for C#/Go/TS, else by name; interface 'callers' lists implementers.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{
@@ -111,7 +111,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "job",
-		Description: "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over {job_over}). 'wait' blocks up to {await_s} and returns only the log lines new since the last wait. For a command that ends, start with await=true: it returns the output if it finishes within {await_s}.",
+		Description: "Background jobs that outlive the call (dev servers, watchers, anything over {job_over}). 'wait' blocks up to {await_s} and returns only the log lines new since the last wait. For a command that ends, start with await=true: it returns the output if it finishes within {await_s}.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{

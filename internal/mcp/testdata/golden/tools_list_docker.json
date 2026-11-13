@@ -1,10 +1,10 @@
 {
-  "wire_bytes": 6851,
+  "wire_bytes": 6857,
   "result": {
     "tools": [
       {
         "name": "exec",
-        "description": "Run a command on a host and return its output (default limit 45 s). 'command' is a shell line (cmd.exe on Windows 'local'); 'argv' runs with no shell, nothing interpreted. Use 'job' for anything over ~30 s.",
+        "description": "Run a command on a host and return its output (default limit 45 s). 'command' is a shell line (cmd.exe on Windows 'local'); 'argv' runs with no shell. Use 'job' for anything over ~30 s.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -122,7 +122,7 @@
       },
       {
         "name": "code_graph",
-        "description": "Code graph of a local repo, refreshed on each call: 'callers' (where a symbol is used), 'def' (where declared), 'impact' (files that use what a file or symbol defines; check before refactoring), 'index' (rebuild). Matched by name, no type resolution.",
+        "description": "Code graph of a local repo (auto-refreshed): 'callers' (where a symbol is used), 'def' (where declared), 'impact' (files that use what a file or symbol defines; check before refactoring), 'index' (rebuild). Exact (LSP) for C#/Go/TS, else by name; interface 'callers' lists implementers.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -227,7 +227,7 @@
       },
       {
         "name": "job",
-        "description": "Background jobs that outlive the call (dev servers, watchers, tunnels, anything over ~30 s). 'wait' blocks up to 40 s and returns only the log lines new since the last wait. For a command that ends, start with await=true: it returns the output if it finishes within 40 s.",
+        "description": "Background jobs that outlive the call (dev servers, watchers, anything over ~30 s). 'wait' blocks up to 40 s and returns only the log lines new since the last wait. For a command that ends, start with await=true: it returns the output if it finishes within 40 s.",
         "inputSchema": {
           "type": "object",
           "properties": {

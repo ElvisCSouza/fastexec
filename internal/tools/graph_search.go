@@ -259,6 +259,11 @@ func parseGrepTokens(rest []string) (searchFlags, bool) {
 // saída que o grafo não dá.
 func parseIdentSearch(cmd string) (searchReq, bool) {
 	segs := shellSegments(cmd)
+	// `grep -rn X dir | head -100` é a forma que os modelos mais escrevem; o `head` só limita linhas e a resposta do
+	// grafo já é menor que o limite, então ele não muda a pergunta.
+	if len(segs) == 2 && isHeadLimit(segs[1]) {
+		segs = segs[:1]
+	}
 	if len(segs) != 1 {
 		return searchReq{}, false
 	}
@@ -289,6 +294,31 @@ func parseIdentSearch(cmd string) (searchReq, bool) {
 		return searchReq{}, false
 	}
 	return searchReq{pattern: p, paths: f.paths, list: f.list, count: f.count}, true
+}
+
+// isHeadLimit: o segmento é só `head -N`, `head -n N` ou `head -nN` (sem arquivo, sem outra opção).
+func isHeadLimit(seg string) bool {
+	w := shellWords(seg)
+	if len(w) < 2 || len(w) > 3 || baseProg(w[0]) != "head" {
+		return false
+	}
+	digits := func(s string) bool {
+		if s == "" {
+			return false
+		}
+		for _, r := range s {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	switch {
+	case len(w) == 2:
+		return strings.HasPrefix(w[1], "-") && (digits(w[1][1:]) || (strings.HasPrefix(w[1], "-n") && digits(w[1][2:])))
+	default:
+		return w[1] == "-n" && digits(w[2])
+	}
 }
 
 // parseFilterSearch: um grep/findstr de identificador usado como filtro de uma listagem (a recursividade vem da
