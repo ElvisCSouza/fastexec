@@ -362,7 +362,7 @@ const groupCallersOver = 20
 func writeGroupedSites(b *strings.Builder, sites []graph.Site, infos []graph.RefInfo, kept []int) {
 	groupKey := func(i int) string {
 		k := infos[i].Label
-		if r := infos[i].Relation; r != "" && r != "reference" {
+		if r := infos[i].Relation; r != "" && r != "reference" && r != "references" {
 			k += " (" + r + ")"
 		}
 		return k
