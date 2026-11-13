@@ -661,17 +661,22 @@ func sigDelta(rel, oldText string, oldDecls, newDecls []codescan.Decl) (declDelt
 	if len(oldDecls) != len(newDecls) {
 		return declDelta{}, false
 	}
+	// Homônimos no mesmo arquivo (sobrecargas, métodos de tipos diferentes) casam pela ordem de aparição: a edição
+	// não mudou a quantidade de declarações, então a n-ésima de um nome é a n-ésima do mesmo nome.
+	occKey := func(name string, seen map[string]int) string {
+		seen[name]++
+		return fmt.Sprintf("%s#%d", name, seen[name])
+	}
 	byName := make(map[string]codescan.Decl, len(newDecls))
+	seenNew := map[string]int{}
 	for _, d := range newDecls {
-		if _, dup := byName[d.Name]; dup {
-			return declDelta{}, false // homônimos (métodos de tipos diferentes) tornam o casamento ambíguo
-		}
-		byName[d.Name] = d
+		byName[occKey(d.Name, seenNew)] = d
 	}
 	var oldOne, newOne codescan.Decl
 	diff := 0
+	seenOld := map[string]int{}
 	for _, d := range oldDecls {
-		nd, ok := byName[d.Name]
+		nd, ok := byName[occKey(d.Name, seenOld)]
 		if !ok || d.Kind != nd.Kind {
 			return declDelta{}, false
 		}
