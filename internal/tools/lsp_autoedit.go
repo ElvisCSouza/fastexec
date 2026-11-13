@@ -84,6 +84,9 @@ type declDelta struct {
 	line    int
 	endLine int
 	col     int // UTF-16 1-based, o que o LSP usa
+	// extra: além do nome, a edição mexeu num trecho contíguo junto da declaração (o comentário dela, por exemplo).
+	// O rename automático aplica o texto do servidor e depois repõe esse trecho (mergeResidual).
+	extra bool
 }
 
 // autoEdit é o estado de uma edição assistida. nil é um estado válido e o normal: sem servidor, sem edição
@@ -320,6 +323,9 @@ func (a *autoEdit) rename() {
 	// É isso que protege o homônimo: se o servidor renomeou o símbolo errado, o texto dele não bate e nada é
 	// gravado.
 	post, ok, err := we.ResultFor(a.abs, a.oldText)
+	if ok && err == nil && a.delta.extra {
+		post, ok = mergeResidual(post, a.oldText, a.newText, a.delta.name, a.delta.newName, a.delta.line)
+	}
 	if err != nil || !ok || !maskProof(a.newText, post, a.delta.name, a.delta.newName) {
 		a.note("%s -> %s not applied: the server's edit does not match the change asked; by name", a.delta.name, a.delta.newName)
 		return
@@ -678,15 +684,21 @@ func renameDelta(rel, oldText, newText string, oldDecls, newDecls []codescan.Dec
 	}
 	// A prova sobre o arquivo inteiro é o que separa "renomeou a declaração" de "renomeou a declaração e mais
 	// um monte de coisa" — nesse segundo caso o rename automático não é o que foi pedido.
+	extra := false
 	if !maskProof(oldText, newText, oldOne.Name, newOne.Name) {
-		return declDelta{}, false
+		// Mais que o nome mudou. Só segue quando tudo o que sobra é UM trecho contíguo que contém a declaração
+		// (nome + comentário dela na mesma edição); o resto do arquivo continua igual.
+		if _, _, _, _, ok := residualHunk(oldText, newText, oldOne.Line); !ok {
+			return declDelta{}, false
+		}
+		extra = true
 	}
 	col := graph.NameCol(declLineAt(oldText, oldOne.Line), oldOne.Name)
 	if col == 0 {
 		return declDelta{}, false
 	}
 	return declDelta{kind: declRenamed, name: oldOne.Name, newName: newOne.Name, sig: oldOne.Sig, newSig: newOne.Sig,
-		line: oldOne.Line, endLine: oldOne.EndLine, col: col}, true
+		line: oldOne.Line, endLine: oldOne.EndLine, col: col, extra: extra}, true
 }
 
 // sigDelta reconhece a assinatura trocada com o nome mantido: mesmos nomes, mesmos tipos de declaração, uma só
@@ -760,6 +772,45 @@ func removedDelta(rel, oldText string, oldDecls, newDecls []codescan.Decl) declD
 		return declDelta{}
 	}
 	return declDelta{kind: declRemoved, name: gone.Name, sig: gone.Sig, line: gone.Line, endLine: gone.EndLine, col: col}
+}
+
+// residualHunk acha o único trecho (em linhas) em que oldText e newText diferem, tirando o prefixo e o sufixo
+// iguais. ok só quando a linha da declaração (1-based, do texto velho) está dentro dele.
+func residualHunk(oldText, newText string, declLine int) (oldLines, newLines []string, p, s int, ok bool) {
+	oldLines, newLines = strings.SplitAfter(oldText, "\n"), strings.SplitAfter(newText, "\n")
+	for p < len(oldLines) && p < len(newLines) && oldLines[p] == newLines[p] {
+		p++
+	}
+	for s < len(oldLines)-p && s < len(newLines)-p && oldLines[len(oldLines)-1-s] == newLines[len(newLines)-1-s] {
+		s++
+	}
+	if declLine < p+1 || declLine > len(oldLines)-s {
+		return nil, nil, 0, 0, false
+	}
+	return oldLines, newLines, p, s, true
+}
+
+// mergeResidual devolve o texto final de um rename com mudança extra: o texto do servidor (o velho já renomeado,
+// aqui e nos outros arquivos) com o trecho que o modelo reescreveu no lugar. O trecho velho, com o nome trocado,
+// precisa aparecer UMA vez no texto do servidor; se não, não há prova e nada é aplicado.
+func mergeResidual(post, oldText, newText, name, newName string, declLine int) (string, bool) {
+	oldLines, newLines, p, s, ok := residualHunk(oldText, newText, declLine)
+	if !ok {
+		return "", false
+	}
+	oldHunk := strings.Join(oldLines[p:len(oldLines)-s], "")
+	newHunk := strings.Join(newLines[p:len(newLines)-s], "")
+	masked := renameWord(oldHunk, name, newName)
+	if masked == "" || strings.Count(post, masked) != 1 {
+		return "", false
+	}
+	return strings.Replace(post, masked, newHunk, 1), true
+}
+
+// renameWord troca as ocorrências inteiras de name por newName.
+func renameWord(s, name, newName string) string {
+	parts := strings.Split(maskWord(s, name), maskMarker)
+	return strings.Join(parts, newName)
 }
 
 // maskProof diz se dois textos são o mesmo quando se esquece qual dos dois nomes aparece em cada lugar. É a
