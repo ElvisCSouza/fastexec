@@ -119,6 +119,21 @@ func TestValidateFixAfterReportedErrorSaysCompiles(t *testing.T) {
 	}
 }
 
+// A mensagem longa perde o meio, não o fim: o nome do parâmetro que falta fica na linha.
+func TestShortMsgKeepsTheTail(t *testing.T) {
+	msg := "Não há nenhum argumento fornecido que corresponda ao parâmetro formal necessário 'throwOnInvalid' de 'LogEventProperty.IsValidName(string?, bool)'"
+	got := shortMsg(msg)
+	if !strings.Contains(got, "throwOnInvalid") || !strings.Contains(got, "IsValidName") {
+		t.Fatalf("the tail must survive, got %q", got)
+	}
+	if r := []rune(got); len(r) > shortMsgMax {
+		t.Fatalf("too long: %d runes", len(r))
+	}
+	if short := "CS1002 ; expected"; shortMsg(short) != short {
+		t.Fatalf("a short message must not change")
+	}
+}
+
 // FASTEXEC_LSP=off desliga tudo: nenhuma linha nova.
 func TestValidateOffMeansNothing(t *testing.T) {
 	f := newLSPFixture(t, toolFakeCtl{})

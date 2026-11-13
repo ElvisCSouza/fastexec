@@ -866,13 +866,21 @@ func diagLine(rel string, ds []lsp.Diagnostic) string {
 	return fmt.Sprintf("diagnostics: %d %s (%s)", len(ds), word, strings.Join(parts, "; "))
 }
 
+const (
+	shortMsgMax  = 130
+	shortMsgHead = 50
+	shortMsgTail = 70
+)
+
 func shortMsg(msg string) string {
 	if i := strings.IndexByte(msg, '\n'); i >= 0 {
 		msg = msg[:i]
 	}
 	msg = strings.TrimSpace(msg)
-	if len(msg) > 70 {
-		msg = msg[:67] + "..."
+	// O que a LLM precisa para consertar costuma estar no FIM da mensagem ("... parâmetro 'throwOnInvalid' de
+	// 'IsValidName(string, bool)'"): cortar o rabo escondia o nome do parâmetro. Mensagem longa mantém começo e fim.
+	if r := []rune(msg); len(r) > shortMsgMax {
+		msg = string(r[:shortMsgHead]) + " … " + string(r[len(r)-shortMsgTail:])
 	}
 	return msg
 }
