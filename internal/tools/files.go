@@ -462,6 +462,14 @@ func selectFromText(filePath, data string, args ReadFileArgs) (string, error) {
 		if start > end {
 			return "", nil
 		}
+		// Recorte por linhas vem numerado (como pattern/ranges): sem número a LLM conta as linhas a partir de
+		// start_line e erra por uma (CS5 v1 r3 respondeu :305 para :304). Recorte longo segue cru: o número custa.
+		if sl := splitLines(data); end-start+1 <= numberedSliceMax && start <= len(sl) {
+			if end > len(sl) { // o Split acima conta uma linha vazia depois do último \n; splitLines não
+				end = len(sl)
+			}
+			return renderRanges(sl, []lineRange{{start, end}}, true), nil
+		}
 		return strings.Join(lines[start-1:end], "\n"), nil
 	}
 	if args.Offset > 0 || args.Limit > 0 {

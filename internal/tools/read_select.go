@@ -140,6 +140,9 @@ func digestMatches(lines []string, re *regexp.Regexp) (string, bool) {
 	return b.String(), true
 }
 
+// numberedSliceMax: até quantas linhas um recorte start_line/end_line vem com o número de cada linha.
+const numberedSliceMax = 200
+
 // selectLines applies ranges/pattern/numbered. handled=false means the
 // caller should fall back to its default behaviour.
 func selectLines(data string, args ReadFileArgs) (string, bool, error) {

@@ -97,7 +97,7 @@ func TestReadFileLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleReadFile falhou: %v", err)
 	}
-	expected := "linha 2\nlinha 3\nlinha 4"
+	expected := "2\tlinha 2\n3\tlinha 3\n4\tlinha 4\n" // recorte curto vem numerado: a LLM não conta linhas
 	if out != expected {
 		t.Fatalf("esperava %q, recebeu %q", expected, out)
 	}

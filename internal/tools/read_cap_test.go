@@ -164,7 +164,7 @@ func TestSelectFromTextHonoursEverySelector(t *testing.T) {
 	if out, _ := selectFromText("f.txt", data, ReadFileArgs{Offset: 5, Limit: 4}); out != data[5:9] {
 		t.Errorf("offset/limit ignored: %q", out)
 	}
-	if out, _ := selectFromText("f.txt", data, ReadFileArgs{StartLine: 10, EndLine: 11}); out != "line 10 of the file\nline 11 of the file" {
+	if out, _ := selectFromText("f.txt", data, ReadFileArgs{StartLine: 10, EndLine: 11}); out != "10\tline 10 of the file\n11\tline 11 of the file\n" {
 		t.Errorf("start/end ignored: %q", out)
 	}
 }
