@@ -822,6 +822,11 @@ func (a *autoEdit) Finish() string {
 	if line := a.statusLine(s1, sem); line != "" {
 		a.extra = append(a.extra, line)
 	}
+	if !s1.blocked && sem != semErrors { // com erro na tela o que importa é o erro, não onde rodar o teste
+		if line := a.relatedTestsLine(); line != "" {
+			a.extra = append(a.extra, line)
+		}
+	}
 	if sem == semPending {
 		defer a.handOff(text) // a resposta sai agora; o diagnóstico desta versão chega na próxima chamada
 	}
