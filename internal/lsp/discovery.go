@@ -217,8 +217,8 @@ var Languages = []Language{
 			// guessed: see TestCSharpServerRenameIsNotPerSymbol.
 			RenameByRefs: true,
 			VersionArgs:  []string{"--version"},
-			Install:      "dotnet tool install --global csharp-ls",
-			Note: "needs a .NET SDK (FastExec never installs one) and a restored project (dotnet restore); " +
+			Install:      "dotnet tool install --global csharp-ls --version 0.28.0",
+			Note: "needs csharp-ls 0.28 (runs on .NET 10) and a .NET SDK (FastExec never installs one) and a restored project (dotnet restore); " +
 				"the first query in a big solution is answered from the name graph while it loads",
 		}},
 	},

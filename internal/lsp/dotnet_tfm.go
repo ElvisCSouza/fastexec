@@ -17,6 +17,23 @@ import (
 
 var multiTFMRe = regexp.MustCompile(`(?is)<TargetFrameworks>\s*([^<]+?)\s*</TargetFrameworks>`)
 
+// csharpTargetFramework decide o TargetFramework do ambiente do servidor. FASTEXEC_CSHARP_TFM governa: "off" não
+// define nada (servidores novos, que já cobrem vários destinos), um valor como "net8.0" é usado como está, e
+// vazio ou "auto" escolhe pelo repositório. Um TargetFramework já definido no ambiente do FastExec é respeitado.
+func csharpTargetFramework(root, sdkRoot string) string {
+	if _, set := os.LookupEnv("TargetFramework"); set {
+		return ""
+	}
+	switch mode := strings.TrimSpace(os.Getenv("FASTEXEC_CSHARP_TFM")); strings.ToLower(mode) {
+	case "off":
+		return ""
+	case "", "auto":
+		return multiTargetFramework(root, resolvedSDKMajor(root, sdkRoot))
+	default:
+		return mode
+	}
+}
+
 // multiTargetFramework escolhe o destino único para os projetos de vários destinos sob root, ou "" quando não há
 // nenhum. sdkMajor é o SDK que vai avaliar o projeto: um destino acima dele não tem pacote de referência.
 func multiTargetFramework(root string, sdkMajor int) string {

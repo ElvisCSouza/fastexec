@@ -1,4 +1,4 @@
-﻿# Bench.ps1 - nucleo do benchmark "Claude nativo vs Claude com FastExec".
+# Bench.ps1 - nucleo do benchmark "Claude nativo vs Claude com FastExec".
 # Uma funcao (Invoke-Arm) executa UM braco de UMA tarefa e devolve todas as dimensoes:
 #   Economia (foco) : in_tokens, out_tokens, tokens_total, first_turn_in (imposto fixo por turno), result_kb (o que as
 #                     ferramentas devolveram ao modelo), turns, tool_calls, cost
@@ -23,7 +23,7 @@ function Start-BenchDaemon($Cfg, [string]$Fx, [string]$MetricsFile) {
   $data = Join-Path $Cfg.work_dir 'fx-data'; New-Item -ItemType Directory -Force $data | Out-Null
   $env:FASTEXEC_DAEMON_ADDR = $Cfg.daemon_addr; $env:FASTEXEC_DATA_DIR = $data; $env:FASTEXEC_HOME = (Join-Path $Cfg.work_dir 'fx-home'); Remove-Item Env:FASTEXEC_CONFIG -ErrorAction SilentlyContinue
   # O LSP (Roslyn/csharp-ls, gopls) vive no daemon: sem estes dois o bench nunca exerce o modo exato (ciclo6: 0 respostas exatas em C#).
-  if ($Cfg.lsp_path) { $env:FASTEXEC_LSP_PATH = $Cfg.lsp_path }; if ($Cfg.dotnet -and $Cfg.dotnet.root) { $env:FASTEXEC_DOTNET_SDK = $Cfg.dotnet.root }
+  if ($env:BENCH_LSP_PATH) { $env:FASTEXEC_LSP_PATH = $env:BENCH_LSP_PATH } elseif ($Cfg.lsp_path) { $env:FASTEXEC_LSP_PATH = $Cfg.lsp_path }; if ($Cfg.dotnet -and $Cfg.dotnet.root) { $env:FASTEXEC_DOTNET_SDK = $Cfg.dotnet.root }
   try { $p = Start-Process -FilePath (Get-RunJobPath) -ArgumentList @('-m', $MetricsFile, '--', $Fx, 'daemon', 'run') -PassThru -WindowStyle Hidden }
   finally { Remove-Item Env:FASTEXEC_DAEMON_ADDR, Env:FASTEXEC_DATA_DIR, Env:FASTEXEC_HOME, Env:FASTEXEC_LSP_PATH, Env:FASTEXEC_DOTNET_SDK -ErrorAction SilentlyContinue }
   for ($i = 0; $i -lt 60 -and -not (Test-TcpOpen $Cfg.daemon_addr); $i++) { Start-Sleep -Milliseconds 100 }
