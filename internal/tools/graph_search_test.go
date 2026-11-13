@@ -191,19 +191,18 @@ func TestGraphSearchListAndCount(t *testing.T) {
 		"a_test.go": "package main\n\nfunc TestCalc(t *testing.T) {\n\tpkg.CalcTotal(1)\n}\n",
 	})
 
-	out, handled, _ := tryGraphSearch(ExecArgs{Host: "local", Command: "grep -rln CalcTotal .", Cwd: repo, Caller: "test#list"}, "grep -rln CalcTotal .", false)
-	if !handled {
-		t.Fatal("-l must be answered by the graph")
+	// -l pede os arquivos que CONTÊM o texto: o índice só conhece identificadores, então a lista dele seria um
+	// subconjunto apresentado como resposta (CS1: 2 arquivos contra 12). O grep bruto responde; o grafo só
+	// acrescenta onde o símbolo é declarado.
+	out, handled, note := tryGraphSearch(ExecArgs{Host: "local", Command: "grep -rln CalcTotal .", Cwd: repo, Caller: "test#list"}, "grep -rln CalcTotal .", false)
+	if handled || out != "" {
+		t.Fatalf("-l must NOT be replaced by the graph list (it would be a subset of the grep):\n%s", out)
 	}
-	if !strings.Contains(out, "pkg/a.go") || !strings.Contains(out, "main.go") {
-		t.Errorf("-l must list the files:\n%s", out)
+	if !strings.Contains(note, "declared at pkg/a.go") {
+		t.Errorf("-l must carry where the symbol is declared:\n%s", note)
 	}
-	if strings.Contains(out, "callers:") {
-		t.Errorf("-l must not carry the caller block:\n%s", out)
-	}
-	// não-testes primeiro
-	if strings.Index(out, "pkg/a.go") > strings.Index(out, "a_test.go") {
-		t.Errorf("-l must list non-test files first:\n%s", out)
+	if strings.Contains(note, "callers:") {
+		t.Errorf("-l must not carry the caller block:\n%s", note)
 	}
 
 	out, handled, _ = tryGraphSearch(ExecArgs{Host: "local", Command: "grep -rc CalcTotal .", Cwd: repo, Caller: "test#count"}, "grep -rc CalcTotal .", false)
@@ -508,16 +507,18 @@ func TestGraphSearchCaminhoComCoringa(t *testing.T) {
 		"main.go":    "package main\n\nfunc main() {\n\tpkg.CalcTotal(3)\n}\n",
 		"outra/d.go": "package outra\n\nfunc D() {\n\tpkg.CalcTotal(1)\n}\n",
 	})
-	out, handled, _ := tryGraphSearch(ExecArgs{Host: "local", Command: `findstr /s /m /c:"CalcTotal" pkg\*.go`, Cwd: repo, Caller: "test#glob1"}, `findstr /s /m /c:"CalcTotal" pkg\*.go`, false)
-	if !handled {
-		t.Fatalf("o findstr com coringa tinha de ser respondido pelo grafo:\n%s", out)
+	// /m é a listagem de arquivos (como grep -l): o findstr real responde, a nota só diz onde está a declaração,
+	// restrita à pasta e à extensão do coringa.
+	out, handled, note := tryGraphSearch(ExecArgs{Host: "local", Command: `findstr /s /m /c:"CalcTotal" pkg\*.go`, Cwd: repo, Caller: "test#glob1"}, `findstr /s /m /c:"CalcTotal" pkg\*.go`, false)
+	if handled || out != "" {
+		t.Fatalf("o findstr /m tem de rodar de verdade (lista completa):\n%s", out)
 	}
-	if !strings.Contains(out, "pkg/a.go") {
-		t.Errorf("a resposta tem de citar a definição em pkg/a.go:\n%s", out)
+	if !strings.Contains(note, "pkg/a.go") {
+		t.Errorf("a nota tem de citar a declaração em pkg/a.go:\n%s", note)
 	}
 	for _, fora := range []string{"main.go", "outra/d.go", "pkg/z.py"} {
-		if strings.Contains(out, fora) {
-			t.Errorf("a resposta não pode sair da pasta/extensão do coringa (%s):\n%s", fora, out)
+		if strings.Contains(note, fora) {
+			t.Errorf("a nota não pode sair da pasta/extensão do coringa (%s):\n%s", fora, note)
 		}
 	}
 

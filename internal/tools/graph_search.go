@@ -579,6 +579,13 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	if defs = defsUnderSub(defs, sub, ext); len(defs) == 0 {
 		return "", false, announce // não é símbolo do código (texto, chave de config, outro idioma): busca normal
 	}
+	if req.list {
+		// grep -l pede os arquivos que CONTÊM o texto. O índice só conhece identificadores de código: a lista dele
+		// é um subconjunto (CS1: 2 arquivos contra 12 do grep) e, apresentada como resposta, custa uma volta extra
+		// para o modelo descobrir que faltou. A lista bruta é a resposta; o grafo contribui com onde o símbolo é
+		// declarado, que o grep não diz.
+		return "", false, notes(announce, defsHint(defs))
+	}
 	key := fmt.Sprintf("search|%s|%s", strings.ToLower(args.Cwd), strings.ToLower(label)) // sem identidade: ver graph_first.go
 	if graphRepeat(key) {
 		return "", false, notes(announce, GraphMarkRepeat+": raw search output because this exact command was repeated.")
@@ -629,6 +636,19 @@ func defPhrase(defs []graph.Def) string {
 		return fmt.Sprintf("1 definition (%s:%d-%d)", defs[0].File, defs[0].Start, defs[0].End)
 	}
 	return fmt.Sprintf("ambiguous: %d definitions", len(defs))
+}
+
+// defsHint é a linha que o grafo acrescenta à lista bruta de um grep -l: onde o símbolo é declarado.
+func defsHint(defs []graph.Def) string {
+	var parts []string
+	for i, d := range defs {
+		if i == graphMaxDefs {
+			parts = append(parts, fmt.Sprintf("+%d more", len(defs)-i))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s:%d-%d (%s)", d.File, d.Start, d.End, kindOf(d)))
+	}
+	return GraphMarkSearch + ": declared at " + strings.Join(parts, "; ") + " (the list above is the raw grep: every file that contains the text)"
 }
 
 // shortSig deixa a assinatura numa linha curta (a resposta é pronta, não é o arquivo).
