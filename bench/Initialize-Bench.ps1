@@ -72,5 +72,6 @@ if (-not (Test-Path $frozen)) { Copy-Item $FastExec $frozen }
 & $frozen version 2>&1 | Select-Object -First 2
 Set-Content "$work\bin\current.txt" $frozen -Encoding UTF8
 
+if ($FreezeOnly) { return }   # o Run-Bench ja roda o preflight; duas vezes eram 2 s a toa
 $p = Test-BenchPreflight $cfg
 if ($p) { "AVISOS:"; $p | ForEach-Object { " - $_" } } else { 'preflight: ok' }

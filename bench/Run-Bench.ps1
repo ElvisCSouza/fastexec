@@ -65,11 +65,18 @@ if ($repos.Count -and ($Arms -contains 'fastexec')) { Initialize-BenchGraph $cfg
 # Portao do modo exato: tarefa C# no braco FastExec so roda se o Roslyn responde exato na copia que ela usa.
 # Deterministico, sem modelo, ~10 s. Ambiente quebrado nunca chega a gastar uma execucao paga.
 # O resultado vale para o binario congelado (mesmo SHA): so refaz quando o binario muda. Apagar o marcador força de novo.
-$gateOk = Join-Path $work "bin\lsp-gate-ok-$fxSha.txt"
-if (($Arms -contains 'fastexec') -and (@($Tasks | Where-Object { $_ -like 'CS*' }).Count -gt 0) -and -not $env:BENCH_SKIP_LSP_GATE -and -not (Test-Path $gateOk)) {
-  & (Join-Path $PSScriptRoot 'Test-LspReady.ps1') -Fx $Fx
-  if ($LASTEXITCODE -ne 0) { throw 'PREFLIGHT LSP: o modo exato do C# nao esta pronto (veja acima); nada foi executado' }
-  Set-Content $gateOk (Get-Date -Format o) -Encoding UTF8
+# O portao prova o AMBIENTE (dotnet, csharp-ls, restore), que não muda a cada deploy: um marcador por repo, válido por
+# 12 h, e só para os repos das tarefas CS desta rodada. BENCH_FORCE_GATE=1 força de novo (após mexer no LSP do FastExec).
+# Um LSP quebrado no binario novo aparece na propria rodada ('no language server' na resposta do edit_file).
+if (($Arms -contains 'fastexec') -and -not $env:BENCH_SKIP_LSP_GATE) {
+  $fresh = { param($r) $f = Join-Path $work "bin\lsp-gate-ok-$r.txt"; (-not $env:BENCH_FORCE_GATE) -and (Test-Path $f) -and (((Get-Date) - (Get-Item $f).LastWriteTime).TotalHours -lt 12) }
+  $gateRepos = @($Tasks | Where-Object { $_ -like 'CS*' } | ForEach-Object { $All[$_].repos } | Where-Object { $_ } | Select-Object -Unique |
+    Where-Object { -not (& $fresh $_) })
+  if ($gateRepos.Count) {
+    & (Join-Path $PSScriptRoot 'Test-LspReady.ps1') -Fx $Fx -Repos $gateRepos
+    if ($LASTEXITCODE -ne 0) { throw 'PREFLIGHT LSP: o modo exato do C# nao esta pronto (veja acima); nada foi executado' }
+    foreach ($r in $gateRepos) { Set-Content (Join-Path $work "bin\lsp-gate-ok-$r.txt") (Get-Date -Format o) -Encoding UTF8 }
+  }
 }
 
 $spent = 0.0

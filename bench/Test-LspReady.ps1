@@ -1,7 +1,8 @@
 # Preflight deterministico (sem modelo): prova que o modo exato do code_graph funciona na MESMA copia de trabalho
 # que as tarefas C# usam. Falha em segundos, antes de gastar uma execucao paga.
 # Uso: pwsh -File .\Test-LspReady.ps1 [-Fx <fastexec.exe>]   (exit 0 = pronto, 1 = nao)
-param([string]$Fx = (Join-Path $PSScriptRoot '..\..\fastexec-private\bin\fastexec.exe'))
+# -Repos: so os repositorios que as tarefas da rodada usam (cada um custa ~9 s de csharp-ls); sem o parametro, todos.
+param([string]$Fx = (Join-Path $PSScriptRoot '..\..\fastexec-private\bin\fastexec.exe'), [string[]]$Repos = @())
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\Bench.ps1')
 . (Join-Path $PSScriptRoot 'tools\csoracle\CsOracle.ps1')
@@ -11,6 +12,7 @@ $checks = @(
   @{ repo = 'serilog';          symbol = 'LoggerConfiguration.CreateLogger' },
   @{ repo = 'fluentvalidation'; symbol = 'ValidationContext.AddFailure' }
 )
+if ($Repos.Count) { $checks = @($checks | Where-Object { $Repos -contains $_.repo }) }
 $bad = 0
 $p = Start-BenchDaemon $Cfg $Fx (Join-Path $env:TEMP 'lsp-ready-daemon.json')
 try {
