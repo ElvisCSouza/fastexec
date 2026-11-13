@@ -206,7 +206,13 @@ func selectLines(data string, args ReadFileArgs) (string, bool, error) {
 		if len(rs) == 0 {
 			return fmt.Sprintf("no lines in those ranges (file has %d lines)", total), true, nil
 		}
-		return renderRanges(lines, rs, args.Numbered || len(rs) > 1), true, nil
+		// Um intervalo curto também vem numerado (como start_line/end_line): sem o número a LLM conta a partir do
+		// início e erra por uma linha (CS5 v2 r4: ranges=298-306 → respondeu :305 para :304).
+		span := 0
+		for _, r := range rs {
+			span += r.to - r.from + 1
+		}
+		return renderRanges(lines, rs, args.Numbered || len(rs) > 1 || span <= numberedSliceMax), true, nil
 	}
 
 	// numbered only, optionally with start_line/end_line
