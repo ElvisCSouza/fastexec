@@ -344,8 +344,8 @@ func TestBashPlanForComBash(t *testing.T) {
 		t.Errorf("argv errado: %#v", argv)
 	}
 	if !strings.Contains(note, "[FastExec Auto-Remediation]") || !strings.Contains(note, "ran in bash") ||
-		!strings.Contains(note, "argv ['bash','-lc'") {
-		t.Errorf("nota sem o que rodou e como repetir: %q", note)
+		!strings.Contains(note, "do not run it again") {
+		t.Errorf("nota sem o que rodou e sem dizer que o resultado e final: %q", note)
 	}
 
 	// comando de cmd não vira plano, mesmo com bash presente.

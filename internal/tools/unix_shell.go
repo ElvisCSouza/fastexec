@@ -514,7 +514,7 @@ func bashPlanFor(host, command string) ([]string, string, bool) {
 	if ex != "" {
 		note += ", with " + ex + " translated"
 	}
-	note += ". Next time pass it as argv ['bash','-lc','<the whole line>']."
+	note += ". The result below is final: do not run it again."
 	return []string{bash, "-lc", line}, note, true
 }
 

@@ -75,7 +75,7 @@ func TestNotaDeBashCurta(t *testing.T) {
 	if len(note) > 260 {
 		t.Errorf("nota com %d caracteres: o texto repetido sai do orçamento do modelo a cada turno (%q)", len(note), note)
 	}
-	if !strings.Contains(note, "ran in bash") || !strings.Contains(note, "argv ['bash','-lc'") {
-		t.Errorf("nota sem o que rodou e sem o próximo passo: %q", note)
+	if !strings.Contains(note, "ran in bash") || !strings.Contains(note, "do not run it again") {
+		t.Errorf("nota sem o que rodou e sem dizer que o resultado e final: %q", note)
 	}
 }
