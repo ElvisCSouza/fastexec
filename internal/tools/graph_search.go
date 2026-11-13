@@ -620,6 +620,18 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	if graphRepeat(key) {
 		return "", false, notes(announce, GraphMarkRepeat+": raw search output because this exact command was repeated.")
 	}
+	// Servidor de linguagem primeiro: o índice por nome não vê toda referência a um tipo (ILogEventSink: 0 contra 64),
+	// e uma resposta exata de tamanho parecido troca a busca crua inteira. Sem servidor (ou se ele não responde) o
+	// caminho de sempre segue, e o primeiro uso paga o carregamento da solução.
+	if !req.count {
+		if ex, err := lspCallers(root, req.pattern, 0, 1); err == nil && ex != "" {
+			if body := filterExactToSub(groupCallerSites(ex), sub); body != "" {
+				head := fmt.Sprintf("%s: '%s' in %s — %s; exact references (language server)", GraphMarkSearch, req.pattern, where, defPhrase(defs))
+				footer := "comments and strings are not listed. For the raw search: " + withRawEscape(label)
+				return capAnswerTo(head+"\n"+body, footer, graphExactMax), true, ""
+			}
+		}
+	}
 	counts, _ := graph.CallerFileCounts(root, req.pattern)
 	counts = countsUnderSub(counts, sub, ext)
 	// "0 referências" do índice por nome não é prova de que ninguém usa o símbolo: ele não vê toda referência a um
@@ -861,12 +873,72 @@ func shortOutline(root, rel string, max int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// graphExactMax é o teto da resposta exata do servidor de linguagem: maior que o da resposta por contagem, porque ela
+// traz uma linha por arquivo e cortá-la esconderia usos.
+const graphExactMax = 8 * 1024
+
+// filterExactToSub devolve a resposta exata restrita à pasta pedida no grep (sub relativo à raiz, "" = tudo): as
+// linhas de arquivo fora dela saem, a lista de testes é refeita e o total é recalculado. "" quando nada sobra.
+func filterExactToSub(text, sub string) string {
+	if sub == "" {
+		return strings.TrimRight(text, "\n")
+	}
+	prefix := sub + "/"
+	var out []string
+	files, uses := 0, 0
+	for _, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(l, "- "):
+			path := strings.TrimPrefix(l, "- ")
+			if i := strings.IndexAny(path, " :"); i >= 0 {
+				path = path[:i]
+			}
+			if !strings.HasPrefix(path, prefix) {
+				continue
+			}
+			files++
+			if i := strings.Index(l, " ("); i >= 0 {
+				var n int
+				if _, err := fmt.Sscanf(l[i:], " (%d)", &n); err == nil {
+					uses += n
+				}
+			}
+			out = append(out, l)
+		case strings.HasPrefix(l, "tests: "):
+			var keep []string
+			if i := strings.Index(l, " files: "); i >= 0 {
+				for _, f := range strings.Split(l[i+len(" files: "):], ", ") {
+					if strings.HasPrefix(f, prefix) {
+						keep = append(keep, f)
+					}
+				}
+			}
+			if len(keep) > 0 {
+				out = append(out, fmt.Sprintf("tests: %d files: %s", len(keep), strings.Join(keep, ", ")))
+			}
+		case strings.HasPrefix(l, "Total: "), strings.HasPrefix(l, "... "):
+			// recalculado abaixo; "... N more" refere-se à lista inteira
+		default:
+			out = append(out, l) // cabeçalho, implements/implemented by, NOTE
+		}
+	}
+	if files == 0 {
+		return ""
+	}
+	out = append(out, fmt.Sprintf("Total: %d references in %d files under %s.", uses, files, sub))
+	return strings.Join(out, "\n")
+}
+
 // capAnswer corta o corpo no teto de bytes preservando o rodapé: a saída de emergência nunca some.
 func capAnswer(body, footer string) string {
-	if len(body)+len(footer)+1 <= graphAnswerMax {
+	return capAnswerTo(body, footer, graphAnswerMax)
+}
+
+func capAnswerTo(body, footer string, max int) string {
+	if len(body)+len(footer)+1 <= max {
 		return body + "\n" + footer
 	}
-	budget := graphAnswerMax - len(footer) - 1 - 48
+	budget := max - len(footer) - 1 - 48
 	lines := strings.Split(body, "\n")
 	var keep []string
 	n := 0
