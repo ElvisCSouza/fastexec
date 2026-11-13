@@ -78,6 +78,7 @@ func KickBackgroundIndex(tool string, rawArgs json.RawMessage) {
 	}
 	if root, ok := graph.ResolveRepoRoot(expandHome(p)); ok {
 		graph.KickBackground(root)
+		warmLanguageServers(tool, root, expandHome(p)) // D6: o servidor de linguagem sobe junto (lsp_warm.go)
 	}
 }
 

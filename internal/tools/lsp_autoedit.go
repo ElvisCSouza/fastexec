@@ -109,12 +109,20 @@ type autoEdit struct {
 	phaseB    bool            // a fase B começou: o diagnóstico novo pode usar a última linha
 	undo      string          // patch anunciado ao modelo; precisa ser reescrito no fim (a formatação vem depois)
 	lines     []string
+
+	// validação em tempo real (validate.go)
+	isNew          bool                // o arquivo não existia: todo erro conta como novo e o arquivo inteiro é validado
+	noRoot         bool                // fora de repositório git: só a camada 1 (sintaxe)
+	lang           string              // id da linguagem (lsp.Language.ID)
+	extra          []string            // linhas de erro/estado; não entram no teto das notas, são o que a LLM precisa ler
+	deps           map[string]*depState // arquivos que a edição pode ter quebrado (D8), com o "antes" de cada um
+	depsUnverified int                 // quantos desses o servidor não respondeu a tempo
 }
 
 // autoEditBegin abre uma edição assistida e roda a fase A. Devolve nil quando não há nada exato a fazer — e aí
 // a resposta da tool fica idêntica à de antes desta tarefa.
 func autoEditBegin(host, path, oldText, newText string) *autoEdit {
-	if oldText == "" || oldText == newText || lsp.Disabled() || !impactLocal(host, path) {
+	if newText == "" || oldText == newText || lsp.Disabled() || !impactLocal(host, path) {
 		return nil
 	}
 	abs, err := filepath.Abs(path)
@@ -127,15 +135,31 @@ func autoEditBegin(host, path, oldText, newText string) *autoEdit {
 	if isAssisted(host, abs, newText) {
 		return nil
 	}
-	if _, ok := lsp.LanguageForPath(abs); !ok {
-		return nil
-	}
-	root, ok := graph.ResolveRepoRoot(abs)
+	lang, ok := lsp.LanguageForPath(abs)
 	if !ok {
 		return nil
 	}
-	a := &autoEdit{host: host, path: path, abs: abs, root: root, oldText: oldText, newText: newText}
+	isNew := oldText == ""
+	if isNew && lang.Optional && !lsp.Installed(lang) {
+		return nil // Markdown, JSON, YAML...: sem servidor instalado não há nada a validar num arquivo novo
+	}
+	root, hasRoot := graph.ResolveRepoRoot(abs)
+	if !hasRoot && !syntaxLanguage(abs) {
+		return nil
+	}
+	a := &autoEdit{host: host, path: path, abs: abs, root: root, oldText: oldText, newText: newText,
+		isNew: isNew, noRoot: !hasRoot, lang: lang.ID}
+	if !hasRoot {
+		return a // fora de repositório só há a camada 1
+	}
 	a.rel = relToRoot(root, abs)
+	if isNew {
+		a.tract = [2]int{0, 1 << 30} // arquivo novo: tudo é trecho editado
+		if c, release, err := autoWarm(context.Background(), abs); err == nil {
+			a.lease(c, release)
+		}
+		return a
+	}
 	a.delta = declDeltaOf(a.rel, oldText, newText)
 	a.tract = tractRange(oldText, newText)
 
@@ -201,7 +225,8 @@ func (a *autoEdit) baseline() {
 	if !a.diagnosed {
 		ctx, cancel := context.WithTimeout(context.Background(), lspAutoBaseBudget)
 		defer cancel()
-		if items, err := a.client.Diagnostics(ctx, a.abs, lspAutoBaseBudget); err == nil {
+		// Fresh: o "antes" de um publish que não é da versão atual do arquivo não é "antes" nenhum.
+		if items, ok, err := a.client.DiagnosticsFresh(ctx, a.abs, lspAutoBaseBudget); err == nil && ok {
 			a.diagnosed = true
 			for _, d := range items {
 				a.beforeMsg[d.Message] = true
@@ -229,10 +254,10 @@ func (a *autoEdit) SkipNames() map[string]bool {
 
 // Note devolve as linhas [lsp] já montadas, prontas para entrar na resposta da tool.
 func (a *autoEdit) Note() string {
-	if a == nil || len(a.lines) == 0 {
+	if a == nil || len(a.lines)+len(a.extra) == 0 {
 		return ""
 	}
-	return "\n" + strings.Join(a.lines, "\n")
+	return "\n" + strings.Join(append(append([]string(nil), a.lines...), a.extra...), "\n")
 }
 
 // Close devolve o servidor ao gerente. Nunca é o que decide se a edição fica: ela já foi gravada.
@@ -316,6 +341,7 @@ func (a *autoEdit) rename() {
 	if err != nil {
 		n = nil
 	}
+	a.captureDeps(a.sitesAbs(files)) // D8: depois do rename exato, os arquivos que ele tocou são conferidos
 	res, err := a.client.ApplyEdit(we, lsp.ApplyOptions{Root: a.root})
 	if err != nil {
 		a.note("%s -> %s not applied: %s", a.delta.name, a.delta.newName, shortErr(err))
@@ -391,6 +417,7 @@ func (a *autoEdit) signature() {
 	// quebra o build, e antes era justamente ele que ficava de fora do aviso.
 	sites := relSites(a.root, locs)
 	sites = withoutDecl(sites, a.rel, a.delta.line)
+	a.captureDeps(a.sitesAbs(siteFiles(sites))) // é o "antes" dos chamadores, para o D8 dizer depois o que quebrou
 	a.skip = map[string]bool{name: true, "*": true}
 	if len(sites) == 0 {
 		a.note("%s: signature changed, no caller (exact): nothing else to update", name)
@@ -450,6 +477,7 @@ func (a *autoEdit) orphans() {
 		return
 	}
 	sites := withoutFile(relSites(a.root, locs), a.rel)
+	a.captureDeps(a.sitesAbs(siteFiles(sites)))
 	a.skip = map[string]bool{a.delta.name: true}
 	if len(sites) == 0 {
 		a.note("%s removed: no use left outside the file (exact)", a.delta.name)
@@ -462,27 +490,21 @@ func (a *autoEdit) orphans() {
 // Finish é a fase B, depois da gravação: erro novo, import que faltou e formatação do trecho. Devolve o rodapé
 // já com o "\n" inicial, ou "" quando não há nada a dizer — e aí a resposta fica byte a byte igual à de antes.
 func (a *autoEdit) Finish() string {
-	if a == nil || a.client == nil {
+	if a == nil {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), lspAutoDiagBudget)
-	defer cancel()
-	a.phaseB = true
-
-	fresh := a.freshErrors(ctx)
-	fixed, importNote := a.importFix(ctx, fresh)
-	rest := minusDiags(fresh, fixed)
-	var parts []string
-	if importNote != "" {
-		parts = append(parts, importNote)
+	text := a.Text(a.newText)
+	s1 := a.layer1(text)
+	sem := semNone
+	if !s1.blocked { // com erro de sintaxe a semântica é ruído em cascata: nem se pergunta
+		sem = a.layer2Result(text, s1)
 	}
-	if len(rest) > 0 {
-		parts = append(parts, diagLine(a.rel, rest))
+	if line := a.statusLine(s1, sem); line != "" {
+		a.extra = append(a.extra, line)
 	}
-	if len(parts) > 0 {
-		a.note("%s", strings.Join(parts, "; "))
+	if sem == semPending {
+		defer a.handOff(text) // a resposta sai agora; o diagnóstico desta versão chega na próxima chamada
 	}
-	a.format()
 	// O patch anunciado antes da formatação descreveria um arquivo que não existe mais no disco: reescrever
 	// aqui é o que faz o `git apply -R` do aviso devolver o original.
 	if a.undo != "" {
@@ -495,10 +517,12 @@ func (a *autoEdit) Finish() string {
 
 // freshErrors são os erros que a edição criou. Um erro que já estava lá não entra; uma mensagem que o servidor
 // já publicava também não — o número da linha pode ter andado, a mensagem não.
-func (a *autoEdit) freshErrors(ctx context.Context) []lsp.Diagnostic {
-	items, err := a.client.Diagnostics(ctx, a.abs, lspAutoDiagBudget)
-	if err != nil {
-		return nil
+func (a *autoEdit) freshErrors(ctx context.Context) ([]lsp.Diagnostic, bool) {
+	// Versão certa ou nada (D4): o que o servidor publicou sobre uma versão anterior do arquivo é descartado, e
+	// ok=false diz ao chamador que NADA foi verificado — "sem erros" e "não sei" são respostas diferentes.
+	items, ok, err := a.client.DiagnosticsFresh(ctx, a.abs, lspAutoDiagBudget)
+	if err != nil || !ok {
+		return nil, false
 	}
 	var out []lsp.Diagnostic
 	for _, d := range items {
@@ -515,7 +539,7 @@ func (a *autoEdit) freshErrors(ctx context.Context) []lsp.Diagnostic {
 		}
 		out = append(out, d)
 	}
-	return out
+	return out, true
 }
 
 // importFix é o item (3): só import/using, e só quando o servidor classifica assim. Aplicar quickfix

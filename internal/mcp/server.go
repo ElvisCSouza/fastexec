@@ -275,7 +275,9 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	})
 
 	return ToolCallResult{
-		Content: []ToolContent{{Type: "text", Text: withNotes(name, notes, outText)}},
+		// Diagnóstico de uma edição anterior que ficou pronto depois da resposta dela (validate.go, D5): sai UMA vez,
+		// na próxima resposta de qualquer ferramenta.
+		Content: []ToolContent{{Type: "text", Text: withNotes(name, notes, outText) + tools.TakeLate()}},
 		IsError: !success,
 	}
 }

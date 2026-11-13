@@ -110,6 +110,9 @@ type WriteFileArgs struct {
 	// Overwrite libera regravar um arquivo que já existe e não está vazio; sem ele, o write_file recusa e aponta o
 	// edit_file (reescrever o arquivo inteiro gera o conteúdo todo como saída do modelo, o token mais caro).
 	Overwrite bool `json:"overwrite,omitempty"`
+	// skipAuto: o chamador (edit_file) já rodou o assistente de linguagem sobre este mesmo texto; rodar de novo aqui
+	// pagaria duas vezes o servidor e jogaria o rodapé fora.
+	skipAuto bool
 }
 
 type GetFileArgs struct {
@@ -505,8 +508,11 @@ func handleWriteFile(args WriteFileArgs, impact bool) (string, error) {
 		}
 		// Fase A do assistente de linguagem (lsp_autoedit.go): roda com o texto VELHO ainda no disco, que é o
 		// que dá posição válida ao servidor. Sem servidor, ae é nil e tudo abaixo é o de sempre.
-		ae := autoEditBegin(args.Host, args.Path, oldText, args.Content)
-		defer ae.Close()
+			var ae *autoEdit
+			if !args.skipAuto {
+				ae = autoEditBegin(args.Host, args.Path, oldText, args.Content)
+			}
+			defer ae.Close()
 		final := ae.Text(args.Content)
 		contentBytes = []byte(final)
 		dir := filepath.Dir(args.Path)
@@ -735,6 +741,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 			Content:   newContent,
 			Atomic:    true,
 			Overwrite: true,
+			skipAuto:  true,
 		}, false)
 		if err != nil {
 			return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
@@ -832,6 +839,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		Content:   newContent,
 		Atomic:    true,
 		Overwrite: true,
+		skipAuto:  true,
 	}, false)
 	if err != nil {
 		return "", fmt.Errorf("could not write '%s': %w", args.Path, err)

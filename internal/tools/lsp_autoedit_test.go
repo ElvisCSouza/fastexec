@@ -38,10 +38,15 @@ func newLSPFixture(t *testing.T, ctl toolFakeCtl) *lspFixture {
 	t.Helper()
 	t.Setenv("FASTEXEC_LSP", "on")
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
-	}
-	b, err := json.Marshal(ctl)
+		if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+			t.Fatalf("mkdir .git: %v", err)
+		}
+		// Um projeto de verdade tem go.mod: arquivo solto o servidor trata como "miscellaneous" e a validação
+		// semântica (validate.go) se recusa a mostrar erro de tipo dele.
+		if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module fixture\n\ngo 1.22\n"), 0o644); err != nil {
+			t.Fatalf("go.mod: %v", err)
+		}
+		b, err := json.Marshal(ctl)
 	if err != nil {
 		t.Fatalf("ctl: %v", err)
 	}
@@ -131,8 +136,11 @@ func (f *lspFixture) start() *lspFixture {
 		// antigo contaria como novo. O prazo é curto porque num servidor só de push (o caso do teto de
 		// diagnósticos) não há publicação nenhuma e a espera é paga até o fim.
 		settle := 800 * time.Millisecond
-		if err := c.WaitSettled(ctx, file, settle); err != nil && err != lsp.ErrLoading {
-			return nil, nil, err
+		// Arquivo novo (ainda não gravado): o servidor de produção é do projeto, não do arquivo.
+		if _, statErr := os.Stat(file); statErr == nil {
+			if err := c.WaitSettled(ctx, file, settle); err != nil && err != lsp.ErrLoading {
+				return nil, nil, err
+			}
 		}
 		return c, func() {}, nil
 	}
@@ -384,7 +392,7 @@ func TestAutoImportQuickfix(t *testing.T) {
 	if !strings.Contains(msg, "[lsp] added import \"fmt\"") {
 		t.Fatalf("import note missing, got:\n%s", msg)
 	}
-	if strings.Contains(msg, "diagnostics:") {
+	if strings.Contains(msg, "✗ ") {
 		t.Fatalf("the fixed diagnostic was reported as new, got:\n%s", msg)
 	}
 	if got := f.read("a.go"); !strings.Contains(got, "import \"fmt\"\n") {
@@ -400,7 +408,7 @@ func TestAutoDiagnosticsNewOnly(t *testing.T) {
 
 	msg := f.edit("a.go", "package main\n\nfunc main() {}\n//ERR undefined: old\n//ERR undefined: fresh\n")
 
-	if !strings.Contains(msg, "diagnostics: 1 error") {
+	if strings.Count(msg, "✗ ") != 1 {
 		t.Fatalf("want exactly one new error, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "undefined: fresh") {
@@ -422,19 +430,23 @@ func TestAutoDiagnosticsTimeoutOmitted(t *testing.T) {
 	withServer := f.edit("a.go", "package main\n\nfunc main() {\n\t// a body edit\n}\n")
 	elapsed := time.Since(start)
 
-	if strings.Contains(withServer, "[lsp]") {
+	if strings.Contains(withServer, "[lsp]") || strings.Contains(withServer, "✗ ") {
 		t.Fatalf("diagnostics should have been omitted, got:\n%s", withServer)
+	}
+	// Servidor mudo: a resposta não é silêncio (a LLM leria "está certo"); diz o que não sabe.
+	if !strings.Contains(withServer, "✓ sintaxe · tipos pendentes (servidor carregando)") {
+		t.Fatalf("a silent server must say the types are pending, got:\n%s", withServer)
 	}
 	if elapsed > lspAutoDiagBudget+2*time.Second {
 		t.Fatalf("the edit waited for diagnostics: %v", elapsed)
 	}
 
-	// Byte a byte igual à resposta sem servidor nenhum: é o "nada a dizer" da diretriz.
+	// Sem servidor nenhum: nenhuma linha [lsp] nem erro inventado; só o aviso do que não foi verificado.
 	plain := newLSPFixture(t, toolFakeCtl{}).noServer()
 	plain.write("a.go", body)
 	without := plain.edit("a.go", "package main\n\nfunc main() {\n\t// a body edit\n}\n")
-	if withServer != without {
-		t.Fatalf("response changed with a silent server:\n%q\n%q", withServer, without)
+	if strings.Contains(without, "[lsp]") || strings.Contains(without, "✗ ") {
+		t.Fatalf("no server must not invent diagnostics, got:\n%s", without)
 	}
 }
 
@@ -449,12 +461,9 @@ func TestAutoNoSemanticEffectByteIdentical(t *testing.T) {
 	withServer.start()
 	got := withServer.edit("a.go", newText)
 
-	plain := newLSPFixture(t, toolFakeCtl{}).noServer()
-	plain.write("a.go", oldText)
-	want := plain.edit("a.go", newText)
-
-	if got != want {
-		t.Fatalf("a body edit changed the response:\n%q\n%q", got, want)
+	// Servidor quente e verificado, edição sem efeito semântico: nenhuma linha além da resposta mínima.
+	if strings.Contains(got, "\n") {
+		t.Fatalf("a body edit with a verified server must stay silent, got:\n%q", got)
 	}
 }
 
@@ -650,7 +659,7 @@ func TestAutoDiagnosticsOnBrokenBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write_file: %v", err)
 	}
-	if !strings.Contains(msg, "[lsp] diagnostics:") || !strings.Contains(msg, "expected '('") {
+	if !strings.Contains(msg, "✗ caller.go:") || !strings.Contains(msg, "expected '('") {
 		t.Fatalf("the new error did not show up, got:\n%s", msg)
 	}
 
@@ -662,7 +671,7 @@ func TestAutoDiagnosticsOnBrokenBuild(t *testing.T) {
 	if err != nil {
 		t.Fatalf("write_file: %v", err)
 	}
-	if strings.Contains(msg2, "[lsp] diagnostics:") {
+	if strings.Contains(msg2, "✗ ") {
 		t.Fatalf("the same error was announced twice, got:\n%s", msg2)
 	}
 }
