@@ -14,6 +14,8 @@ func TestFirstQualifiedMember(t *testing.T) {
 		`findstr /s /n /c:"SelfLog.WriteLine" *.cs`:             {"SelfLog", "WriteLine"},
 		`cd "W:/x/y" && grep -rn 'SelfLog.WriteLine(' . | head`: {"SelfLog", "WriteLine"},
 		`grep -rn "SelfLog.WriteLine\|SelfLog\.Write" --include=*.cs .`: {"SelfLog", "WriteLine"},
+		`sed -i 's/SelfLog\.WriteLine(/SelfLog.Write(/g' src/a.cs`:       {"SelfLog", "WriteLine"},
+		`perl -pi -e 's/SelfLog\.WriteLine\(/SelfLog.Write(/g' src/a.cs`:  {"SelfLog", "WriteLine"},
 	}
 	for c, want := range cases {
 		q, m, ok := firstQualifiedMember(c)

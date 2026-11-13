@@ -278,6 +278,13 @@ func handleExec(args ExecArgs) (string, error) {
 				out = strings.Replace(out, memberSearchHint, plan, 1)
 			}
 		}
+		// sed/perl que trocou "Tipo.Velho(" por texto: o script rodou como escrito (nada é refeito nem desfeito), e a
+		// resposta aponta o rename exato do compilador — o script só mexeu em texto, sem checar nada.
+		if strings.Contains(out, editScriptHint) {
+			if plan := memberRenamePlan(args.Cwd, label); plan != "" {
+				out = strings.Replace(out, editScriptHint, plan+" The script above only changed text, nothing was checked by the compiler; the declaration is not covered by it.", 1)
+			}
+		}
 	}
 	if res.ExitCode != 0 && !res.TimedOut {
 		if hint := checkCompileOrTestFailure(args.Cwd, label, out); hint != "" {
