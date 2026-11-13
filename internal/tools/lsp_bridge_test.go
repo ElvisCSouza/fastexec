@@ -309,7 +309,7 @@ func TestBridgeCallersExact(t *testing.T) {
 		}
 	}
 	// Duas declarações com o mesmo nome: no modo exato isso deixa de ser ambiguidade, e a resposta diz por quê.
-	if !strings.Contains(out, "declared in 2 places") {
+	if !strings.Contains(out, "has 2 declarations") {
 		t.Fatalf("nota de homônimo ausente:\n%s", out)
 	}
 	// Nada de nota de degradação quando o servidor respondeu.

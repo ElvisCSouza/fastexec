@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -305,6 +306,7 @@ func lspCallers(root, symbol string, max, depth int) (string, error) {
 	var b strings.Builder
 	files := map[string]bool{}
 	tests := map[string]bool{}
+	var kept []int
 	for i, s := range ans.sites {
 		files[s.File] = true
 		if graph.IsTestPath(s.File) {
@@ -313,15 +315,23 @@ func lspCallers(root, symbol string, max, depth int) (string, error) {
 		if i >= max {
 			continue
 		}
-		label := ""
-		if infos[i].Label != "" {
-			label = " in " + infos[i].Label
+		kept = append(kept, i)
+	}
+	if len(ans.sites) > groupCallersOver {
+		writeGroupedSites(&b, ans.sites, infos, kept)
+	} else {
+		for _, i := range kept {
+			s := ans.sites[i]
+			label := ""
+			if infos[i].Label != "" {
+				label = " in " + infos[i].Label
+			}
+			rel := infos[i].Relation
+			if rel == "" {
+				rel = "reference"
+			}
+			fmt.Fprintf(&b, "- %s:%d%s (%s)\n", s.File, s.Line, label, rel)
 		}
-		rel := infos[i].Relation
-		if rel == "" {
-			rel = "reference"
-		}
-		fmt.Fprintf(&b, "- %s:%d%s (%s)\n", s.File, s.Line, label, rel)
 	}
 	if n := len(ans.sites) - max; n > 0 {
 		fmt.Fprintf(&b, "... %d more (raise 'max')\n", n)
@@ -335,11 +345,55 @@ func lspCallers(root, symbol string, max, depth int) (string, error) {
 		head += fmt.Sprintf("tests: %d files: %s\n", len(tests), strings.Join(sortedFiles(tests), ", "))
 	}
 	if len(ans.defs) >= 2 {
-		head += fmt.Sprintf("NOTE: '%s' is declared in %d places; the language server resolved each one, so this list is exact (no need for 'Type.%s').\n",
+		head += fmt.Sprintf("NOTE: '%s' has %d declarations, all resolved: the list is exact (no 'Type.%s' needed).\n",
 			ans.name, len(ans.defs), ans.name)
 	}
 	tail := fmt.Sprintf("Total: %d references in %d files.\n", len(ans.sites), len(files))
 	return head + b.String() + tail, nil
+}
+
+// groupCallersOver: acima disto a lista exata sai agrupada por arquivo. Uma linha por uso repete o caminho dezenas
+// de vezes; agrupada, a mesma informação (cada linha e o membro que a contém) ocupa menos da metade e já serve de
+// lista de arquivos, a pergunta mais comum depois de "quem usa isto".
+const groupCallersOver = 20
+
+// writeGroupedSites escreve `- arquivo (N): 42,58 in Membro; 79 in Outro` para os usos mantidos, na ordem em que
+// chegaram (já ordenados por arquivo e linha). Uma relação que não é a comum (`reference`) acompanha o grupo.
+func writeGroupedSites(b *strings.Builder, sites []graph.Site, infos []graph.RefInfo, kept []int) {
+	groupKey := func(i int) string {
+		k := infos[i].Label
+		if r := infos[i].Relation; r != "" && r != "reference" {
+			k += " (" + r + ")"
+		}
+		return k
+	}
+	for a := 0; a < len(kept); {
+		file := sites[kept[a]].File
+		z := a
+		for z < len(kept) && sites[kept[z]].File == file {
+			z++
+		}
+		fmt.Fprintf(b, "- %s (%d): ", file, z-a)
+		for k := a; k < z; {
+			key := groupKey(kept[k])
+			m := k
+			var lines []string
+			for m < z && groupKey(kept[m]) == key {
+				lines = append(lines, strconv.Itoa(sites[kept[m]].Line))
+				m++
+			}
+			if k > a {
+				b.WriteString("; ")
+			}
+			b.WriteString(strings.Join(lines, ","))
+			if key != "" {
+				b.WriteString(" in " + key)
+			}
+			k = m
+		}
+		b.WriteString("\n")
+		a = z
+	}
 }
 
 // lspDefinition responde "onde isso é declarado" com o Definition do servidor, que resolve pelo tipo.
