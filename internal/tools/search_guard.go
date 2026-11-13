@@ -425,9 +425,35 @@ var reMemberSearch = regexp.MustCompile(`\b[A-Z]\w+\\?\.[A-Z]\w+\b`)
 
 const memberSearchHint = "[FastExec FastHint] Call sites: tool 'code_graph' (action 'callers'). To rename it: edit_file on its declaration file with symbol='Old', replacement='New'; callers are updated and checked automatically; no sed."
 
-// isMemberSearch: busca de texto por Tipo.Membro.
+// isMemberSearch: busca de texto por Tipo.Membro. Vale mesmo com '| head': quem busca um membro para ver os
+// chamadores está a um passo de renome-lo, e é aí que a dica ainda chega a tempo. Só o padrão conta, não um
+// caminho ("test/Serilog.ApprovalTests/..." tem Pascal.Pascal e não é membro nenhum).
 func isMemberSearch(label string) bool {
-	return isTextSearch(label) && reMemberSearch.MatchString(label)
+	for _, seg := range shellSegments(label) {
+		tokens := shellWords(seg)
+		if len(tokens) == 0 {
+			continue
+		}
+		prog := strings.ToLower(strings.TrimSuffix(filepath.Base(tokens[0]), ".exe"))
+		if !searchPrograms[prog] && !(prog == "git" && len(tokens) > 1 && tokens[1] == "grep") {
+			continue
+		}
+		for _, tk := range tokens[1:] {
+			if strings.HasPrefix(tk, "-") {
+				continue
+			}
+			if len(tk) > 3 && strings.EqualFold(tk[:3], "/c:") {
+				tk = tk[3:] // findstr /c:"texto"
+			}
+			if tk = strings.ReplaceAll(tk, `\.`, "."); strings.ContainsAny(tk, `/\`) {
+				continue
+			}
+			if reMemberSearch.MatchString(tk) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // isCallSearch: busca de texto cujo padrão parece chamada de função.

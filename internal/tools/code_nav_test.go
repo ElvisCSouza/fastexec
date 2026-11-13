@@ -258,6 +258,9 @@ func TestIsMemberSearch(t *testing.T) {
 		`grep -rn "foo.bar" .`:                            false,
 		`grep -rn "TODO" src`:                             false,
 		`dir /s Program.cs`:                               false,
+		`cd /w/Data/x && grep -rn "SelfLog\.WriteLine" --include=*.cs . | head -100`: true,
+		`cd /w/Data/x && grep -rn "WriteLine" --include=*.cs src test | grep -v "SelfLog.WriteLine"`: true,
+		`grep -rn "SelfLog" test/Serilog.ApprovalTests/Serilog.approved.txt`: false,
 	}
 	for c, want := range cases {
 		if got := isMemberSearch(c); got != want {
