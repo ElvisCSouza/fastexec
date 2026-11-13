@@ -353,7 +353,7 @@ of the previous section is not repeated for names the server already answered fo
 ```
 [edit_file] W:\src\a.go: +1 -1 lines, 1 hunk(s).
 L3: func ParseRecord() {}
-DONE ParseLine -> ParseRecord: all 8 uses in 5 files updated by the compiler's rename (exact; same-named members of other types untouched): a.go:3, b.go:40, +3 more. Nothing else to change: do not grep or re-check. undo: git apply -R C:\Users\me\AppData\Local\fastexec\undo\20261112-101520.118.patch
+DONE ParseLine -> ParseRecord: all 8 uses in 5 files updated by the compiler's rename (exact; same-named members of other types untouched): a.go:3, b.go:40, +3 more. Nothing else to change: do not grep or re-check. undo: exec 'fastexec undo'
 [lsp] files changed: callers.go, main.go; re-read before editing them
 ✓ compila
 ```
@@ -364,13 +364,15 @@ DONE ParseLine -> ParseRecord: all 8 uses in 5 files updated by the compiler's r
   anything else (the wrong homonym included) is refused and the by-name warning takes over.
 - Above **100 files** nothing is written and the reply says how many would change: a rename that size is a decision
   to take explicitly, not a side effect of `edit_file`.
-- Files that were **already dirty in git** outside FastExec are written anyway and listed at the end (`already
+- With git, files that were **already dirty** outside FastExec are written anyway and listed at the end (`already
   modified outside FastExec: ...`) — someone else's work in progress is not a reason to stop, but it is a reason to
   say so.
-- The reverse patch is always written: `undo: git apply -R <patch>` restores every file the server touched, and the
-  edited file with it. The files that changed are named, because the model's copy of them is stale.
+- **Undo, without git and without a backup:** FastExec keeps in memory only the **last** write (the files it changed
+  and the hash of what it wrote). `exec 'fastexec undo'` restores them; a file changed since is left alone and named.
+  A new file is removed. Restarting the daemon empties it. The files that changed are named, because the model's copy
+  of them is stale.
 - **Signature.** The header changed: if the server offers a ready-made refactor it is applied (same patch/undo
-  line); otherwise the exact callers come back as `Save: signature changed; exactly 3 caller(s) need the new arguments
+  line, `undo: exec 'fastexec undo'`); otherwise the exact callers come back as `Save: signature changed; exactly 3 caller(s) need the new arguments
   (complete list, no grep needed): a.go:12, b.go:40` — the callers are **not** rewritten by guessing (FastExec cannot
   choose the value of a new parameter). Overloads are paired by order, so a same-named overload is not blamed.
 - **Imports.** A new unresolved-symbol error is offered to the server's quickfix, and only import-shaped actions are
@@ -398,6 +400,8 @@ Every `edit_file`, `write_file` (new files too) and `exec` that writes a `.go`/`
 
 - **Layer 1, exact syntax, in ms, no project needed:** Go by `go/parser`; C# by `fx-roslyn`, a helper built once from
   the SDK's Roslyn and kept resident. With a syntax error the semantic layer stays quiet (it would be cascade noise).
+- **No git needed.** The project is recognised by its markers (`.sln`/`.csproj`, `go.mod`, `package.json`,
+  `Cargo.toml`, `pom.xml`...), so validation, rename, signature and undo work in any folder of a known technology.
 - **Layer 2, semantics, by the language server:** only a diagnostic of the right document version is accepted
   (stale publishes are discarded); gopls runs in pull mode. A new file is validated whole, every error counts as
   new; a file outside any project gets syntax only.

@@ -54,6 +54,9 @@ const sleepGuardMsg = "[FastExec Guard] 'sleep' and 'timeout' are blocked: exec 
 // HandleExec resolve o host (host_autolocal.go: caminho Windows sem host explícito com padrão remoto vai para
 // 'local', com aviso na saída) e delega a handleExec.
 func HandleExec(args ExecArgs) (string, error) {
+	if isUndoCommand(args.Command, args.Argv) {
+		return lastEditUndo(), nil // desfazer em memória da última gravação (lastedit.go): não roda shell nenhum
+	}
 	parts := append([]string{args.Command, args.Cwd}, args.Argv...)
 	host, note := localHostForWindowsPath(args.Host, parts...)
 	args.Host = host

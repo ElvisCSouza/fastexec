@@ -220,15 +220,28 @@ func keysOf(level []callerSite) []string {
 	return out
 }
 
+// deepExtraLines é quantas linhas dos níveis 2+ a saída mostra (o nível 1 só é limitado por 'max'); deepTestFiles, quantos
+// arquivos de teste a linha "tests:" nomeia. Um depth=4 num símbolo popular passava de 19 KB (120 referências).
+const (
+	deepExtraLines = 40
+	deepTestFiles  = 8
+)
+
 // renderDeep escreve a saída de depth>1: cabeçalho, linha "tests:", cada nível e o rodapé.
 func renderDeep(name string, levels [][]callerSite, total int, files map[string]bool, amb map[string]int, depth, max int) string {
 	tests, _ := splitTestFiles(files)
 	var b strings.Builder
 	fmt.Fprintf(&b, "=== callers of '%s' (depth %d) ===\n", name, depth)
 	if len(tests) > 0 {
-		fmt.Fprintf(&b, "tests: %d files: %s\n", len(tests), strings.Join(tests, ", "))
+		list := tests
+		more := ""
+		if len(list) > deepTestFiles {
+			more = fmt.Sprintf(", +%d more", len(list)-deepTestFiles)
+			list = list[:deepTestFiles]
+		}
+		fmt.Fprintf(&b, "tests: %d files: %s%s\n", len(tests), strings.Join(list, ", "), more)
 	}
-	shown := 0
+	shown, deeper := 0, 0
 	for i, level := range levels {
 		if len(level) == 0 {
 			continue
@@ -239,6 +252,15 @@ func renderDeep(name string, levels [][]callerSite, total int, files map[string]
 				fmt.Fprintf(&b, "... %d more (raise 'max')\n", total-shown)
 				shown = -1
 				break
+			}
+			// O nível 1 é o que se edita; do 2 em diante é contexto, e por nome costuma ser aproximado: tem teto próprio.
+			if i >= 1 {
+				if deeper == deepExtraLines {
+					fmt.Fprintf(&b, "... %d more at depth %d+ (use depth=2 or a narrower symbol)\n", total-shown, i+1)
+					shown = -1
+					break
+				}
+				deeper++
 			}
 			where := ""
 			if s.label != "" {

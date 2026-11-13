@@ -478,6 +478,8 @@ func selectFromText(filePath, data string, args ReadFileArgs) (string, error) {
 }
 
 func HandleWriteFile(args WriteFileArgs) (string, error) {
+	beginUndoOp() // desfazer em memória da última gravação (lastedit.go)
+	defer sealUndoOp()
 	return handleWriteFile(args, true)
 }
 
@@ -515,6 +517,7 @@ func handleWriteFile(args WriteFileArgs, impact bool) (string, error) {
 			defer ae.Close()
 		final := ae.Text(args.Content)
 		contentBytes = []byte(final)
+		captureUndo(args.Path) // o conteúdo de antes, uma vez por operação (o rename já pode tê-lo guardado)
 		dir := filepath.Dir(args.Path)
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", err
@@ -700,6 +703,8 @@ func HandlePutFile(args PutFileArgs) (string, error) {
 }
 
 func HandleEditFile(args EditFileArgs) (string, error) {
+	beginUndoOp()
+	defer sealUndoOp()
 	return handleEditFile(args)
 }
 

@@ -205,7 +205,7 @@ func TestAutoRenameAppliesAndUndoes(t *testing.T) {
 	if !strings.Contains(msg, "DONE ParseLine -> ParseRecord: all 2 uses in 2 files updated") {
 		t.Fatalf("rename note missing, got:\n%s", msg)
 	}
-	if !strings.Contains(msg, "undo: git apply -R ") {
+	if !strings.Contains(msg, "undo: exec '"+UndoCommand+"'") {
 		t.Fatalf("undo hint missing, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "files changed: b.go; re-read before editing them") {
@@ -218,19 +218,10 @@ func TestAutoRenameAppliesAndUndoes(t *testing.T) {
 		t.Fatalf("a.go = %q, want %q", got, newA)
 	}
 
-	// O patch é o caminho de volta: aplicado ao contrário, os dois arquivos voltam ao texto de antes.
-	patch := ""
-	for _, line := range strings.Split(msg, "\n") {
-		if i := strings.Index(line, "undo: git apply -R "); i >= 0 {
-			patch = strings.TrimSpace(line[i+len("undo: git apply -R "):])
-		}
-	}
-	if patch == "" {
-		t.Fatalf("no patch path in:\n%s", msg)
-	}
-	cmd := exec.Command("git", "-C", f.root, "apply", "-R", patch)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git apply -R %s: %v: %s", patch, err, out)
+	// O desfazer em memória é o caminho de volta: sem git, os dois arquivos voltam ao texto de antes.
+	out, err := HandleExec(ExecArgs{Command: UndoCommand})
+	if err != nil || !strings.Contains(out, "restored 2 file(s)") {
+		t.Fatalf("undo: %v: %s", err, out)
 	}
 	if got := f.read("b.go"); !strings.Contains(got, "ParseLine()") {
 		t.Fatalf("b.go not undone by the patch:\n%s", got)
@@ -695,23 +686,18 @@ return x
 	alphaPath := filepath.Join(root, "alpha.go")
 	callerPath := filepath.Join(root, "caller.go")
 
-	msg, err := handleWriteFile(WriteFileArgs{
+	msg, err := HandleWriteFile(WriteFileArgs{
 		Host: "local", Path: alphaPath,
 		Content: "package fixture\n\nfunc   Omega(x int) int {\nreturn x\n}\n", Overwrite: true,
-	}, false)
+	})
 	if err != nil {
 		t.Fatalf("write_file: %v", err)
 	}
-	patch := undoPathIn(msg)
-	if patch == "" {
-		t.Fatalf("a resposta não anunciou patch de undo:\n%s", msg)
+	if !strings.Contains(msg, "undo: exec '"+UndoCommand+"'") {
+		t.Fatalf("a resposta não anunciou o desfazer:\n%s", msg)
 	}
-	if _, err := os.Stat(patch); err != nil {
-		t.Fatalf("o patch anunciado não existe: %v", err)
-	}
-
-	if _, err := lsp.Undo(patch, lsp.UndoOptions{Root: root}); err != nil {
-		t.Fatalf("desfazer pelo patch do aviso: %v\nresposta:\n%s", err, msg)
+	if out, err := HandleExec(ExecArgs{Command: UndoCommand}); err != nil || !strings.Contains(out, "undone") {
+		t.Fatalf("desfazer: %v\n%s", err, out)
 	}
 	if got := string(mustRead(t, alphaPath)); got != alpha {
 		t.Errorf("alpha.go depois do undo = %q, queria %q", got, alpha)
@@ -719,20 +705,6 @@ return x
 	if got := string(mustRead(t, callerPath)); got != caller {
 		t.Errorf("caller.go depois do undo = %q, queria %q", got, caller)
 	}
-}
-
-// undoPathIn tira da resposta o caminho do patch que o aviso manda aplicar.
-func undoPathIn(msg string) string {
-	const mark = "undo: git apply -R "
-	i := strings.Index(msg, mark)
-	if i < 0 {
-		return ""
-	}
-	rest := msg[i+len(mark):]
-	if j := strings.IndexByte(rest, '\n'); j >= 0 {
-		rest = rest[:j]
-	}
-	return strings.TrimSpace(rest)
 }
 
 func mustRead(t *testing.T, path string) []byte {

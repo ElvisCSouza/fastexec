@@ -113,7 +113,6 @@ type autoEdit struct {
 	// validação em tempo real (validate.go)
 	isNew          bool                // o arquivo não existia: todo erro conta como novo e o arquivo inteiro é validado
 	noRoot         bool                // nem git nem marcador de projeto: só a camada 1 (sintaxe)
-	noGit          bool                // raiz achada por marcador (.sln, go.mod...), sem git: sem rename/assinatura automáticos
 	lang           string              // id da linguagem (lsp.Language.ID)
 	extra          []string            // linhas de erro/estado; não entram no teto das notas, são o que a LLM precisa ler
 	deps           map[string]*depState // arquivos que a edição pode ter quebrado (D8), com o "antes" de cada um
@@ -145,18 +144,17 @@ func autoEditBegin(host, path, oldText, newText string) *autoEdit {
 		return nil // Markdown, JSON, YAML...: sem servidor instalado não há nada a validar num arquivo novo
 	}
 	root, hasRoot := graph.ResolveRepoRoot(abs)
-	noGit := false
 	if !hasRoot {
 		// Sem git a pasta ainda pode ser, de forma determinística, um projeto: .sln/.csproj, go.mod, package.json...
 		if r, ok := lsp.RootMarked(lang, abs); ok {
-			root, hasRoot, noGit = r, true, true
+			root, hasRoot = r, true
 		}
 	}
 	if !hasRoot && !syntaxLanguage(abs) {
 		return nil
 	}
 	a := &autoEdit{host: host, path: path, abs: abs, root: root, oldText: oldText, newText: newText,
-		isNew: isNew, noRoot: !hasRoot, noGit: noGit, lang: lang.ID}
+		isNew: isNew, noRoot: !hasRoot, lang: lang.ID}
 	if !hasRoot {
 		return a // fora de repositório só há a camada 1
 	}
@@ -175,11 +173,6 @@ func autoEditBegin(host, path, oldText, newText string) *autoEdit {
 	if c, release, err := autoWarm(context.Background(), abs); err == nil {
 		a.lease(c, release)
 		a.baseline()
-	}
-	if noGit {
-		// Rename, assinatura e órfãos gravam em outros arquivos e anunciam um `git apply -R`: sem git não há desfazer
-		// nem como separar o trabalho alheio. Ficam só a sintaxe, os tipos e os dependentes.
-		return a
 	}
 	if a.delta.kind != declNone && a.client == nil {
 		if a.spawn(lspAutoRenameBudget) {
@@ -355,6 +348,9 @@ func (a *autoEdit) rename() {
 		n = nil
 	}
 	a.captureDeps(a.sitesAbs(files)) // D8: depois do rename exato, os arquivos que ele tocou são conferidos
+	for _, f := range files {
+		captureUndo(f) // o desfazer em memória (lastedit.go) precisa do conteúdo de antes de cada arquivo que o rename vai gravar
+	}
 	res, err := a.client.ApplyEdit(we, lsp.ApplyOptions{Root: a.root})
 	if err != nil {
 		a.note("%s -> %s not applied: %s", a.delta.name, a.delta.newName, shortErr(err))
@@ -377,8 +373,8 @@ func (a *autoEdit) rename() {
 
 	spots, _ := we.Spots()
 	sites := relSites(a.root, spots)
-	a.note("DONE %s -> %s: all %d uses in %d files updated by the compiler's rename (exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: git apply -R %s",
-		a.delta.name, a.delta.newName, total, len(files), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots), res.PatchPath)
+	a.note("DONE %s -> %s: all %d uses in %d files updated by the compiler's rename (exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: exec '%s'",
+		a.delta.name, a.delta.newName, total, len(files), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots), UndoCommand)
 	a.changedLine(files, outside)
 }
 
@@ -459,6 +455,9 @@ func (a *autoEdit) signatureAction(ctx context.Context) bool {
 		if len(files) == 0 {
 			continue
 		}
+		for _, f := range files {
+			captureUndo(f)
+		}
 		res, err := a.client.ApplyEdit(act.Edit, lsp.ApplyOptions{Root: a.root})
 		if err != nil {
 			continue
@@ -468,8 +467,8 @@ func (a *autoEdit) signatureAction(ctx context.Context) bool {
 		}
 		a.skip = map[string]bool{a.delta.name: true}
 		a.undo = res.PatchPath
-		a.note("%s: signature change applied by the server (exact): %s; undo: git apply -R %s",
-			a.delta.name, act.Title, res.PatchPath)
+		a.note("%s: signature change applied by the server (exact): %s; undo: exec '%s'",
+			a.delta.name, act.Title, UndoCommand)
 		a.changedLine(files, nil)
 		return true
 	}
@@ -521,9 +520,7 @@ func (a *autoEdit) Finish() string {
 	// O patch anunciado antes da formatação descreveria um arquivo que não existe mais no disco: reescrever
 	// aqui é o que faz o `git apply -R` do aviso devolver o original.
 	if a.undo != "" {
-		if err := lsp.RefreshPatch(a.undo, a.root, a.abs, a.oldText); err != nil {
-			a.note("undo patch not updated: %s", shortErr(err))
-		}
+		_ = lsp.RefreshPatch(a.undo, a.root, a.abs, a.oldText) // o patch não é mais anunciado; fica como registro em disco
 	}
 	return a.Note()
 }
