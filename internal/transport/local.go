@@ -76,7 +76,9 @@ func runLocal(spec localSpec, timeout time.Duration) (*ExecResult, error) {
 	}
 
 	var cmd *exec.Cmd
-	if argv != nil {
+	if line, ok := cmdCPayload(argv); ok {
+		cmd = buildShellCommand(context.Background(), line)
+	} else if argv != nil {
 		effectiveArgv := ResolveShellArgv(argv)
 		cmd = exec.Command(effectiveArgv[0], effectiveArgv[1:]...)
 		cmd.SysProcAttr = hideWindowSysProcAttr()

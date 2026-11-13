@@ -13,6 +13,7 @@ func TestFirstQualifiedMember(t *testing.T) {
 		`grep -rn "SelfLog\.WriteLine" .`:                       {"SelfLog", "WriteLine"},
 		`findstr /s /n /c:"SelfLog.WriteLine" *.cs`:             {"SelfLog", "WriteLine"},
 		`cd "W:/x/y" && grep -rn 'SelfLog.WriteLine(' . | head`: {"SelfLog", "WriteLine"},
+		`grep -rn "SelfLog.WriteLine\|SelfLog\.Write" --include=*.cs .`: {"SelfLog", "WriteLine"},
 	}
 	for c, want := range cases {
 		q, m, ok := firstQualifiedMember(c)

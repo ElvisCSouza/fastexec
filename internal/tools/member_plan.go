@@ -18,15 +18,18 @@ var reQualMember = regexp.MustCompile(`^([A-Z]\w*)\.([A-Z]\w*)\(?$`)
 
 // firstQualifiedMember acha "Tipo.Membro" nas palavras da linha de busca (com /c:, aspas e barra de escape do ponto).
 func firstQualifiedMember(label string) (qual, member string, ok bool) {
-	for _, tk := range shellWords(label) {
-		tk = strings.Trim(tk, `"'`)
-		tk = strings.TrimPrefix(strings.TrimPrefix(tk, "/c:"), "/C:")
-		tk = strings.Trim(strings.ReplaceAll(tk, `\.`, "."), `"'`)
-		if strings.ContainsAny(tk, `/\`) {
-			continue // caminho, não nome
-		}
-		if m := reQualMember.FindStringSubmatch(tk); m != nil {
-			return m[1], m[2], true
+	for _, word := range shellWords(label) {
+		// "A.B\|A\.C" (alternância do grep) são vários nomes numa palavra só: cada um é tentado.
+		for _, tk := range strings.Split(strings.ReplaceAll(word, `\|`, "|"), "|") {
+			tk = strings.Trim(tk, `"'`)
+			tk = strings.TrimPrefix(strings.TrimPrefix(tk, "/c:"), "/C:")
+			tk = strings.Trim(strings.ReplaceAll(tk, `\.`, "."), `"'`)
+			if strings.ContainsAny(tk, `/\`) {
+				continue // caminho, não nome
+			}
+			if m := reQualMember.FindStringSubmatch(tk); m != nil {
+				return m[1], m[2], true
+			}
 		}
 	}
 	return "", "", false
