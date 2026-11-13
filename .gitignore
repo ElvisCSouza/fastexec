@@ -7,3 +7,5 @@ server/dist/
 
 bench/tools/runjob/runjob.exe
 bench/results/full1-cache.jsonl
+internal/lsp/roslyn/bin/
+internal/lsp/roslyn/obj/
