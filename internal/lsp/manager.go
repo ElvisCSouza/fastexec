@@ -539,6 +539,16 @@ func (m *manager) AcquireFile(ctx context.Context, path string) (*Client, func()
 // on. The nearest plain marker is remembered and returned only when no strict
 // marker exists on the way up.
 func RootFor(lang Language, path string) string {
+	if root, ok := RootMarked(lang, path); ok {
+		return root
+	}
+	return filepath.Dir(path)
+}
+
+// RootMarked é o RootFor sem o palpite final: só devolve ok quando um marcador do projeto (.sln, .csproj, go.mod,
+// package.json...) foi realmente encontrado. É a prova determinística de que a pasta é um projeto daquela
+// tecnologia, sem depender de git.
+func RootMarked(lang Language, path string) (string, bool) {
 	dir := path
 	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
 		dir = filepath.Dir(path)
@@ -546,14 +556,14 @@ func RootFor(lang Language, path string) string {
 	if len(lang.ProjectFiles) > 0 {
 		for _, pattern := range lang.ProjectFiles {
 			if d, ok := nearestWith(dir, pattern); ok {
-				return d
+				return d, true
 			}
 		}
 	}
 	fallback := ""
 	for i := 0; i < maxRootDepth; i++ {
 		if HasStrictMarker(lang, dir) {
-			return dir
+			return dir, true
 		}
 		if fallback == "" && HasMarker(lang, dir) {
 			fallback = dir
@@ -564,10 +574,7 @@ func RootFor(lang Language, path string) string {
 		}
 		dir = parent
 	}
-	if fallback != "" {
-		return fallback
-	}
-	return filepath.Dir(path)
+	return fallback, fallback != ""
 }
 
 // nearestWith walks up from dir looking for a directory that holds a file

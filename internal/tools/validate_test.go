@@ -81,6 +81,21 @@ func TestValidateFileOutsideProjectOnlySyntax(t *testing.T) {
 	}
 }
 
+// Sem git mas com go.mod: o marcador prova, de forma determinística, que é um projeto Go; a camada 2 roda.
+func TestValidateWithoutGitUsesProjectMarkers(t *testing.T) {
+	f := newLSPFixture(t, toolFakeCtl{}).start()
+	if err := os.RemoveAll(f.path(".git")); err != nil {
+		t.Fatal(err)
+	}
+	msg := f.create("n.go", "package main\n\nfunc F() {}\n//ERR undefined: conta\n")
+	if !strings.Contains(msg, "undefined: conta") {
+		t.Fatalf("semantic layer must run on a marker-rooted project without git, got:\n%s", msg)
+	}
+	if strings.Contains(msg, "fora do projeto") {
+		t.Fatalf("a go.mod project must not be reported as outside any project, got:\n%s", msg)
+	}
+}
+
 // FASTEXEC_LSP=off desliga tudo: nenhuma linha nova.
 func TestValidateOffMeansNothing(t *testing.T) {
 	f := newLSPFixture(t, toolFakeCtl{})

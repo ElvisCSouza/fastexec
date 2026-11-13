@@ -112,7 +112,8 @@ type autoEdit struct {
 
 	// validação em tempo real (validate.go)
 	isNew          bool                // o arquivo não existia: todo erro conta como novo e o arquivo inteiro é validado
-	noRoot         bool                // fora de repositório git: só a camada 1 (sintaxe)
+	noRoot         bool                // nem git nem marcador de projeto: só a camada 1 (sintaxe)
+	noGit          bool                // raiz achada por marcador (.sln, go.mod...), sem git: sem rename/assinatura automáticos
 	lang           string              // id da linguagem (lsp.Language.ID)
 	extra          []string            // linhas de erro/estado; não entram no teto das notas, são o que a LLM precisa ler
 	deps           map[string]*depState // arquivos que a edição pode ter quebrado (D8), com o "antes" de cada um
@@ -144,11 +145,18 @@ func autoEditBegin(host, path, oldText, newText string) *autoEdit {
 		return nil // Markdown, JSON, YAML...: sem servidor instalado não há nada a validar num arquivo novo
 	}
 	root, hasRoot := graph.ResolveRepoRoot(abs)
+	noGit := false
+	if !hasRoot {
+		// Sem git a pasta ainda pode ser, de forma determinística, um projeto: .sln/.csproj, go.mod, package.json...
+		if r, ok := lsp.RootMarked(lang, abs); ok {
+			root, hasRoot, noGit = r, true, true
+		}
+	}
 	if !hasRoot && !syntaxLanguage(abs) {
 		return nil
 	}
 	a := &autoEdit{host: host, path: path, abs: abs, root: root, oldText: oldText, newText: newText,
-		isNew: isNew, noRoot: !hasRoot, lang: lang.ID}
+		isNew: isNew, noRoot: !hasRoot, noGit: noGit, lang: lang.ID}
 	if !hasRoot {
 		return a // fora de repositório só há a camada 1
 	}
@@ -167,6 +175,11 @@ func autoEditBegin(host, path, oldText, newText string) *autoEdit {
 	if c, release, err := autoWarm(context.Background(), abs); err == nil {
 		a.lease(c, release)
 		a.baseline()
+	}
+	if noGit {
+		// Rename, assinatura e órfãos gravam em outros arquivos e anunciam um `git apply -R`: sem git não há desfazer
+		// nem como separar o trabalho alheio. Ficam só a sintaxe, os tipos e os dependentes.
+		return a
 	}
 	if a.delta.kind != declNone && a.client == nil {
 		if a.spawn(lspAutoRenameBudget) {
