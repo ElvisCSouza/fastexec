@@ -19,8 +19,8 @@ func TestRenameReceiptKeptAndTextSnippet(t *testing.T) {
 	}
 	root := t.TempDir()
 	_ = os.WriteFile(filepath.Join(root, "api.approved.txt"), []byte("x\n    public static void WriteLine(string format) { }\n"), 0o644)
-	hits := textMentionSites(root, "WriteLine", time.Second)
-	if len(hits) != 1 || hits[0] != "api.approved.txt:2 `public static void WriteLine(string format) { }`" {
+	hits := textMentionSites(root, "WriteLine", "Write", time.Second)
+	if len(hits) != 1 || hits[0] != "api.approved.txt:2 `public static void WriteLine(string format) { }` -> `public static void Write(string format) { }`" {
 		t.Fatalf("text mention must carry the line, got %q", hits)
 	}
 }

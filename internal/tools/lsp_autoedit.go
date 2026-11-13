@@ -500,17 +500,21 @@ func (a *autoEdit) leftoverCheck() {
 		return
 	}
 	q := owner + "." + a.delta.name
-	scanned, hits, done := qualifiedLeftovers(a.root, filepath.Ext(a.abs), q, 500*time.Millisecond)
+	// O grep que o modelo faria para conferir "ZERO ocorrências" varre todo tipo de arquivo: código, doc, config, snapshot.
+	codeExt := filepath.Ext(a.abs)
+	scanned, hits, done := qualifiedLeftoversIn(a.root, func(e string) bool {
+		return strings.EqualFold(e, codeExt) || textMentionExt[strings.ToLower(e)]
+	}, q, 600*time.Millisecond)
 	if !done {
 		return
 	}
 	if len(hits) == 0 {
 		// O grep que o modelo já rodou, refeito: a resposta vem na mesma moeda em que ele ia conferir.
 		if g, ok := grepFor(a.ident, q); ok {
-			a.extra = append(a.extra, fmt.Sprintf("[lsp] check: your grep `%s` found %d lines in %d files; same search now: 0 (rescanned %d %s files)", q, g.lines, g.files, scanned, filepath.Ext(a.abs)))
+			a.extra = append(a.extra, fmt.Sprintf("[lsp] check: your grep `%s` found %d lines in %d files; same search now: 0 in all %d code and text files of the repo", q, g.lines, g.files, scanned))
 			return
 		}
-		a.extra = append(a.extra, fmt.Sprintf("[lsp] check: 0 `%s` left in %d %s files", q, scanned, filepath.Ext(a.abs)))
+		a.extra = append(a.extra, fmt.Sprintf("[lsp] check: 0 `%s` left in all %d code and text files of the repo", q, scanned))
 		return
 	}
 	line := joinFirst(hits, 3)
@@ -522,6 +526,11 @@ func (a *autoEdit) leftoverCheck() {
 
 // qualifiedLeftovers varre os arquivos com a extensão dada procurando q como palavra inteira. done=false se o tempo acabou.
 func qualifiedLeftovers(root, ext, q string, budget time.Duration) (scanned int, hits []string, done bool) {
+	return qualifiedLeftoversIn(root, func(e string) bool { return strings.EqualFold(e, ext) }, q, budget)
+}
+
+// qualifiedLeftoversIn é o mesmo varrimento para qualquer conjunto de extensões.
+func qualifiedLeftoversIn(root string, match func(ext string) bool, q string, budget time.Duration) (scanned int, hits []string, done bool) {
 	deadline := time.Now().Add(budget)
 	done = true
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -539,7 +548,10 @@ func qualifiedLeftovers(root, ext, q string, budget time.Duration) (scanned int,
 			}
 			return nil
 		}
-		if !strings.EqualFold(filepath.Ext(p), ext) {
+		if !match(filepath.Ext(p)) {
+			return nil
+		}
+		if info, e := d.Info(); e != nil || info.Size() > 2<<20 {
 			return nil
 		}
 		b, e := os.ReadFile(p)
@@ -601,7 +613,7 @@ func cutRunes(s string, n int) string {
 // textMentions avisa onde o nome antigo ainda aparece em arquivo que não é código (arquivo de aprovação de API,
 // doc, config): o rename do compilador não chega lá, e a frase "nada mais a mudar" seria falsa sem este aviso.
 func (a *autoEdit) textMentions() {
-	hits := textMentionSites(a.root, a.delta.name, 400*time.Millisecond)
+	hits := textMentionSites(a.root, a.delta.name, a.delta.newName, 400*time.Millisecond)
 	if len(hits) == 0 {
 		return
 	}
@@ -610,14 +622,15 @@ func (a *autoEdit) textMentions() {
 		line += fmt.Sprintf(", +%d more", n)
 	}
 	// Fora do teto das linhas [lsp]: DONE e "files changed" já o enchem, e este aviso é o que desmente o "nada mais a mudar".
-	a.extra = append(a.extra, fmt.Sprintf("[lsp] still named %s in non-code files (not renamed): %s", a.delta.name, line))
+	// A linha vem inteira e já renomeada: é o único trabalho que sobra, e com ela o modelo edita direto, sem abrir o arquivo.
+	a.extra = append(a.extra, fmt.Sprintf("[lsp] only work left, non-code files still named %s (the compiler cannot rename text); edit_file the old line to the new one, no need to read first: %s", a.delta.name, line))
 }
 
 var textMentionExt = map[string]bool{".txt": true, ".md": true, ".json": true, ".xml": true, ".yml": true, ".yaml": true,
 	".config": true, ".approved": true, ".verified": true, ".toml": true}
 
 // textMentionSites procura o nome (palavra inteira) em arquivos de texto fora do código, com teto de tempo.
-func textMentionSites(root, name string, budget time.Duration) []string {
+func textMentionSites(root, name, newName string, budget time.Duration) []string {
 	deadline := time.Now().Add(budget)
 	var out []string
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -647,7 +660,12 @@ func textMentionSites(root, name string, budget time.Duration) []string {
 		for i, ln := range strings.Split(string(b), "\n") {
 			if strings.Contains(ln, name) && maskWord(ln, name) != ln {
 				// A linha vai junto: com ela o modelo edita direto, sem abrir o arquivo antes e depois.
-				out = append(out, fmt.Sprintf("%s:%d `%s`", relToRoot(root, p), i+1, cutRunes(strings.TrimSpace(ln), 80)))
+					t := strings.TrimSpace(ln)
+					if newName != "" && len([]rune(t)) <= 200 {
+						out = append(out, fmt.Sprintf("%s:%d `%s` -> `%s`", relToRoot(root, p), i+1, t, renameWord(t, name, newName)))
+					} else {
+						out = append(out, fmt.Sprintf("%s:%d `%s`", relToRoot(root, p), i+1, cutRunes(t, 80)))
+					}
 				break // uma linha por arquivo basta para o modelo achar o resto
 			}
 		}
