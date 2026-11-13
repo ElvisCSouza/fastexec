@@ -622,6 +622,13 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	}
 	counts, _ := graph.CallerFileCounts(root, req.pattern)
 	counts = countsUnderSub(counts, sub, ext)
+	// "0 referências" do índice por nome não é prova de que ninguém usa o símbolo: ele não vê toda referência a um
+	// tipo (em C#, `class X : ILogEventSink` e `List<ILogEventSink>` não aparecem; ILogEventSink deu 0 contra 64
+	// do servidor de linguagem). Responder "nenhuma" levaria o modelo a uma conclusão errada, então a saída crua
+	// é a resposta e o grafo só diz onde o símbolo é declarado.
+	if len(counts) == 0 && anyTypeDef(defs) {
+		return "", false, notes(announce, zeroRefHint(defs))
+	}
 	return buildSymbolAnswer(root, where, req, defs, counts, withRawEscape(label), announce), true, ""
 }
 
@@ -679,6 +686,26 @@ func defsHint(defs []graph.Def) string {
 		parts = append(parts, fmt.Sprintf("%s:%d-%d (%s)", d.File, d.Start, d.End, kindOf(d)))
 	}
 	return GraphMarkSearch + ": declared at " + strings.Join(parts, "; ") + " (the list above is the raw grep: every file that contains the text)"
+}
+
+// anyTypeDef: algum dos símbolos é um tipo (interface, classe, struct...). Função sem chamador é uma resposta que o
+// índice sabe dar; tipo sem referência não é, porque a referência a tipo (base, genérico, parâmetro) é a lacuna dele.
+func anyTypeDef(defs []graph.Def) bool {
+	for _, d := range defs {
+		switch strings.ToLower(kindOf(d)) {
+		case "interface", "class", "struct", "record", "enum", "type", "trait", "delegate":
+			return true
+		}
+	}
+	return false
+}
+
+// zeroRefHint acompanha a saída crua quando o índice não lista referência alguma: diz onde o símbolo é declarado e
+// que a ausência no índice não vale como "ninguém usa".
+func zeroRefHint(defs []graph.Def) string {
+	h := defsHint(defs)
+	return strings.Replace(h, "(the list above is the raw grep: every file that contains the text)",
+		"(the output above is the raw grep; the name index lists no references, which does not mean there are none: for types use code_graph callers)", 1)
 }
 
 // shortSig deixa a assinatura numa linha curta (a resposta é pronta, não é o arquivo).
