@@ -20,6 +20,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -382,6 +384,66 @@ func (a *autoEdit) rename() {
 	a.note("DONE %s -> %s: all %d uses in %d files updated by the compiler's rename (exact; same-named members of other types untouched): %s%s. Nothing else to change: do not grep or re-check. undo: exec '%s'",
 		a.delta.name, a.delta.newName, total, len(files), joinSites(firstSites(sites, lspAutoMaxSpots)), more(sites, lspAutoMaxSpots), UndoCommand)
 	a.changedLine(files, outside)
+	a.textMentions()
+}
+
+// textMentions avisa onde o nome antigo ainda aparece em arquivo que não é código (arquivo de aprovação de API,
+// doc, config): o rename do compilador não chega lá, e a frase "nada mais a mudar" seria falsa sem este aviso.
+func (a *autoEdit) textMentions() {
+	if len(a.lines) >= lspAutoMaxLines {
+		return
+	}
+	hits := textMentionSites(a.root, a.delta.name, 400*time.Millisecond)
+	if len(hits) == 0 {
+		return
+	}
+	line := joinFirst(hits, 3)
+	if n := len(hits) - 3; n > 0 {
+		line += fmt.Sprintf(", +%d more", n)
+	}
+	a.note("still named %s in non-code files (not renamed): %s", a.delta.name, line)
+}
+
+var textMentionExt = map[string]bool{".txt": true, ".md": true, ".json": true, ".xml": true, ".yml": true, ".yaml": true,
+	".config": true, ".approved": true, ".verified": true, ".toml": true}
+
+// textMentionSites procura o nome (palavra inteira) em arquivos de texto fora do código, com teto de tempo.
+func textMentionSites(root, name string, budget time.Duration) []string {
+	deadline := time.Now().Add(budget)
+	var out []string
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || time.Now().After(deadline) || len(out) >= 20 {
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return filepath.SkipAll
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "bin", "obj", "node_modules", "vendor", ".vs":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !textMentionExt[strings.ToLower(filepath.Ext(p))] {
+			return nil
+		}
+		if info, e := d.Info(); e != nil || info.Size() > 512<<10 {
+			return nil
+		}
+		b, e := os.ReadFile(p)
+		if e != nil {
+			return nil
+		}
+		for i, ln := range strings.Split(string(b), "\n") {
+			if strings.Contains(ln, name) && maskWord(ln, name) != ln {
+				out = append(out, fmt.Sprintf("%s:%d", relToRoot(root, p), i+1))
+				break // uma linha por arquivo basta para o modelo achar o resto
+			}
+		}
+		return nil
+	})
+	return out
 }
 
 // changedLine avisa quais OUTROS arquivos mudaram — sem isso o modelo continua editando sobre uma cópia que

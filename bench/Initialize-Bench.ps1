@@ -1,12 +1,15 @@
 # Prepara o ambiente uma vez: compila o medidor (runjob), baixa as fixtures publicas e congela o binario do FastExec.
 # Uso: pwsh -NoProfile -File .\Initialize-Bench.ps1 [-FastExec <caminho>] [-Refresh]
-param([string]$FastExec = '', [switch]$Refresh)
+# -FreezeOnly: so congela o binario atual (o que muda a cada deploy). Runjob, fixtures e restore do .NET ja existem; refazer
+# isso a cada tarefa custava ~30 s para nada.
+param([string]$FastExec = '', [switch]$Refresh, [switch]$FreezeOnly)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\Bench.ps1')
 $cfg = Get-BenchConfig
 $work = $cfg.work_dir
 New-Item -ItemType Directory -Force $work, "$work\fixtures", "$work\bin", "$work\runs" | Out-Null
 
+if (-not $FreezeOnly) {
 # 1) medidor: roda um comando dentro de um Job Object e devolve CPU, RAM de pico e tempo da arvore inteira de processos
 $rj = Get-RunJobPath
 if ($Refresh -or -not (Test-Path $rj)) {
@@ -57,6 +60,8 @@ if ($cfg.dotnet -and $cfg.dotnet.projects) {
     Remove-Item -Recurse -Force $tmp
   }
 }
+
+} # fim do -not $FreezeOnly
 
 # 3) congela o FastExec sob teste: um deploy no meio da rodada nao pode trocar o binario medido
 if (-not $FastExec) { $FastExec = (Resolve-Path (Join-Path $script:BenchRoot $cfg.fastexec_exe)).Path }

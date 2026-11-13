@@ -64,9 +64,12 @@ if ($repos.Count -and ($Arms -contains 'fastexec')) { Initialize-BenchGraph $cfg
 
 # Portao do modo exato: tarefa C# no braco FastExec so roda se o Roslyn responde exato na copia que ela usa.
 # Deterministico, sem modelo, ~10 s. Ambiente quebrado nunca chega a gastar uma execucao paga.
-if (($Arms -contains 'fastexec') -and (@($Tasks | Where-Object { $_ -like 'CS*' }).Count -gt 0) -and -not $env:BENCH_SKIP_LSP_GATE) {
+# O resultado vale para o binario congelado (mesmo SHA): so refaz quando o binario muda. Apagar o marcador força de novo.
+$gateOk = Join-Path $work "bin\lsp-gate-ok-$fxSha.txt"
+if (($Arms -contains 'fastexec') -and (@($Tasks | Where-Object { $_ -like 'CS*' }).Count -gt 0) -and -not $env:BENCH_SKIP_LSP_GATE -and -not (Test-Path $gateOk)) {
   & (Join-Path $PSScriptRoot 'Test-LspReady.ps1') -Fx $Fx
   if ($LASTEXITCODE -ne 0) { throw 'PREFLIGHT LSP: o modo exato do C# nao esta pronto (veja acima); nada foi executado' }
+  Set-Content $gateOk (Get-Date -Format o) -Encoding UTF8
 }
 
 $spent = 0.0
