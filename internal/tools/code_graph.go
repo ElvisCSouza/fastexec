@@ -63,8 +63,8 @@ func runCodeGraph(root string, args CodeGraphArgs) (string, error) {
 		out, err := courseWithGraph(root, args.Symbol,
 			func() (string, error) { return lspCallers(root, args.Symbol, args.Max, args.Depth) },
 			func() (string, error) { return graph.Callers(root, args.Symbol, args.Max, args.Depth) })
-		return groupCallerSites(out), err
-	case "def", "definition":
+			return withImplementersLine(groupCallerSites(out)), err
+		case "def", "definition":
 		if err := need(args.Symbol, "symbol"); err != nil {
 			return "", err
 		}

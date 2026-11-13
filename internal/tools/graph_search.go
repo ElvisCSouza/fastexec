@@ -316,6 +316,55 @@ func splitLeadingCd(cmd string) (rest, dir string, ok bool) {
 	return r, d, true
 }
 
+// groupedSiteLineRe reconhece a linha agrupada por arquivo: "- caminho (N): 17 in A.B (implements); 19,21 in A.B".
+var groupedSiteLineRe = regexp.MustCompile(`^- (\S+) \(\d+\): (.*)$`)
+
+// withImplementersLine troca a linha "implemented by: ... +13" (cortada, e que mistura testes e outras pastas) por uma
+// linha completa dos tipos que implementam o símbolo DENTRO da resposta já filtrada pela pasta. A lista vem das
+// marcas "(implements)" dos grupos, então é exata e sem corte; sem nenhuma marca o corpo fica como veio.
+func withImplementersLine(body string) string {
+	lines := strings.Split(body, "\n")
+	var items []string
+	implIdx := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "implemented by: ") {
+			implIdx = i
+			continue
+		}
+		if !strings.Contains(l, "(implements)") {
+			continue
+		}
+		m := groupedSiteLineRe.FindStringSubmatch(l)
+		if m == nil {
+			continue // lista corrida (até 20 usos): sem agrupamento não há o que extrair aqui
+		}
+		path := m[1]
+		for _, seg := range strings.Split(m[2], "; ") {
+			if !strings.HasSuffix(seg, " (implements)") {
+				continue
+			}
+			seg = strings.TrimSuffix(seg, " (implements)")
+			k := strings.Index(seg, " in ")
+			if k < 0 {
+				continue
+			}
+			line := strings.SplitN(seg[:k], ",", 2)[0]
+			typ := strings.SplitN(seg[k+4:], ".", 2)[0]
+			items = append(items, fmt.Sprintf("%s (%s:%s)", typ, path, line))
+		}
+	}
+	if len(items) == 0 {
+		return body
+	}
+	line := fmt.Sprintf("implementers (%d, complete, exact): %s", len(items), strings.Join(items, ", "))
+	if implIdx >= 0 {
+		lines[implIdx] = line
+	} else {
+		lines = append(lines[:1], append([]string{line}, lines[1:]...)...)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // implementersHint: para um tipo, quem o implementa ou estende (exato, do servidor de linguagem) dentro da pasta
 // buscada. Acompanha a lista crua de um grep -l: é a pergunta que costuma vir logo depois dela. "" sem servidor,
 // sem resposta ou sem implementador.
@@ -689,7 +738,7 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	// caminho de sempre segue, e o primeiro uso paga o carregamento da solução.
 	if !req.count {
 		if ex, err := lspCallers(root, req.pattern, 0, 1); err == nil && ex != "" {
-			if body := filterExactToSub(groupCallerSites(ex), sub); body != "" {
+			if body := withImplementersLine(filterExactToSub(groupCallerSites(ex), sub)); body != "" {
 				head := fmt.Sprintf("%s: '%s' in %s — %s; exact references (language server)", GraphMarkSearch, req.pattern, where, defPhrase(defs))
 				footer := "comments and strings are not listed. For the raw search: " + withRawEscape(escapeLabel)
 				return capAnswerTo(head+"\n"+body, footer, graphExactMax), true, ""
