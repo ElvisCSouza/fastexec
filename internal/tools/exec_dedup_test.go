@@ -73,3 +73,21 @@ func TestExecDedupOffByEnv(t *testing.T) {
 		t.Fatal("env off must disable dedup")
 	}
 }
+
+// A truncated big output embeds a spill file whose name carries a timestamp; identical content must still dedup.
+func TestExecDedupIgnoresSpillFileName(t *testing.T) {
+	resetExecDedup()
+	args := ExecArgs{Host: "noteserver", Command: "big", Caller: "c#2"}
+	body := strings.Repeat("linha de saida\n", 400)
+	run := func(name string) string {
+		return body + "[truncated: Full output: C:\\\\tmp\\" + name + "]\n"
+	}
+	first := run("20261114-101500-aabbccdd.txt")
+	if got := dedupExecOutput(args, "big", first); got != first {
+		t.Fatal("1st run must return the full text")
+	}
+	got := dedupExecOutput(args, "big", run("20261114-101507-aabbccdd.txt"))
+	if !strings.Contains(got, "Identical output") {
+		t.Fatalf("same content with a different spill name must be a stub, got %q", got[:min(len(got), 80)])
+	}
+}

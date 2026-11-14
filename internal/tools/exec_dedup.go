@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"homelab/fastexec/internal/telemetry"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,15 @@ var (
 	execDedupSeen = map[string]*execSeen{}
 )
 
+// spillPathRe matches the spill file path that shapeBig embeds in a truncated output. The name carries a timestamp, so
+// two runs with identical content would otherwise hash differently and the dedup would never fire on big outputs.
+var spillPathRe = regexp.MustCompile(`\d{8}-\d{6}-[0-9a-f]{8}\.txt`)
+
+// dedupFingerprintText is the text the dedup compares: the output with run-specific spill file names masked.
+func dedupFingerprintText(out string) string {
+	return spillPathRe.ReplaceAllString(out, "SPILL")
+}
+
 func execDedupOff() bool { return os.Getenv("FASTEXEC_NO_EXEC_DEDUP") == "1" }
 
 // dedupExecOutput returns out unchanged, or a stub when out repeats the previous identical run (see above).
@@ -39,7 +49,7 @@ func dedupExecOutput(args ExecArgs, label, out string) string {
 	if execDedupOff() || len(out) < execDedupMinBytes {
 		return out
 	}
-	sum := sha256.Sum256([]byte(out))
+	sum := sha256.Sum256([]byte(dedupFingerprintText(out)))
 	h := hex.EncodeToString(sum[:])
 	in := sha256.Sum256([]byte(args.Input))
 	key := strings.ToLower(identity(args.Caller, args.Conv)+"|"+args.Host+"|"+args.Cwd+"|"+label) + "|" + hex.EncodeToString(in[:4])
