@@ -15,6 +15,7 @@ type Report struct {
 	Usage             Usage
 	Overhead          Overhead
 	PerChannel        []ChannelTokens
+	Templates         map[string]string // id do aviso -> texto-modelo
 }
 
 // HarmCount é a contagem de sinais de um detector (todos os detectores ligados aparecem, mesmo com zero).
@@ -41,7 +42,11 @@ func Build(src Source, w Window, p BasisPolicy, ds []HarmDetector) (Report, erro
 	if err != nil {
 		return Report{}, err
 	}
-	r := Report{Window: w, Calls: len(calls), Savings: SplitSavings(rows, p), Usage: FeatureUsage(calls), Overhead: OverheadOf(calls)}
+	templates, err := src.MarkTemplates()
+	if err != nil {
+		return Report{}, err
+	}
+	r := Report{Window: w, Calls: len(calls), Savings: SplitSavings(rows, p), Usage: FeatureUsage(calls), Overhead: OverheadOf(calls), Templates: templates}
 	perCh := map[string]*ChannelTokens{}
 	var order []string
 	for _, c := range calls {

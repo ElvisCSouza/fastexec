@@ -61,6 +61,8 @@ type SavingRow struct {
 type Source interface {
 	Calls(w Window) ([]Call, error)
 	Savings(w Window) ([]SavingRow, error)
+	// MarkTemplates devolve o texto-modelo de cada aviso conhecido (id -> texto); ids antigos podem faltar.
+	MarkTemplates() (map[string]string, error)
 }
 
 func tokensOf(bytes int64) int64 { return int64(float64(bytes) / BytesPerToken) }

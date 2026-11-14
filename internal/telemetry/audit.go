@@ -43,6 +43,7 @@ type AuditEntry struct {
 	DocFrom        string   // .md lido antes, pela mesma identidade, cujo texto cita Doc
 	DocHow         string   // link | dir | name | none | first
 	DocLinks       []string // .md citados no texto que o agente viu (vai para doc_links)
+	MarkDefs       []MarkDef // marcas desta resposta com o texto-modelo (vai para mark_catalog, uma vez por id)
 	Savings        []Saving // economias desta chamada (tabela saving)
 }
 
@@ -212,6 +213,11 @@ func setupAuditSchema(db *sql.DB) {
 		PRIMARY KEY (host, src, dst));`); err != nil {
 		noteFailure("schema doc_links", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS mark_catalog (
+		mark TEXT PRIMARY KEY, template TEXT NOT NULL,
+		first_seen DATETIME DEFAULT CURRENT_TIMESTAMP);`); err != nil {
+		noteFailure("schema mark_catalog", err)
+	}
 	if !existing["cmd_ms"] {
 		if _, err := db.Exec("ALTER TABLE audit ADD COLUMN cmd_ms INTEGER NOT NULL DEFAULT -1;"); err != nil {
 			noteFailure("schema migration", err)
@@ -269,6 +275,13 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		id, _ := res.LastInsertId()
 		if serr := writeSavings(db, id, e.Savings); serr != nil {
 			return serr
+		}
+	}
+	if err == nil {
+		for _, d := range e.MarkDefs {
+			if _, merr := db.Exec(`INSERT OR IGNORE INTO mark_catalog (mark, template) VALUES (?, ?)`, d.Mark, d.Template); merr != nil {
+				return merr
+			}
 		}
 	}
 	if err == nil && e.Doc != "" {

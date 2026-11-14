@@ -279,6 +279,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		ArgsHash:       telemetry.ArgsHash(rawArgs),
 		OutHash:        telemetry.ShortHash(outText),
 		Marks:          telemetry.Marks(outText, len(notes) > 0),
+		MarkDefs:       telemetry.MarkDefs(outText),
 		Truncated:      name == "exec" && tools.IsTruncated(outText),
 		NoResult:       name == "exec" && tools.IsNoResult(outText),
 		Savings:        savings,

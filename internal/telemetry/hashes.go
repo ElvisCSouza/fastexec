@@ -66,6 +66,43 @@ func Marks(out string, adjusted bool) (res string) {
 	if !strings.Contains(out, "[FastExec") {
 		return strings.Join(marks, ",")
 	}
+	for _, m := range scanMarks(out) {
+		add(m.Mark)
+	}
+	return strings.Join(marks, ",")
+}
+
+// MarkDef is a marker found in a response: its id ("Hint:3f2a") and the template text the id hashes
+// (quoted text, paths, hashes and numbers removed, so it holds no content from the call).
+type MarkDef struct {
+	Mark     string
+	Template string
+}
+
+// MarkDefs lists the distinct markers of a response with their template text. Recorded once per id in
+// `mark_catalog`, so a stored id can be traced back to the rule that said it.
+func MarkDefs(out string) (defs []MarkDef) {
+	defer func() {
+		if recover() != nil {
+			defs = nil
+		}
+	}()
+	if !strings.Contains(out, "[FastExec") {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, m := range scanMarks(out) {
+		if !seen[m.Mark] {
+			seen[m.Mark] = true
+			defs = append(defs, m)
+		}
+	}
+	return defs
+}
+
+// scanMarks finds every marker line of a response, in order.
+func scanMarks(out string) []MarkDef {
+	var res []MarkDef
 	for _, line := range strings.Split(out, "\n") {
 		loc := markRe.FindStringSubmatchIndex(line)
 		if loc == nil {
@@ -79,11 +116,12 @@ func Marks(out string, adjusted bool) (res string) {
 		if len(rest) > markLineMx {
 			rest = rest[:markLineMx]
 		}
+		template := strings.TrimSpace(markVolRe.ReplaceAllString(rest, ""))
 		id := "0000" // marker with nothing after it
-		if h := ShortHash(strings.TrimSpace(markVolRe.ReplaceAllString(rest, ""))); len(h) >= 4 {
+		if h := ShortHash(template); len(h) >= 4 {
 			id = h[:4]
 		}
-		add(kind + ":" + id)
+		res = append(res, MarkDef{Mark: kind + ":" + id, Template: template})
 	}
-	return strings.Join(marks, ",")
+	return res
 }

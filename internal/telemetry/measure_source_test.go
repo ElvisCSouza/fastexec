@@ -66,6 +66,29 @@ func TestMigracaoCmdMs(t *testing.T) {
 	}
 }
 
+// O catálogo liga o id gravado ao texto-modelo da regra, sem guardar conteúdo da chamada.
+func TestMarkCatalogGravaTemplateUmaVez(t *testing.T) {
+	db := openTestDB(t)
+	out := "ok\n[FastExec Hint] Slicing 'a.go' by lines 12 times\n[FastExec Auto-Remediation] 'cat x' was run as read_file"
+	for i := 0; i < 2; i++ { // a segunda chamada não duplica nem falha
+		if err := writeEntry(db, AuditEntry{Tool: "exec", Success: true, Marks: Marks(out, false), MarkDefs: MarkDefs(out)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tpl, err := sqlSource{db}.MarkTemplates()
+	if err != nil || len(tpl) != 2 {
+		t.Fatalf("catálogo: %v (%v)", tpl, err)
+	}
+	for id, text := range tpl {
+		if strings.Contains(text, "a.go") || strings.Contains(text, "12") {
+			t.Errorf("%s guardou conteúdo da chamada: %q", id, text)
+		}
+	}
+	if id := strings.Split(Marks(out, false), ",")[0]; tpl[id] == "" {
+		t.Errorf("id %s sem texto no catálogo: %v", id, tpl)
+	}
+}
+
 func TestRenderMeasureTexto(t *testing.T) {
 	db := openTestDB(t)
 	if err := writeEntry(db, AuditEntry{Tool: "exec", Success: true, EstTokensOut: 10, Client: "c#1"}); err != nil {

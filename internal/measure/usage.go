@@ -17,11 +17,12 @@ type Use struct {
 type Usage struct {
 	Tools []Use // por ferramenta
 	Marks []Use // por tipo de marca (inclui os conhecidos com zero)
+	Rules []Use // por aviso individual ("Hint:18f4"): cada id é uma regra
 }
 
 // FeatureUsage conta chamadas e canais distintos por ferramenta e por tipo de marca.
 func FeatureUsage(calls []Call) Usage {
-	tools, marks := newCounter(), newCounter()
+	tools, marks, rules := newCounter(), newCounter(), newCounter()
 	for _, k := range KnownMarkKinds {
 		marks.touch(k)
 	}
@@ -29,9 +30,10 @@ func FeatureUsage(calls []Call) Usage {
 		tools.add(c.Tool, c.Channel)
 		for _, m := range splitMarks(c.Marks) {
 			marks.add(markKind(m), c.Channel)
+			rules.add(m, c.Channel)
 		}
 	}
-	return Usage{Tools: tools.uses(), Marks: marks.uses()}
+	return Usage{Tools: tools.uses(), Marks: marks.uses(), Rules: rules.uses()}
 }
 
 type counter struct {

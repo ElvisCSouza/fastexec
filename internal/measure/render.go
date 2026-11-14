@@ -38,7 +38,9 @@ func (r Report) Render() string {
 		fmt.Fprintf(&b, "   aviso      %-16s %6d chamadas  %3d canais\n", u.Name, u.Calls, u.Channels)
 	}
 
-	b.WriteString("\n4. Tempo que o FastExec acrescenta ao exec\n")
+	b.WriteString(r.renderRules())
+
+	b.WriteString("\n\n4. Tempo que o FastExec acrescenta ao exec\n")
 	o := r.Overhead
 	if o.N == 0 {
 		fmt.Fprintf(&b, "   Sem dados ainda (%d exec sem o tempo do comando registrado).\n", o.Unmeasured)
@@ -60,6 +62,32 @@ func (r Report) Render() string {
 		b.WriteString("   Tipo de tarefa não é registrado: tokens por tipo de tarefa fica para a fase do A/B.\n")
 	}
 	return b.String()
+}
+
+// maxRulesShown e ruleTextMax mantêm a lista de avisos curta: o que importa é o topo.
+const (
+	maxRulesShown = 8
+	ruleTextMax   = 70
+)
+
+// renderRules lista os avisos mais frequentes pelo id, com o texto-modelo quando o catálogo o conhece.
+func (r Report) renderRules() string {
+	var b strings.Builder
+	b.WriteString("   Avisos mais frequentes (cada id é uma regra):\n")
+	shown := r.Usage.Rules
+	if len(shown) > maxRulesShown {
+		shown = shown[:maxRulesShown]
+	}
+	for _, u := range shown {
+		text, ok := r.Templates[u.Name]
+		if !ok {
+			text = "(texto desconhecido: id anterior ao catálogo)"
+		} else if len([]rune(text)) > ruleTextMax {
+			text = string([]rune(text)[:ruleTextMax]) + "…"
+		}
+		fmt.Fprintf(&b, "     %-22s %5d x %2d canais  %s\n", u.Name, u.Calls, u.Channels, text)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func num(n int64) string {

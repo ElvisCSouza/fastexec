@@ -66,6 +66,23 @@ func (s sqlSource) Savings(w measure.Window) ([]measure.SavingRow, error) {
 	return out, rows.Err()
 }
 
+func (s sqlSource) MarkTemplates() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT mark, template FROM mark_catalog`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, tpl string
+		if err := rows.Scan(&id, &tpl); err != nil {
+			return nil, err
+		}
+		out[id] = tpl
+	}
+	return out, rows.Err()
+}
+
 // measureWindow converte o filtro do `stats` na janela do domínio.
 func measureWindow(f StatsFilter) measure.Window {
 	return measure.Window{Today: f.Today, Hours: f.PeriodH}

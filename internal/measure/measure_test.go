@@ -131,6 +131,9 @@ type fakeSource struct {
 
 func (f fakeSource) Calls(Window) ([]Call, error)        { return f.calls, nil }
 func (f fakeSource) Savings(Window) ([]SavingRow, error) { return f.saving, nil }
+func (f fakeSource) MarkTemplates() (map[string]string, error) {
+	return map[string]string{"Hint:1": "Slicing a file by lines through exec"}, nil
+}
 
 func TestBuildAndRender(t *testing.T) {
 	src := fakeSource{
@@ -153,7 +156,8 @@ func TestBuildAndRender(t *testing.T) {
 		"Medida:     2.000 tokens", "Estimativa: 1.000 tokens",
 		"raw_flag", "retry_after_cut", "repeated_hint", // todos os detectores aparecem, mesmo com zero
 		"1 exec medidos", "1 exec antigos sem medição",
-		"aviso      Rewrite", // funcionalidade sem uso visível
+		"aviso      Rewrite",                // funcionalidade sem uso visível
+		"Hint:1", "Slicing a file by lines", // aviso com texto do catálogo
 		"não informa id de conversa",
 	} {
 		if !strings.Contains(out, want) {
