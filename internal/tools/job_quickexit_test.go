@@ -9,12 +9,12 @@ import (
 	"homelab/fastexec/internal/transport"
 )
 
-// shortProbe deixa os testes rápidos: a sondagem de largada do start vale 1,5 s no código de produção.
+// shortProbe deixa os testes rápidos: a espera automática do start vale 12 s no código de produção.
 func shortProbe(t *testing.T) {
 	t.Helper()
-	old := jobStartProbe
-	jobStartProbe = 800 * time.Millisecond
-	t.Cleanup(func() { jobStartProbe = old })
+	old := jobStartBudget
+	jobStartBudget = 800 * time.Millisecond
+	t.Cleanup(func() { jobStartBudget = old })
 }
 
 // jobIDFrom extrai o id da resposta do 'start' local ("id:      job-x").

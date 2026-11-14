@@ -13,9 +13,17 @@ import (
 // arquivo que não existe) respondia só "[job] started", e o modelo precisava de status + tail/read_file para ver o
 // erro (medido no P4 do bench ciclo1b: +37,7% de tokens). Aqui o start/status/wait/tail já devolvem rc, vida e log.
 
-// jobStartProbe: quanto o 'start' espera antes de responder. 1,5 s cobre o comando que morre na largada e não atrapalha
-// o job que continua (a resposta é a de sempre). Variável só para os testes encurtarem.
-var jobStartProbe = 1500 * time.Millisecond
+// jobStartBudget: quanto o 'start' espera, sem parâmetro extra, antes de responder. Se o comando terminar nesse prazo,
+// a resposta já traz rc e saída (dispensa start + wait). Se não, o job segue e a resposta é a de sempre, com o id.
+// 12 s cobre build/teste curto sem prender a chamada: o teto do cliente é 60 s e o start nunca passa disso.
+// Medido na telemetria de 14/11: waits de até 10–20 s eram ~19 de 62; cada start de job vivo paga o orçamento inteiro.
+// Variável só para os testes encurtarem.
+var jobStartBudget = 12 * time.Second
+
+// startAutoNote: linha [FastExec ...] que avisa que a espera automática do start resolveu a chamada.
+func startAutoNote() string {
+	return fmt.Sprintf("[FastExec auto-wait] start esperou até %s: o comando terminou, saída abaixo (sem wait/tail).", human(jobStartBudget))
+}
 
 // jobStateRunning: estado de um job ainda vivo (transport/localjob_windows.go).
 const jobStateRunning = "RUNNING"
@@ -169,14 +177,16 @@ func localJobExitReport(j *transport.LocalJobInfo) string {
 	return b.String()
 }
 
-// localStartReport é a resposta do 'start' local: se o processo já morreu (com log curto), responde com rc e log; se
-// continua rodando, a resposta é exatamente a de antes.
+// localStartReport é a resposta do 'start' local (sem await): espera até jobStartBudget. Se o processo terminou nesse
+// prazo, responde com rc e saída (a mesma forma do await); se continua rodando, a resposta é exatamente a de antes.
 func localStartReport(m *transport.LocalJobMeta) string {
-	if j, finished, err := transport.LocalJobWait(m.ID, jobStartProbe); err == nil && finished {
+	if j, finished, err := transport.LocalJobWait(m.ID, jobStartBudget); err == nil && finished {
 		if isQuickExit(j) {
-			return localJobExitReport(j)
+			return startAutoNote() + "\n" + localJobExitReport(j)
 		}
-		m = &j.Meta // o job terminou no intervalo da sondagem: a nota abaixo diz isso
+		tail, _ := transport.TailLocalJob(m.ID, 30)
+		tail = capOutput(cleanOutput(tail))
+		return startAutoNote() + "\n" + waitReport(j.Meta.ID, "local|"+j.Meta.ID, tail, true, localStateText(j))
 	}
 	note := ""
 	if m.State != jobStateRunning {

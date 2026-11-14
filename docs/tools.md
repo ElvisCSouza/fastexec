@@ -466,13 +466,19 @@ exists can bring the caller list above.
 Background work that outlives the call: dev servers, watchers, builds, tunnels.
 
 - Actions: `start`, `wait`, `status`, `list`, `tail`, `stop`.
-- `wait` blocks up to 35 s and returns the progress and the log so far; it tells the model not to poll back to back.
+- `start` waits up to 12 s by itself (no parameter). A command that ends inside that window comes back in the same
+  call with its exit code and output, prefixed by `[FastExec auto-wait]`; no `wait` or `tail` is needed. A job still
+  running at 12 s answers with the `id` as before. Cost: every start of a long job pays the 12 s.
+- `start` with `await: true` (command that ends) waits up to the client's limit (`await_s`: 40 s by default, 100 s for
+  Claude Code) and returns the output. Without the flag the 12 s window above applies.
+- `wait` blocks up to 45 s per call and returns the progress and the log so far; it tells the model not to poll back
+  to back.
 - Fast failure: a job that dies right after starting (missing interpreter, bad flag, file that is not there) answers
   with the exit code and the log in the same call, instead of `started` followed by `status` + `tail`/`read_file`.
-  `start` waits ~1.5 s before answering; `status`, `wait` and `tail` do the same for a job that lived less than ~10 s
-  and left a short log (< 1 KB). When the exit code says the program does not exist (`python`, `pip`, `node`, `go`…),
-  the reply carries the same `[FastExec FastHint]` the `exec` tool already gives. A job that is still running answers
-  exactly as before, and `stop`ped jobs keep the old `STOPPED` reply.
+  `status`, `wait` and `tail` do the same for a job that lived less than ~10 s and left a short log (< 1 KB). When the
+  exit code says the program does not exist (`python`, `pip`, `node`, `go`…), the reply carries the same
+  `[FastExec FastHint]` the `exec` tool already gives. A job that is still running answers exactly as before, and
+  `stop`ped jobs keep the old `STOPPED` reply.
 - A finished job says how long it lived: `ran 50.3s` in the `status`/`tail` header and in `list` (`LOCAL`) or in the
   `[job] EXITED` line of a Linux job that ended after the fast-failure window. Before, `status`/`list` showed `up ...`
   counted from the creation — still growing long after the process was gone — and the raw `systemctl` text never named

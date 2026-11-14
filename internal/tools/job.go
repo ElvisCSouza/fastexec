@@ -31,6 +31,10 @@ var startAwaitMax = 40 * time.Second
 // segue ativo em vez de deixar o transporte JSON-RPC cair. Variável só para os testes encurtarem.
 var jobWaitMax = 45 * time.Second // + 5 s de folga do transporte remoto = 50 s, abaixo dos 55 s do proxy e dos 60 s do cliente
 
+// jobProbeLogLines: linhas do log que a sondagem do start traz (o trecho mostrado é cortado depois, em quickExitLines
+// para a falha rápida; o start que terminou no orçamento mostra mais saída).
+const jobProbeLogLines = 30
+
 // waitTimeoutMarker é impresso pelo laço remoto quando o prazo do wait acaba com o job ainda ativo.
 const waitTimeoutMarker = "__FASTEXEC_WAIT_TIMEOUT__"
 
@@ -47,12 +51,14 @@ const (
 func linuxJobProbe(unit string, wait, withLog bool) string {
 	p := ""
 	if wait {
-		p = fmt.Sprintf("sleep %.1f; ", jobStartProbe.Seconds())
+		// espera até jobStartBudget ou até o unit terminar (o que vier primeiro)
+		p = fmt.Sprintf("end=$(( $(date +%%s) + %d )); while systemctl --user is-active --quiet '%s.service'; do if [ $(date +%%s) -ge $end ]; then break; fi; sleep 0.5; done; ",
+			int(jobStartBudget/time.Second), unit)
 	}
 	p += fmt.Sprintf("if systemctl --user is-active --quiet '%s.service'; then echo %s; else echo %s; systemctl --user show -p ExecMainStatus -p ActiveEnterTimestampMonotonic -p InactiveEnterTimestampMonotonic '%s.service';",
 		unit, jobRunningMarker, jobExitedMarker, unit)
 	if withLog {
-		p += fmt.Sprintf(" echo %s; journalctl --user-unit='%s.service' -n %d --no-pager;", jobLogMarker, unit, quickExitLines)
+		p += fmt.Sprintf(" echo %s; journalctl --user-unit='%s.service' -n %d --no-pager;", jobLogMarker, unit, jobProbeLogLines)
 	}
 	return p + " fi"
 }
@@ -204,10 +210,14 @@ func handleJob(args JobArgs) (string, error) {
 			return fmt.Sprintf("[Job Start Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("could not start job: %s", res.Stderr)
 		}
 
-		if _, state, log, rc, life, hasLife := splitLinuxProbe(res.Stdout); state == "EXITED" && (!hasLife || life <= quickExitLife) {
-			// morreu na largada: rc e log no mesmo turno, em vez de "started" + status + tail
-			return fmt.Sprintf("%s\nUnit:    %s.service\nCommand: %s\n%s\nNext: job(action='tail', job_id='%s') for the whole log.",
-				linuxExitHead(rc, life, hasLife), unit, args.Command, linuxExitTail(rc, life, hasLife, args.Command, log), unit), nil
+		if _, state, log, rc, life, hasLife := splitLinuxProbe(res.Stdout); state == "EXITED" {
+			// terminou dentro do orçamento do start: rc e saída no mesmo turno, sem "started" + wait/tail
+			if !hasLife || life <= quickExitLife {
+				return fmt.Sprintf("%s\n%s\nUnit:    %s.service\nCommand: %s\n%s\nNext: job(action='tail', job_id='%s') for the whole log.",
+					startAutoNote(), linuxExitHead(rc, life, hasLife), unit, args.Command, linuxExitTail(rc, life, hasLife, args.Command, log), unit), nil
+			}
+			return fmt.Sprintf("%s\n%sUnit:    %s.service\nCommand: %s\n%s", startAutoNote(), linuxExitRan(rc, life, hasLife),
+				unit, args.Command, capOutput(cleanOutput(log))), nil
 		}
 
 		return fmt.Sprintf("[job] started\nUnit:    %s.service\nCommand: %s\nStatus:  job(action='status', job_id='%s')\nWait:    job(action='wait', job_id='%s')\nTail:    job(action='tail', job_id='%s')",
