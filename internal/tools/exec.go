@@ -247,7 +247,9 @@ func handleExec(args ExecArgs) (string, error) {
 		// Listagem recursiva grande vira uma linha por diretório (listing_group.go). Nenhum arquivo é omitido: o
 		// texto é o mesmo, reagrupado. O '--raw' (rawEscape) desliga.
 		if grouped, note, ok := regroupListing(label, res.Stdout); ok {
+			raw := res.Stdout
 			res.Stdout, listingHint = strings.TrimRight(grouped, "\r\n")+"\n", note
+			noteListingGroup(raw, res.Stdout)
 		}
 	}
 

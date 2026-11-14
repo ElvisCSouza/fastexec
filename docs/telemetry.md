@@ -55,7 +55,7 @@ fastexec stats --measure --today    # also 24h, 7d ...
 Five short sections, computed from the same database (code in `internal/measure`):
 
 1. **Savings, measured vs estimated.** *Measured* is text FastExec removed from an output the call actually
-   produced (`clean`, `cut`). *Estimate* is what a saving assumes the model would have done without FastExec
+   produced (`clean`, `cut`, `group` for regrouped listings, `dedup` for repeated output, `readcap` for big reads). *Estimate* is what a saving assumes the model would have done without FastExec
    (`slice`, `retry`, `timeout`, `schema`); it was not observed. An unknown category counts as an estimate.
 2. **Harm signals**, one detector each: `retry_after_cut` (the same call repeated within 3 calls after a cut
    output), `raw_flag` (`--raw` used), `repeated_hint` (the same hint shown 3 or more times in one channel).

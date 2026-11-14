@@ -366,7 +366,9 @@ func capWholeFile(data string, path string) string {
 	}
 	shown := strings.Count(data[:cut], "\n") + 1
 	total := len(splitLines(data))
-	return data[:cut] + fmt.Sprintf(
+	out := data[:cut] + fmt.Sprintf(
 		"\n\n[FastExec] File has %d lines (%d KB); showing lines 1-%d. Next: code_outline(path) to locate a symbol, then read_file(start_line, end_line) or read_file(ranges='a-b,c-d') or read_file(pattern='regex', context=3).",
 		total, len(data)/1024, shown)
+	noteReadCap(len(data), len(out), shown, total)
+	return out
 }

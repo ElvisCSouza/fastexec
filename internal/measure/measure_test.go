@@ -8,7 +8,7 @@ import (
 func TestPolicyDefaultAndUnknown(t *testing.T) {
 	p := DefaultPolicy()
 	casos := map[string]Basis{
-		"clean": Measured, "cut": Measured,
+		"clean": Measured, "cut": Measured, "group": Measured, "dedup": Measured, "readcap": Measured,
 		"slice": Counterfactual, "retry": Counterfactual, "timeout": Counterfactual, "schema": Counterfactual,
 		"categoria_nova": Counterfactual, // desconhecida nunca infla o medido
 	}

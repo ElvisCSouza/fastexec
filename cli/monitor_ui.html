@@ -127,6 +127,9 @@ const TOKEN="__TOKEN__";
 const CATS={
  clean:{name:"Cleaner output",color:"#0B5F4A",why:"Progress bars, colors, repeated lines and padding are removed before the model reads them.",did:"Removed noise from the command output."},
  cut:{name:"Huge output cut",color:"#2A8A70",why:"Long output is cut to its head and tail; the full text is saved to a file with a note on how to read the rest.",did:"Cut the output and saved the full text to a file."},
+ group:{name:"Listings grouped",color:"#3F9C84",why:"A long recursive file listing becomes one line per folder; the same file names, far less text.",did:"Regrouped a recursive listing by folder."},
+ dedup:{name:"Repeated output skipped",color:"#4DA58D",why:"A command that printed exactly what it printed last time returns a short notice instead of the same text again.",did:"Skipped output identical to the previous run."},
+ readcap:{name:"Big read cut",color:"#6FB8A3",why:"A whole-file read above the cap returns the first part and the call that continues.",did:"Cut the file read at the cap and said how to read on."},
  slice:{name:"Only the part you need",color:"#5FB39B",why:"A slice or summary of the file instead of the whole file.",did:"Returned a slice or outline instead of the whole file."},
  edit:{name:"Edit instead of rewrite",color:"#98CDBD",why:"Only the changed text is sent instead of the whole file.",did:"Applied the change without resending the whole file."},
  retry:{name:"Fewer retries",color:"#7C9F3D",why:"Calls like cat, dir, sleep, a redundant cd or a wrapped read are fixed or answered on the spot, with no failed attempt first.",did:"Answered or fixed the call itself, so no failed attempt and retry.",est:true},

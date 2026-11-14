@@ -18,6 +18,7 @@ package tools
 
 import (
 	"fmt"
+	"homelab/fastexec/internal/telemetry"
 	"os"
 	"strings"
 )
@@ -31,6 +32,12 @@ const (
 )
 
 func listingGroupOff() bool { return os.Getenv("FASTEXEC_NO_LISTING_GROUP") != "" }
+
+// noteListingGroup anota a economia (medida) do reagrupamento: bytes da listagem original contra os da agrupada.
+func noteListingGroup(raw, grouped string) {
+	telemetry.NoteSavingDetail(telemetry.CatGroup, len(raw), len(grouped),
+		fmt.Sprintf("recursive listing regrouped by directory: %d lines became %d", savLines(raw), savLines(grouped)))
+}
 
 // listingNoiseDirs: pastas cujo interior quase nunca é o que se procurou — o repositório do git, dependências
 // baixadas e saída de build. A comparação ignora maiúscula/minúscula ('.VS' no Windows).

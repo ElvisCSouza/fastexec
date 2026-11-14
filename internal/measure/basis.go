@@ -50,6 +50,9 @@ func DefaultPolicy() *CatPolicy {
 	return NewCatPolicy().
 		Register("clean", Measured).
 		Register("cut", Measured).
+		Register("group", Measured).
+		Register("dedup", Measured).
+		Register("readcap", Measured).
 		Register("slice", Counterfactual).
 		Register("retry", Counterfactual).
 		Register("timeout", Counterfactual).

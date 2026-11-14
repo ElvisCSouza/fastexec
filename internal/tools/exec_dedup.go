@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"homelab/fastexec/internal/telemetry"
 	"os"
 	"strings"
 	"sync"
@@ -61,6 +62,9 @@ func dedupExecOutput(args ExecArgs, label, out string) string {
 		return out
 	}
 	e.stubbed = true
-	return fmt.Sprintf("[FastExec] Identical output to the same command run %ds ago (%d lines, ~%d tokens, sha %s): not repeated, nothing changed. Use what you already have; repeat the call once more only if you need the full text again.",
+	stub := fmt.Sprintf("[FastExec] Identical output to the same command run %ds ago (%d lines, ~%d tokens, sha %s): not repeated, nothing changed. Use what you already have; repeat the call once more only if you need the full text again.",
 		int(prev.Seconds()), strings.Count(out, "\n")+1, len(out)/4, h[:8])
+	telemetry.NoteSavingDetail(telemetry.CatDedup, len(out), len(stub),
+		fmt.Sprintf("identical to the same command run %ds ago: %d lines not repeated", int(prev.Seconds()), strings.Count(out, "\n")+1))
+	return stub
 }

@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"unicode/utf8"
+
+	"homelab/fastexec/internal/telemetry"
 )
 
 type readMode int
@@ -83,5 +85,13 @@ func capRead(data string, args ReadFileArgs) string {
 			}
 		}
 	}
-	return b.String()
+	out := b.String()
+	noteReadCap(len(data), len(out), shown, shown+moreLines)
+	return out
+}
+
+// noteReadCap anota a economia (medida) de uma leitura cortada no limite: o texto que o limite deixou de devolver.
+func noteReadCap(before, after, shownLines, totalLines int) {
+	telemetry.NoteSavingDetail(telemetry.CatReadCap, before, after,
+		fmt.Sprintf("read cap: returned %d of %d lines, with the call that continues", shownLines, totalLines))
 }

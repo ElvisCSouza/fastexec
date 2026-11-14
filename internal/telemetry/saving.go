@@ -24,6 +24,9 @@ const (
 	CatRetry   = "retry"   // erro corrigido ou explicado antes de falhar (uma ida ao modelo a menos)
 	CatTimeout = "timeout" // chamada que seria cortada pelo cliente e devolveu o que tinha
 	CatSchema  = "schema"  // lista de ferramentas menor (esquemas sob demanda)
+	CatGroup   = "group"   // listagem recursiva reagrupada por diretório (mesmos nomes, menos texto)
+	CatDedup   = "dedup"   // saída idêntica à da execução anterior, devolvida como aviso curto
+	CatReadCap = "readcap" // leitura inteira cortada no limite, com a instrução de como continuar
 )
 
 // AvoidedRoundTripMs é o tempo médio estimado de uma ida ao modelo evitada (suposição, não medição).
