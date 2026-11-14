@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"homelab/fastexec/internal/analytics"
-	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/transport"
 )
 
@@ -36,9 +35,19 @@ func HandleSql(args SqlArgs) (string, error) {
 		return "", fmt.Errorf("give 'database' (SQLite) or 'session' (analytic DuckDB)")
 	}
 
-	host := args.Host
-	if host == "" {
-		host = config.Get().Default()
+	// Sem 'host', um caminho de unidade Windows no 'database' indica o próprio PC (mesma decisão do exec/job):
+	// roda em 'local' e a saída abre com a nota de auto-remediação. Host explícito nunca é trocado.
+	host, note := localHostForWindowsPath(args.Host, args.Database)
+
+	target, err := transport.ResolveHost(host)
+	if err != nil {
+		return "", err
+	}
+
+	// Local: a consulta roda in-process (driver embutido), sem depender de sqlite3/base64 no Windows.
+	if target.IsLocal {
+		out, qerr := querySQLiteLocal(args.Database, args.Query)
+		return withHostNote(note, out, qerr), qerr
 	}
 
 	b64Query := base64.StdEncoding.EncodeToString([]byte(args.Query))

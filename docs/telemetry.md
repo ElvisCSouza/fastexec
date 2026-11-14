@@ -36,11 +36,13 @@ fastexec stats 24h          # last 24 hours (also 7d, 30d...)
 fastexec stats --today
 fastexec stats --errors     # only failures
 fastexec stats --tools      # only the per-tool table
+fastexec stats --help       # short usage
 ```
 
 The report shows totals, success rate, latency (average and p95), traffic and estimated tokens, a per-tool table,
-the largest returns and the latest errors. The database is plain SQLite: the `sql` module or any SQLite tool can
-query the `audit` table directly.
+the largest returns, the latest errors and a short `SAVINGS` block for the same period (tokens read, tokens saved,
+"without FastExec" and the percentage — the same numbers as the savings report, see `docs/savings.md`). The database
+is plain SQLite: the `sql` module or any SQLite tool can query the `audit` table directly.
 
 `handoff` reads it to build session briefings (files touched, failed commands).
 

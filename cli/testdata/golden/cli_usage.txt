@@ -42,6 +42,17 @@ Usage: fastexec sql "<query>" [session_or_db] [host]
 --- stderr
 
 
+$ fastexec stats --help
+exit: 0
+--- stdout
+usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--reset|--clear] [<period>]
+  <period>  1h, 24h, 7d ... (hours or days; bare 'today' and 'week' also work)
+  Shows telemetry & audit for the period, plus a savings summary.
+  --errors   only error records      --tools   only the per-tool breakdown
+  --reset    delete the telemetry database
+--- stderr
+
+
 $ fastexec job start
 exit: 1
 --- stdout

@@ -762,7 +762,7 @@ loading it, `enable`/`disable` add or remove them from the tool list (the client
 
 | Module | Tools |
 |---|---|
-| `sql` | `sql`: DuckDB (straight on CSV/JSON/Parquet files, or a named session) and SQLite files, JSON output |
+| `sql` | `sql`: DuckDB (straight on CSV/JSON/Parquet files, or a named session) and SQLite files, JSON output. On the local Windows host the SQLite query runs in-process (embedded driver) — same JSON as on a Linux host; a missing file or a bad query is a clear error, never `[]`. A Windows drive path in `database` with no `host` runs on `local`, with the `[FastExec Auto-Remediation]` note (same rule as `exec`) |
 | `hosts` | `ping` (latency to the configured hosts), `get_file`, `put_file` (binary transfer over the daemon) |
 | `docker` | `docker_ps`, `docker_logs` |
 

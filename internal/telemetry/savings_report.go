@@ -103,6 +103,113 @@ func periodClauses(period string) (auditWhere, savingWhere, bucket string, n int
 
 func tokens(bytes int64) int64 { return int64(float64(bytes) / BytesPerToken) }
 
+// SavingsTotals agrupa os números contábeis da economia de uma janela: chamadas, tokens lidos e economizados,
+// percentual, custo e idas evitadas. É a fonte única do painel e do `fastexec stats` — os dois consomem a mesma
+// soma para que os números nunca diverjam (invariante de docs/savings.md).
+type SavingsTotals struct {
+	Calls           int64
+	FailedCalls     int64
+	ActiveMs        int64
+	SentTokens      int64
+	SavedTokens     int64
+	WithoutTokens   int64
+	Percent         float64
+	CostSavedUSD    float64
+	CostWithoutUSD  float64
+	CostWithUSD     float64
+	TripsAvoided    int64
+	SavedMs         int64
+	FailuresAvoided int64
+	Cats            []CatTotal
+}
+
+// savingsSince aplica às janelas brutas o corte savings_since (antes dele não há tamanho original) e a exclusão
+// de cat='edit' (a economia de edição não é mais contada: o edit nativo também troca só o trecho).
+func savingsSince(db *sql.DB, auditWhere, savingWhere string) (string, string) {
+	var since string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='savings_since'`).Scan(&since); err == nil && since != "" {
+		auditWhere += " AND timestamp >= '" + since + "'"
+		savingWhere += " AND timestamp >= '" + since + "'"
+	}
+	return auditWhere, savingWhere + " AND cat <> 'edit'"
+}
+
+// savingsTotals soma os totais da janela: uma linha na audit (chamadas/tokens lidos) e um GROUP BY na saving
+// (economia por categoria). Em erro devolve o que deu para somar junto com o erro.
+func savingsTotals(db *sql.DB, auditWhere, savingWhere string) (SavingsTotals, error) {
+	st := SavingsTotals{Cats: []CatTotal{}}
+	var sentTok sql.NullInt64
+	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0),
+		COALESCE(SUM(duration_ms),0), SUM(est_tokens_out) FROM audit WHERE `+auditWhere).Scan(&st.Calls, &st.FailedCalls, &st.ActiveMs, &sentTok); err != nil {
+		return st, err
+	}
+	st.SentTokens = sentTok.Int64
+
+	rows, err := db.Query(`SELECT cat, COALESCE(SUM(bytes),0), COUNT(*), COALESCE(MIN(exact),1), COALESCE(SUM(trips),0), COALESCE(SUM(ms),0)
+		FROM saving WHERE ` + savingWhere + ` GROUP BY cat ORDER BY SUM(bytes) DESC`)
+	if err != nil {
+		return st, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c CatTotal
+		var exact, trips, ms int64
+		if err := rows.Scan(&c.Cat, &c.Bytes, &c.Events, &exact, &trips, &ms); err != nil {
+			return st, err
+		}
+		c.Exact = exact == 1
+		c.Tokens = tokens(c.Bytes)
+		st.SavedTokens += c.Tokens
+		st.TripsAvoided += trips
+		st.SavedMs += ms
+		if c.Cat == CatRetry || c.Cat == CatTimeout {
+			st.FailuresAvoided += c.Events
+		}
+		st.Cats = append(st.Cats, c)
+	}
+	if err := rows.Err(); err != nil {
+		return st, err
+	}
+	st.WithoutTokens = st.SentTokens + st.SavedTokens
+	if st.WithoutTokens > 0 {
+		st.Percent = float64(st.SavedTokens) / float64(st.WithoutTokens) * 100
+	}
+	usd := func(t int64) float64 { return float64(t) * DefaultUSDPerMTok / 1e6 }
+	st.CostSavedUSD, st.CostWithoutUSD, st.CostWithUSD = usd(st.SavedTokens), usd(st.WithoutTokens), usd(st.SentTokens)
+	return st, nil
+}
+
+// savingsTotalsFor devolve os totais do painel ("today", "week" ou "all") — a mesma soma de buildSavingsReport,
+// sem séries nem atividade recente.
+func savingsTotalsFor(db *sql.DB, period string) (SavingsTotals, error) {
+	if period != "week" && period != "all" {
+		period = "today"
+	}
+	aw, sw, _, _, _, _ := periodClauses(period)
+	aw, sw = savingsSince(db, aw, sw)
+	return savingsTotals(db, aw, sw)
+}
+
+// savingsTotalsForStats devolve os totais para a janela pedida no `fastexec stats` (today, N horas/dias ou tudo).
+// 168h usa as cláusulas de "week" do painel, e "all"/"today" as cláusulas próprias — nesses períodos os números
+// ficam idênticos ao relatório do painel; as demais janelas usam o mesmo corte de timestamp da visão geral.
+func savingsTotalsForStats(db *sql.DB, filter StatsFilter) (SavingsTotals, error) {
+	var aw, sw string
+	switch {
+	case filter.Today:
+		aw, sw, _, _, _, _ = periodClauses("today")
+	case filter.PeriodH == 168:
+		aw, sw, _, _, _, _ = periodClauses("week")
+	case filter.PeriodH > 0:
+		w := fmt.Sprintf("timestamp >= datetime('now', '-%d hours')", filter.PeriodH)
+		aw, sw = w, w
+	default:
+		aw, sw = "1=1", "1=1"
+	}
+	aw, sw = savingsSince(db, aw, sw)
+	return savingsTotals(db, aw, sw)
+}
+
 // BuildSavingsReport lê o banco e monta o relatório do período ("today", "week" ou "all").
 func BuildSavingsReport(period string) (SavingsReport, error) {
 	db, err := GetDB()
@@ -117,51 +224,19 @@ func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
 		period = "today"
 	}
 	aw, sw, bucket, n, start, end := periodClauses(period)
-	var since string
-	if err := db.QueryRow(`SELECT value FROM meta WHERE key='savings_since'`).Scan(&since); err == nil && since != "" {
-		aw += " AND timestamp >= '" + since + "'"
-		sw += " AND timestamp >= '" + since + "'"
-	}
-	sw += " AND cat <> 'edit'" // economia de edicao nao e mais contada: o edit nativo tambem troca so o trecho, o ganho nao e real
+	aw, sw = savingsSince(db, aw, sw)
 	r := SavingsReport{Period: period, SeriesStart: start, SeriesEnd: end, Generated: time.Now().Format("15:04:05"), Cats: []CatTotal{}, Recent: []SavingEvent{}}
 
-	var sentTok sql.NullInt64
-	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN success=0 THEN 1 ELSE 0 END),0),
-		COALESCE(SUM(duration_ms),0), SUM(est_tokens_out) FROM audit WHERE `+aw).Scan(&r.Calls, &r.FailedCalls, &r.ActiveMs, &sentTok); err != nil {
-		return r, err
+	// totais pela mesma soma do CLI (savingsTotals); em erro, o que já foi somado fica no relatório.
+	st, terr := savingsTotals(db, aw, sw)
+	r.Calls, r.FailedCalls, r.ActiveMs, r.SentTokens = st.Calls, st.FailedCalls, st.ActiveMs, st.SentTokens
+	r.SavedTokens, r.TripsAvoided, r.SavedMs, r.FailuresAvoided = st.SavedTokens, st.TripsAvoided, st.SavedMs, st.FailuresAvoided
+	r.WithoutTokens, r.Percent = st.WithoutTokens, st.Percent
+	r.CostSavedUSD, r.CostWithoutUSD, r.CostWithUSD = st.CostSavedUSD, st.CostWithoutUSD, st.CostWithUSD
+	r.Cats = st.Cats
+	if terr != nil {
+		return r, terr
 	}
-	r.SentTokens = sentTok.Int64
-
-	rows, err := db.Query(`SELECT cat, COALESCE(SUM(bytes),0), COUNT(*), COALESCE(MIN(exact),1), COALESCE(SUM(trips),0), COALESCE(SUM(ms),0)
-		FROM saving WHERE ` + sw + ` GROUP BY cat ORDER BY SUM(bytes) DESC`)
-	if err != nil {
-		return r, err
-	}
-	for rows.Next() {
-		var c CatTotal
-		var exact, trips, ms int64
-		if err := rows.Scan(&c.Cat, &c.Bytes, &c.Events, &exact, &trips, &ms); err != nil {
-			rows.Close()
-			return r, err
-		}
-		c.Exact = exact == 1
-		c.Tokens = tokens(c.Bytes)
-		r.SavedTokens += c.Tokens
-		r.TripsAvoided += trips
-		r.SavedMs += ms
-		if c.Cat == CatRetry || c.Cat == CatTimeout {
-			r.FailuresAvoided += c.Events
-		}
-		r.Cats = append(r.Cats, c)
-	}
-	rows.Close()
-
-	r.WithoutTokens = r.SentTokens + r.SavedTokens
-	if r.WithoutTokens > 0 {
-		r.Percent = float64(r.SavedTokens) / float64(r.WithoutTokens) * 100
-	}
-	usd := func(t int64) float64 { return float64(t) * DefaultUSDPerMTok / 1e6 }
-	r.CostSavedUSD, r.CostWithoutUSD, r.CostWithUSD = usd(r.SavedTokens), usd(r.WithoutTokens), usd(r.SentTokens)
 
 	// série: tokens economizados por intervalo
 	r.Series = make([]int64, n)

@@ -61,6 +61,7 @@ func TestGoldenCLIUsage(t *testing.T) {
 		{"get"},
 		{"put", "local.txt"},
 		{"sql"},
+		{"stats", "--help"},
 		{"job", "start"},
 		{"daemon", "foo"},
 		{"config", "example"},

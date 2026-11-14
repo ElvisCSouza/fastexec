@@ -330,6 +330,13 @@ func cmdStats(subArgs []string) {
 	filter := telemetry.StatsFilter{}
 	for _, arg := range subArgs {
 		switch strings.ToLower(arg) {
+		case "--help", "-h", "help":
+			fmt.Println("usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--reset|--clear] [<period>]")
+			fmt.Println("  <period>  1h, 24h, 7d ... (hours or days; bare 'today' and 'week' also work)")
+			fmt.Println("  Shows telemetry & audit for the period, plus a savings summary.")
+			fmt.Println("  --errors   only error records      --tools   only the per-tool breakdown")
+			fmt.Println("  --reset    delete the telemetry database")
+			return
 		case "--today", "-t":
 			filter.Today = true
 		case "--errors", "-e":
@@ -338,6 +345,10 @@ func cmdStats(subArgs []string) {
 			filter.OnlyTools = true
 		case "--reset", "--clear":
 			filter.ResetDB = true
+		case "today":
+			filter.Today = true
+		case "week":
+			filter.PeriodH = 168
 		default:
 			if h, ok := telemetry.ParsePeriod(arg); ok {
 				filter.PeriodH = h

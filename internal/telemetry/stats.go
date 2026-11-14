@@ -282,7 +282,37 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 		sb.WriteString("No errors in the selected period.\n\n")
 	}
 
+	// Bloco de economia: números vindos da MESMA soma do relatório do painel (savingsTotals), para o CLI e o
+	// painel nunca divergirem (invariante de docs/savings.md). Falha de leitura aqui não derruba o stats.
+	if st, serr := savingsTotalsForStats(db, filter); serr == nil {
+		sb.WriteString("--------------------------------------------------------------------------------\n")
+		sb.WriteString(fmt.Sprintf("SAVINGS (%s)\n", savingsBlockLabel(filter)))
+		sb.WriteString("--------------------------------------------------------------------------------\n")
+		fmt.Fprintf(&sb, "Tokens read: ~%d | Tokens saved: ~%d | Without FastExec: ~%d (%.1f%%)\n",
+			st.SentTokens, st.SavedTokens, st.WithoutTokens, st.Percent)
+		fmt.Fprintf(&sb, "Calls: %d | Round trips avoided: %d | Failures avoided: %d\n",
+			st.Calls, st.TripsAvoided, st.FailuresAvoided)
+		sb.WriteString("\n")
+	}
+
 	return sb.String(), nil
+}
+
+// savingsBlockLabel rotula a janela do bloco de economia (inglês, como o resto da saída do stats).
+func savingsBlockLabel(filter StatsFilter) string {
+	switch {
+	case filter.Today:
+		return "today"
+	case filter.PeriodH == 168:
+		return "last 7 days"
+	case filter.PeriodH > 0 && filter.PeriodH%24 == 0:
+		return fmt.Sprintf("last %d days", filter.PeriodH/24)
+	case filter.PeriodH == 1:
+		return "last hour"
+	case filter.PeriodH > 0:
+		return fmt.Sprintf("last %d hours", filter.PeriodH)
+	}
+	return "all time"
 }
 
 func querySummary(db *sql.DB, whereClause string) (GlobalSummary, []int64, error) {

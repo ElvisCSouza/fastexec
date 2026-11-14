@@ -38,6 +38,9 @@ termina no último intervalo com dado (não estica o resto do dia vazio). Os doi
 - `without_tokens == sent_tokens + saved_tokens`; os fins de curva não podem divergir da tabela "Without/With".
 - `sent_series` é aditivo: relatório de versão antiga chega sem o campo e o front cai no cálculo anterior.
 - Custo é estimativa (`tokens × USD/MTok`), tempo/idas evitadas valem uma ida ao modelo por retentativa evitada.
+- O bloco `SAVINGS` do `fastexec stats` soma com a MESMA função dos totais do relatório (`savingsTotals`): em
+  `today`, `week` (168h) e `all` os números do CLI e do painel são idênticos campo a campo — não existe uma segunda
+  contabilidade. Janelas só do CLI (ex.: 1h, 24h) usam o mesmo corte de `timestamp`.
 - Nada de rede; só SQLite local.
 
 ## Decisões
@@ -53,7 +56,8 @@ termina no último intervalo com dado (não estica o resto do dia vazio). Os doi
 - O fim de curva é "último bucket com dado"; se um bucket do meio estiver vazio a linha atravessa reta por ele.
 
 ## Mapa
-- `internal/telemetry/savings_report.go` — monta o relatório e as duas séries; `BuildSavingsReport` é a porta.
+- `internal/telemetry/savings_report.go` — monta o relatório e as duas séries; `BuildSavingsReport` é a porta; `savingsTotals` é a soma compartilhada com o CLI.
+- `internal/telemetry/stats.go` — bloco `SAVINGS` do `fastexec stats`, consome `savingsTotals`.
 - `internal/telemetry/audit.go` — tabela `audit` (fonte de `est_tokens_out`) e `setupAuditSchema`.
 - `internal/telemetry/saving.go` — tabela `saving` (economia por categoria).
 - `cli/monitor_ui.html` — desenha o gráfico contrafactual, a tabela Without/With e o texto do painel.
