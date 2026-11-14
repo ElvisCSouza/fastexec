@@ -21,8 +21,9 @@ import (
 var jobStartBudget = 12 * time.Second
 
 // startAutoNote: linha [FastExec ...] que avisa que a espera automática do start resolveu a chamada.
+// Em inglês: tudo que o modelo lê segue o AGENTS.md.
 func startAutoNote() string {
-	return fmt.Sprintf("[FastExec auto-wait] start esperou até %s: o comando terminou, saída abaixo (sem wait/tail).", human(jobStartBudget))
+	return fmt.Sprintf("[FastExec auto-wait] start waited up to %s: the command finished, output below (no wait/tail).", human(jobStartBudget))
 }
 
 // jobStateRunning: estado de um job ainda vivo (transport/localjob_windows.go).
@@ -177,6 +178,16 @@ func localJobExitReport(j *transport.LocalJobInfo) string {
 	return b.String()
 }
 
+// startTailCutNote: o comando terminou na janela do start e o log passou das 30 linhas mostradas — a resposta diz o
+// que foi retido e a chamada exata que traz o resto (regra: quando algo é retido, dizer o próximo passo). Com até 30
+// linhas esta nota não existe.
+func startTailCutNote(m *transport.LocalJobMeta, total, shown int) string {
+	if total > 500 { // o tail local traz no máximo 500 linhas: as linhas do começo só com read_file
+		return fmt.Sprintf("(showing %d of %d lines; job(action='tail', job_id='%s', lines=500) for the last 500, read_file '%s' for the rest)", shown, total, m.ID, m.LogPath)
+	}
+	return fmt.Sprintf("(showing %d of %d lines; job(action='tail', job_id='%s', lines=500) for the rest)", shown, total, m.ID)
+}
+
 // localStartReport é a resposta do 'start' local (sem await): espera até jobStartBudget. Se o processo terminou nesse
 // prazo, responde com rc e saída (a mesma forma do await); se continua rodando, a resposta é exatamente a de antes.
 func localStartReport(m *transport.LocalJobMeta) string {
@@ -186,7 +197,11 @@ func localStartReport(m *transport.LocalJobMeta) string {
 		}
 		tail, _ := transport.TailLocalJob(m.ID, 30)
 		tail = capOutput(cleanOutput(tail))
-		return startAutoNote() + "\n" + waitReport(j.Meta.ID, "local|"+j.Meta.ID, tail, true, localStateText(j))
+		out := startAutoNote() + "\n" + waitReport(j.Meta.ID, "local|"+j.Meta.ID, tail, true, localStateText(j))
+		if total, terr := transport.LocalJobLogLines(m.ID); terr == nil && total > 30 {
+			out += "\n" + startTailCutNote(m, total, len(logLines(tail)))
+		}
+		return out
 	}
 	note := ""
 	if m.State != jobStateRunning {

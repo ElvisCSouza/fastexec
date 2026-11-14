@@ -467,8 +467,10 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
 
 - Actions: `start`, `wait`, `status`, `list`, `tail`, `stop`.
 - `start` waits up to 12 s by itself (no parameter). A command that ends inside that window comes back in the same
-  call with its exit code and output, prefixed by `[FastExec auto-wait]`; no `wait` or `tail` is needed. A job still
-  running at 12 s answers with the `id` as before. Cost: every start of a long job pays the 12 s.
+  call with its exit code and output, prefixed by `[FastExec auto-wait]`; no `wait` or `tail` is needed. If the output
+  has more than 30 lines, the reply says how many of how many lines it showed and the exact call that brings the rest
+  (up to 30 lines, nothing extra). A job still running at 12 s answers with the `id` as before. Cost: every start of a
+  long job pays the 12 s.
 - `start` with `await: true` (command that ends) waits up to the client's limit (`await_s`: 40 s by default, 100 s for
   Claude Code) and returns the output. Without the flag the 12 s window above applies.
 - `wait` blocks up to 45 s per call and returns the progress and the log so far; it tells the model not to poll back

@@ -61,3 +61,7 @@ func LocalJobWait(id string, maxWait time.Duration) (*LocalJobInfo, bool, error)
 func TailLocalJob(id string, n int) (string, error) {
 	return "", fmt.Errorf("local job not found")
 }
+
+func LocalJobLogLines(id string) (int, error) {
+	return 0, fmt.Errorf("local job not found")
+}

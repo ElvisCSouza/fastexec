@@ -4,6 +4,7 @@ package transport
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,11 +15,25 @@ import (
 
 func useTempJobs(t *testing.T) {
 	t.Helper()
-	t.Setenv("FASTEXEC_JOBS_DIR", t.TempDir())
-	t.Cleanup(func() { // roda antes da remoção da pasta: nenhum teste deixa node órfão, nem em caso de falha
+	// Pasta própria em vez de t.TempDir(): o RemoveAll do cleanup do TempDir entra em corrida com a goroutine
+	// recordExitWhenDone, que grava o rc do job no metadado logo depois do kill — se a escrita cair no meio do
+	// RemoveAll, ele falha com "a pasta não está vazia" e marca o teste como falho de forma intermitente. O cleanup
+	// aqui para os jobs e tenta remover de novo até a escrita pendente acabar (nenhum teste deixa node órfão).
+	dir, err := os.MkdirTemp("", "fxjobs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FASTEXEC_JOBS_DIR", dir)
+	t.Cleanup(func() {
 		jobs, _ := LocalJobList()
 		for _, j := range jobs {
 			_, _ = LocalJobStop(j.Meta.ID)
+		}
+		for i := 0; i < 20; i++ {
+			if os.RemoveAll(dir) == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
 		}
 	})
 }

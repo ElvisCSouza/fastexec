@@ -663,3 +663,45 @@ func TailLocalJob(id string, n int) (string, error) {
 	}
 	return strings.Join(lines, "\n"), nil
 }
+
+// LocalJobLogLines conta as linhas do log INTEIRO de um job (varredura streaming, sem buffer grande): o start que
+// esperou o comando terminar precisa dizer quantas linhas mostrou de quantas existem, mesmo quando o log passa da
+// janela de 256 KiB do tail.
+func LocalJobLogLines(id string) (int, error) {
+	dir, err := LocalJobsDir()
+	if err != nil {
+		return 0, err
+	}
+	m, err := loadMeta(dir, id)
+	if err != nil {
+		return 0, err
+	}
+	f, err := os.Open(m.LogPath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	buf := make([]byte, 64*1024)
+	total, tailNL, anyByte := 0, false, false
+	for {
+		n, rerr := f.Read(buf)
+		for i := 0; i < n; i++ {
+			if buf[i] == '\n' {
+				total++
+			}
+		}
+		if n > 0 {
+			anyByte, tailNL = true, buf[n-1] == '\n'
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			return 0, rerr
+		}
+	}
+	if anyByte && !tailNL {
+		total++ // última linha sem \n no fim do arquivo
+	}
+	return total, nil
+}

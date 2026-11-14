@@ -19,11 +19,40 @@ func TestJobStartSemWaitTrazSaidaERc(t *testing.T) {
 	if !strings.Contains(out, "EXITED rc=0") || !strings.Contains(out, "saida-curta") {
 		t.Errorf("start curto deveria trazer rc e saída: %q", out)
 	}
-	if !strings.Contains(out, "[FastExec auto-wait]") {
-		t.Errorf("a espera automática deve avisar com a linha [FastExec ...]: %q", out)
+	if !strings.Contains(out, "[FastExec auto-wait] start waited up to") {
+		t.Errorf("a espera automática deve avisar em inglês com a linha [FastExec ...]: %q", out)
+	}
+	if strings.Contains(out, "esperou") {
+		t.Errorf("o texto automático não pode sair em português (AGENTS.md): %q", out)
+	}
+	if strings.Contains(out, "(showing") {
+		t.Errorf("saída curta não deveria avisar corte de linhas: %q", out)
 	}
 	if strings.Contains(out, "[job] started") {
 		t.Errorf("comando que já terminou não deveria voltar como 'started': %q", out)
+	}
+}
+
+// (a2) comando que termina na janela com mais de 30 linhas: a resposta diz quantas linhas mostrou de quantas existem
+// e a chamada que traz o resto.
+func TestJobStartMaisDeTrintaLinhasAvisaCorte(t *testing.T) {
+	t.Setenv("FASTEXEC_JOBS_DIR", t.TempDir())
+	script := "for(let i=1;i<=60;i++)console.log('linha '+i+' '+'x'.repeat(60))"
+	out, err := HandleJob(JobArgs{Host: "local", Action: "start", Argv: []string{"node", "-e", script}})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if !strings.Contains(out, "(showing 30 of 60 lines; job(action='tail', job_id='") {
+		t.Errorf("corte em 30 linhas deveria ser anunciado com o total: %q", out)
+	}
+	if !strings.Contains(out, "lines=500) for the rest)") {
+		t.Errorf("a resposta deveria dizer a chamada que traz o resto: %q", out)
+	}
+	if !strings.Contains(out, "linha 60") {
+		t.Errorf("o tail mostra as ÚLTIMAS linhas: %q", out)
+	}
+	if strings.Contains(out, "linha 30\nlinha 31") || strings.Contains(out, "linha 1 ") {
+		t.Errorf("só as últimas 30 linhas deveriam aparecer: %q", out)
 	}
 }
 
