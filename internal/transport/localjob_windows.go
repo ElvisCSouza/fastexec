@@ -416,7 +416,10 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 	}
 
 	logPath := filepath.Join(dir, id+".log")
-	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	// Leitura/escrita normal, NÃO O_APPEND: no Windows o Go abre o append só com FILE_APPEND_DATA e o bash do Git
+	// (msys) não consegue escrever nesse handle (log vazio, rc=1). O filho é o único escritor, então o offset
+	// compartilhado do handle herdado basta.
+	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}

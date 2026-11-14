@@ -164,6 +164,30 @@ func TestLocalJobTerminaSozinho(t *testing.T) {
 	}
 }
 
+// Regressão: o log do job era aberto só para anexar (FILE_APPEND_DATA) e o bash do Git (msys) não escrevia
+// nele: log vazio e rc=1 no último echo. Com leitura/escrita normal a saída chega ao log e o rc é 0.
+func TestLocalJobBashEscreveNoLog(t *testing.T) {
+	useTempJobs(t)
+	bash := `C:\Program Files\Git\bin\bash.exe`
+	if _, err := os.Stat(bash); err != nil {
+		t.Skip("Git Bash não instalado")
+	}
+	m, err := StartLocalJob("", []string{bash, "-c", "echo ola; echo fim"}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, finished, err := LocalJobWait(m.ID, 15*time.Second)
+	if err != nil || !finished || st.State != jobStateExited {
+		t.Fatalf("esperava EXITED: %+v %v", st, err)
+	}
+	if out, _ := TailLocalJob(m.ID, 5); !strings.Contains(out, "ola") || !strings.Contains(out, "fim") {
+		t.Errorf("o log deveria ter a saída do bash: %q", out)
+	}
+	if st.Meta.ExitCode == nil || *st.Meta.ExitCode != 0 {
+		t.Errorf("rc deveria ser 0: %v", st.Meta.ExitCode)
+	}
+}
+
 func TestLocalJobComandoQueFalhaNaHora(t *testing.T) {
 	useTempJobs(t)
 	m, err := StartLocalJob("comando_inexistente_job_fastexec", nil, "", "")
