@@ -3,8 +3,6 @@ package transport
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"fmt"
 	"os/exec"
 	"strings"
 	"time"
@@ -110,15 +108,7 @@ func DispatchWithInput(hostName string, cmd string, cwd string, input string, ti
 		}
 	}
 
-	effectiveCmd := cmd
-	if input != "" {
-		b64Input := base64.StdEncoding.EncodeToString([]byte(input))
-		effectiveCmd = fmt.Sprintf("printf '%%s' '%s' | base64 -d | %s", b64Input, cmd)
-	}
-	if cwd != "" {
-		effectiveCmd = "cd \"" + cwd + "\" && " + effectiveCmd
-	}
-	effectiveCmd = "export CI=1 DEBIAN_FRONTEND=noninteractive PAGER=cat GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 TERM=dumb NO_COLOR=1; " + effectiveCmd
+	effectiveCmd := buildLegacyLine(cmd, cwd, input)
 
 	if target.IsSSH {
 		return ExecSSH(target.SSHHost, effectiveCmd, timeout)
