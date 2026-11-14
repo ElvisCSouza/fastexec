@@ -13,7 +13,7 @@ One row per tool call:
 |---|---|
 | time, session id | `2026-11-06 21:58:19`, one id per FastExec process |
 | tool, host | `exec`, `server` |
-| duration | `42` ms |
+| duration, and for `exec` the time the command itself took (`cmd_ms`, -1 when not measured) | `42` ms, `30` ms |
 | bytes in and out, estimated tokens (bytes / 3.5) | `100`, `250` |
 | success, exit code, truncated, empty result | |
 | command summary | the command line, cleaned, cut at 120 characters |
@@ -45,6 +45,29 @@ the largest returns, the latest errors and a short `SAVINGS` block for the same 
 is plain SQLite: the `sql` module or any SQLite tool can query the `audit` table directly.
 
 `handoff` reads it to build session briefings (files touched, failed commands).
+
+### Measurement report
+
+```
+fastexec stats --measure --today    # also 24h, 7d ...
+```
+
+Five short sections, computed from the same database (code in `internal/measure`):
+
+1. **Savings, measured vs estimated.** *Measured* is text FastExec removed from an output the call actually
+   produced (`clean`, `cut`). *Estimate* is what a saving assumes the model would have done without FastExec
+   (`slice`, `retry`, `timeout`, `schema`); it was not observed. An unknown category counts as an estimate.
+2. **Harm signals**, one detector each: `retry_after_cut` (the same call repeated within 3 calls after a cut
+   output), `raw_flag` (`--raw` used), `repeated_hint` (the same hint shown 3 or more times in one channel).
+3. **Use per feature**: calls and distinct channels per tool and per notice type. Known notice types with no use
+   show as zero.
+4. **Overhead of `exec`**: call time minus command time (median, p95, max). Calls recorded before `cmd_ms`
+   existed are counted apart.
+5. **Tokens per channel** (one channel = one MCP process). The client does not send a conversation id, so the
+   channel is the closest unit available; the report says so.
+
+Adding a saving category, a harm detector or a notice type is a registration in `internal/measure`; the report
+code does not change.
 
 ## Turning it off
 

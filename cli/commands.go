@@ -328,13 +328,15 @@ func cmdPing(subArgs []string) {
 // cmdStats atende: stats.
 func cmdStats(subArgs []string) {
 	filter := telemetry.StatsFilter{}
+	measureMode := false
 	for _, arg := range subArgs {
 		switch strings.ToLower(arg) {
 		case "--help", "-h", "help":
-			fmt.Println("usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--reset|--clear] [<period>]")
+			fmt.Println("usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--reset|--clear] [<period>]")
 			fmt.Println("  <period>  1h, 24h, 7d ... (hours or days; bare 'today' and 'week' also work)")
 			fmt.Println("  Shows telemetry & audit for the period, plus a savings summary.")
 			fmt.Println("  --errors   only error records      --tools   only the per-tool breakdown")
+			fmt.Println("  --measure  measured vs estimated savings, harm signals, usage per feature, exec overhead")
 			fmt.Println("  --reset    delete the telemetry database")
 			return
 		case "--today", "-t":
@@ -343,6 +345,8 @@ func cmdStats(subArgs []string) {
 			filter.OnlyErrors = true
 		case "--tools":
 			filter.OnlyTools = true
+		case "--measure":
+			measureMode = true
 		case "--reset", "--clear":
 			filter.ResetDB = true
 		case "today":
@@ -356,7 +360,11 @@ func cmdStats(subArgs []string) {
 		}
 	}
 
-	out, err := telemetry.RenderStats(filter)
+	render := telemetry.RenderStats
+	if measureMode {
+		render = telemetry.RenderMeasure
+	}
+	out, err := render(filter)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Telemetry error:", err)
 		os.Exit(1)

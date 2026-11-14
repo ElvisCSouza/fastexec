@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+
+	"homelab/fastexec/internal/measure"
 )
 
 // Economia por chamada: onde o FastExec devolveu menos texto (ou evitou uma ida ao modelo) do que a
@@ -42,6 +44,7 @@ type Saving struct {
 type callLedger struct {
 	mu    sync.Mutex
 	items []Saving
+	cmdMs int64 // tempo do comando dentro da chamada (measure.CmdUnknown se não houve)
 }
 
 var ledgers sync.Map // goroutine id -> *callLedger
@@ -58,7 +61,34 @@ func goid() uint64 {
 }
 
 // BeginCall abre o registro da chamada em andamento nesta goroutine.
-func BeginCall() { ledgers.Store(goid(), &callLedger{}) }
+func BeginCall() { ledgers.Store(goid(), &callLedger{cmdMs: measure.CmdUnknown}) }
+
+// NoteCommandMs soma o tempo que um comando levou dentro desta chamada (exec).
+func NoteCommandMs(ms int64) {
+	v, ok := ledgers.Load(goid())
+	if !ok {
+		return
+	}
+	l := v.(*callLedger)
+	l.mu.Lock()
+	if l.cmdMs == measure.CmdUnknown {
+		l.cmdMs = 0
+	}
+	l.cmdMs += ms
+	l.mu.Unlock()
+}
+
+// CommandMs devolve o tempo de comando anotado nesta chamada (measure.CmdUnknown se nenhum). Chamar antes de EndCall.
+func CommandMs() int64 {
+	v, ok := ledgers.Load(goid())
+	if !ok {
+		return measure.CmdUnknown
+	}
+	l := v.(*callLedger)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.cmdMs
+}
 
 // EndCall fecha o registro e devolve o que foi anotado.
 func EndCall() []Saving {

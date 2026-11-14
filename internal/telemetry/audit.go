@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"homelab/fastexec/internal/config"
+	"homelab/fastexec/internal/measure"
 )
 
 type AuditEntry struct {
@@ -20,6 +21,7 @@ type AuditEntry struct {
 	Tool           string
 	Host           string
 	DurationMs     int64
+	CmdMs          *int64 // tempo do comando dentro da chamada; nil = não medido (grava -1)
 	BytesIn        int
 	BytesOut       int
 	EstTokensIn    int
@@ -210,6 +212,11 @@ func setupAuditSchema(db *sql.DB) {
 		PRIMARY KEY (host, src, dst));`); err != nil {
 		noteFailure("schema doc_links", err)
 	}
+	if !existing["cmd_ms"] {
+		if _, err := db.Exec("ALTER TABLE audit ADD COLUMN cmd_ms INTEGER NOT NULL DEFAULT -1;"); err != nil {
+			noteFailure("schema migration", err)
+		}
+	}
 	for _, col := range []string{"client", "conversation", "graph", "args_hash", "out_hash", "marks", "doc", "doc_from", "doc_how"} {
 		if !existing[col] {
 			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s TEXT NOT NULL DEFAULT '';", col)); err != nil {
@@ -247,8 +254,8 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		bytes_in, bytes_out, est_tokens_in, est_tokens_out,
 		success, exit_code, error_message, command_summary,
 		truncated, no_result, client, conversation, graph, graph_saved_kb,
-		args_hash, out_hash, marks, doc, doc_from, doc_how
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		args_hash, out_hash, marks, doc, doc_from, doc_how, cmd_ms
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	res, err := db.Exec(
 		query,
@@ -256,7 +263,7 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		e.BytesIn, e.BytesOut, e.EstTokensIn, e.EstTokensOut,
 		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
 		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation, e.Graph, e.GraphSavedKB,
-		e.ArgsHash, e.OutHash, e.Marks, e.Doc, e.DocFrom, e.DocHow,
+		e.ArgsHash, e.OutHash, e.Marks, e.Doc, e.DocFrom, e.DocHow, cmdMsValue(e.CmdMs),
 	)
 	if err == nil && len(e.Savings) > 0 {
 		id, _ := res.LastInsertId()
@@ -283,6 +290,14 @@ func writeSavings(db *sql.DB, auditID int64, items []Saving) error {
 		}
 	}
 	return nil
+}
+
+// cmdMsValue converte o campo opcional para a coluna (-1 = não medido).
+func cmdMsValue(ms *int64) int64 {
+	if ms == nil {
+		return measure.CmdUnknown
+	}
+	return *ms
 }
 
 func boolInt(b bool) int {

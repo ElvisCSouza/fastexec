@@ -227,6 +227,7 @@ func handleExec(args ExecArgs) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	telemetry.NoteCommandMs(res.Duration) // overhead do FastExec = tempo da chamada - tempo do comando
 	if res.JobID != "" {
 		return withHostNote(shellNote, handoffResult(*res, timeout), nil), nil
 	}

@@ -139,6 +139,14 @@ func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) ToolCallResu
 	return DispatchTool(name, rawArgs)
 }
 
+// cmdMsPtr: nil quando a chamada não rodou comando (o banco guarda -1 = não medido).
+func cmdMsPtr(ms int64) *int64 {
+	if ms < 0 {
+		return nil
+	}
+	return &ms
+}
+
 func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
 	start := time.Now()
 	rawArgs, notes, nerr := normalizeCall(name, rawArgs) // argnorm.go: nenhuma chave some em silêncio
@@ -229,6 +237,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		}
 	}
 
+	cmdMs := telemetry.CommandMs()
 	savings := telemetry.EndCall()
 	durationMs := time.Since(start).Milliseconds()
 	bytesOut := len(outText)
@@ -256,6 +265,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		Tool:           name,
 		Host:           host,
 		DurationMs:     durationMs,
+		CmdMs:          cmdMsPtr(cmdMs),
 		BytesIn:        bytesIn,
 		BytesOut:       bytesOut,
 		Success:        success,

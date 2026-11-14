@@ -45,10 +45,11 @@ Usage: fastexec sql "<query>" [session_or_db] [host]
 $ fastexec stats --help
 exit: 0
 --- stdout
-usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--reset|--clear] [<period>]
+usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--reset|--clear] [<period>]
   <period>  1h, 24h, 7d ... (hours or days; bare 'today' and 'week' also work)
   Shows telemetry & audit for the period, plus a savings summary.
   --errors   only error records      --tools   only the per-tool breakdown
+  --measure  measured vs estimated savings, harm signals, usage per feature, exec overhead
   --reset    delete the telemetry database
 --- stderr
 
