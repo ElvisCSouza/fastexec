@@ -2,6 +2,7 @@ package measure
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -87,37 +88,57 @@ func (r Report) renderAB(b *strings.Builder) {
 	for _, a := range r.Arms {
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", a.Rule, "COM", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors, dano(a.On), a.On.CmdMs, a.On.CmdN)
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", "", "SEM", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors, dano(a.Off), a.Off.CmdMs, a.Off.CmdN)
-		fmt.Fprintf(b, "     -> coletas na janela: %s | %s\n", collectState(events[a.Rule]), armVerdict(a))
+		fmt.Fprintf(b, "     -> coletas: %s | equilíbrio: %s | %s\n", collectState(events[a.Rule]), balance(a), armVerdict(a))
 	}
-	fmt.Fprintf(b, "   Regra: decide com %d coletas da regra (eventos na janela, sem piso de tempo); vence reduzindo tokens lidos por chamada sem subir dano, repetidas ou erros; empate = manter. Contar só o A/B ligado (confira a janela).\n", ArmMinSamples)
+	fmt.Fprintf(b, "   Método (OCE/Kohavi): sucesso = tokens/conversa, teste de superioridade (IC 95%%: vence se a diferença passa de 0); guardrail = dano/chamada (retry_after_cut+raw_flag), não-inferioridade com limite +%.0f%%; SRM se o sorteio de conversas foge de 50/50. repeated_hint e repetidas são diagnóstico, não decidem. Ver ADR-007.\n", GuardMargin*100)
 }
 
-// armVerdict compara os braços por chamada (tamanhos de braço diferentes) e emite o veredito mecânico do ADR-002.
+// armVerdict aplica o método de experimento controlado (Kohavi/OCE; ADR-007): sucesso = tokens/conversa
+// (superioridade, IC 95%); guardrail = dano por chamada retry_after_cut+raw_flag (não-inferioridade, limite
+// GuardMargin); SRM quando o sorteio de conversas foge de ~50/50. repeated_hint fica de fora (confundido pelo canal).
 func armVerdict(a ArmStat) string {
-	if a.On.Calls == 0 || a.Off.Calls == 0 {
+	if a.On.Convs == 0 || a.Off.Convs == 0 {
 		return "sem amostra em um braço"
 	}
-	onTok, offTok := a.On.MeanTok, a.Off.MeanTok
-	onDano, offDano := perCall(int64(danoTotal(a.On)), a.On.Calls), perCall(int64(danoTotal(a.Off)), a.Off.Calls)
-	onRep, offRep := perCall(int64(a.On.Repeats), a.On.Calls), perCall(int64(a.Off.Repeats), a.Off.Calls)
-	verdict := "empate: manter"
+	tot := a.On.Convs + a.Off.Convs
+	rt := float64(a.On.Convs) / float64(tot)
+	srm := rt < 0.40 || rt > 0.60
+	diff := a.Off.MeanTok - a.On.MeanTok // positivo = COM lê menos (bom)
+	se := math.Sqrt(a.On.TokVar/float64(a.On.Convs) + a.Off.TokVar/float64(a.Off.Convs))
+	lo, hi := diff-1.96*se, diff+1.96*se
+	po := float64(a.On.Guard) / float64(a.On.Calls)
+	pf := float64(a.Off.Guard) / float64(a.Off.Calls)
+	g := po - pf // positivo = COM pior
+	gse := math.Sqrt(po*(1-po)/float64(a.On.Calls) + pf*(1-pf)/float64(a.Off.Calls))
+	gup := g + 1.96*gse
+	verdict := "aguardar"
 	switch {
-	case onTok > offTok*1.02:
-		verdict = "rever: ligada lê mais"
-	case onTok < offTok*0.98 && onDano <= offDano && onRep <= offRep:
+	case srm:
+		verdict = fmt.Sprintf("NÃO CONFIÁVEL (SRM: COM com %.0f%% das conversas)", rt*100)
+	case lo <= 0:
+		verdict = "rever: sem ganho de token comprovado"
+	case gup < GuardMargin:
 		verdict = "vence: manter"
+	default:
+		verdict = "rever: dano acima do limite"
 	}
-	bal := "ok"
-	if mn, mx := a.On.Convs, a.Off.Convs; mn > 0 && mx > 0 {
-		if mn > mx {
-			mn, mx = mx, mn
-		}
-		if float64(mn)/float64(mx) < 0.6 {
-			bal = "desequilibrado"
-		}
+	return fmt.Sprintf("%s | token/conversa COM %.0f vs SEM %.0f, dif %.0f IC95 [%.0f, %.0f] | guardrail/chamada COM %.3f vs SEM %.3f, dif %.3f IC95<=%.3f (limite %.2f)",
+		verdict, a.On.MeanTok, a.Off.MeanTok, diff, lo, hi, po, pf, g, gup, GuardMargin)
+}
+
+// balance diz se as conversas por braço estão equilibradas (~50/50); desequilíbrio grave é SRM (ver armVerdict).
+func balance(a ArmStat) string {
+	if a.On.Convs == 0 || a.Off.Convs == 0 {
+		return "n/d"
 	}
-	return fmt.Sprintf("%s | equilíbrio %s (%d x %d) | tokens/conversa %.0f vs %.0f | dano/chamada %.2f vs %.2f | repetidas/chamada %.2f vs %.2f",
-		verdict, bal, a.On.Convs, a.Off.Convs, onTok, offTok, onDano, offDano, onRep, offRep)
+	mn, mx := a.On.Convs, a.Off.Convs
+	if mn > mx {
+		mn, mx = mx, mn
+	}
+	if float64(mn)/float64(mx) < 0.6 {
+		return fmt.Sprintf("desequilibrado (%d x %d)", a.On.Convs, a.Off.Convs)
+	}
+	return fmt.Sprintf("ok (%d x %d)", a.On.Convs, a.Off.Convs)
 }
 
 // collectState diz se a regra já juntou coletas bastantes (ArmMinSamples eventos da regra na janela). O evento

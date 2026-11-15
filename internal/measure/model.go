@@ -16,6 +16,10 @@ const CmdUnknown int64 = -1
 // tempo: a regra é decidida quando os dois braços juntarem coletas bastantes.
 const ArmMinSamples = 30
 
+// GuardMargin é o limite de não-inferioridade do guardrail (dano por chamada): a regra só vence se o dano do
+// braço COM não piorar além disto (5%) em relação ao SEM. Ver ADR-002/ADR-007.
+const GuardMargin = 0.05
+
 // Window é a janela de tempo do relatório, independente de como a fonte a filtra.
 type Window struct {
 	Today bool // o dia local de hoje

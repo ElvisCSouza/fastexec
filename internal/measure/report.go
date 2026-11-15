@@ -36,6 +36,8 @@ type ArmSide struct {
 	CmdN    int            // execs com tempo medido nesse braço
 	Convs   int            // identidades distintas (conversa, senão canal) nesse braço
 	MeanTok float64        // média de tokens lidos por identidade: cada conversa/canal pesa igual
+	TokVar  float64        // variância dos tokens por identidade (para o IC de 95%)
+	Guard   int            // guardrail por chamada: retry_after_cut + raw_flag (sinais por chamada, confiáveis)
 }
 
 // ArmStat compara os dois braços de uma regra: On = regra ligada (tratado), Off = regra desligada (controle).
@@ -178,10 +180,19 @@ func sideStats(calls []Call, ds []HarmDetector) ArmSide {
 	s.Convs = len(byID)
 	if s.Convs > 0 {
 		s.MeanTok = float64(s.Tokens) / float64(s.Convs)
+		if s.Convs > 1 {
+			ss := 0.0
+			for _, v := range byID {
+				d := float64(v) - s.MeanTok
+				ss += d * d
+			}
+			s.TokVar = ss / float64(s.Convs-1)
+		}
 	}
 	for _, d := range ds {
 		s.Dano[d.Name()] = len(d.Detect(calls))
 	}
+	s.Guard = s.Dano["retry_after_cut"] + s.Dano["raw_flag"]
 	return s
 }
 
