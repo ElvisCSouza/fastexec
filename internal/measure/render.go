@@ -96,7 +96,7 @@ func armVerdict(a ArmStat) string {
 	if a.On.Calls == 0 || a.Off.Calls == 0 {
 		return "sem amostra em um braço"
 	}
-	onTok, offTok := perCall(a.On.Tokens, a.On.Calls), perCall(a.Off.Tokens, a.Off.Calls)
+	onTok, offTok := a.On.MeanTok, a.Off.MeanTok
 	onDano, offDano := perCall(int64(danoTotal(a.On)), a.On.Calls), perCall(int64(danoTotal(a.Off)), a.Off.Calls)
 	onRep, offRep := perCall(int64(a.On.Repeats), a.On.Calls), perCall(int64(a.Off.Repeats), a.Off.Calls)
 	verdict := "empate: manter"
@@ -106,8 +106,17 @@ func armVerdict(a ArmStat) string {
 	case onTok < offTok*0.98 && onDano <= offDano && onRep <= offRep:
 		verdict = "vence: manter"
 	}
-	return fmt.Sprintf("%s | tokens/chamada %.0f vs %.0f | dano/chamada %.2f vs %.2f | repetidas/chamada %.2f vs %.2f",
-		verdict, onTok, offTok, onDano, offDano, onRep, offRep)
+	bal := "ok"
+	if mn, mx := a.On.Convs, a.Off.Convs; mn > 0 && mx > 0 {
+		if mn > mx {
+			mn, mx = mx, mn
+		}
+		if float64(mn)/float64(mx) < 0.6 {
+			bal = "desequilibrado"
+		}
+	}
+	return fmt.Sprintf("%s | equilíbrio %s (%d x %d) | tokens/conversa %.0f vs %.0f | dano/chamada %.2f vs %.2f | repetidas/chamada %.2f vs %.2f",
+		verdict, bal, a.On.Convs, a.Off.Convs, onTok, offTok, onDano, offDano, onRep, offRep)
 }
 
 // collectState diz se a regra já juntou coletas bastantes (ArmMinSamples eventos da regra na janela). O evento
