@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"homelab/fastexec/internal/corpus"
 	"homelab/fastexec/internal/daemon"
 	"homelab/fastexec/internal/telemetry"
 	"homelab/fastexec/internal/tools"
@@ -328,16 +329,17 @@ func cmdPing(subArgs []string) {
 // cmdStats atende: stats.
 func cmdStats(subArgs []string) {
 	filter := telemetry.StatsFilter{}
-	measureMode := false
+	measureMode, corpusMode := false, false
 	for _, arg := range subArgs {
 		switch strings.ToLower(arg) {
 		case "--help", "-h", "help":
-			fmt.Println("usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--reset|--clear] [<period>]")
+			fmt.Println("usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--corpus] [--reset|--clear] [<period>]")
 			fmt.Println("  <period>  1h, 24h, 7d ... (hours or days; bare 'today' and 'week' also work)")
 			fmt.Println("  Shows telemetry & audit for the period, plus a savings summary.")
 			fmt.Println("  --errors   only error records      --tools   only the per-tool breakdown")
 			fmt.Println("  --measure  measured vs estimated savings, harm signals, usage per feature, exec overhead")
-			fmt.Println("  --reset    delete the telemetry database")
+				fmt.Println("  --corpus   recorded exec outputs: samples per command family against the comparison targets")
+				fmt.Println("  --reset    delete the telemetry database")
 			return
 		case "--today", "-t":
 			filter.Today = true
@@ -347,6 +349,8 @@ func cmdStats(subArgs []string) {
 			filter.OnlyTools = true
 		case "--measure":
 			measureMode = true
+		case "--corpus":
+			corpusMode = true
 		case "--reset", "--clear":
 			filter.ResetDB = true
 		case "today":
@@ -358,6 +362,11 @@ func cmdStats(subArgs []string) {
 				filter.PeriodH = h
 			}
 		}
+	}
+
+	if corpusMode {
+		fmt.Print(corpus.RenderDir(corpus.Dir(), nil))
+		return
 	}
 
 	render := telemetry.RenderStats

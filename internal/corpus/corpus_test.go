@@ -95,14 +95,14 @@ func TestRawTruncatedAtLimit(t *testing.T) {
 
 func TestRedaction(t *testing.T) {
 	cases := map[string]string{
-		"Authorization: Bearer abcdefghijklmnop1234":                             "abcdefghijklmnop1234",
-		"token=ghp_abcdefghijklmnopqrstuvwxyz0123":                               "ghp_abcdefghijklmnopqrstuvwxyz0123",
-		"DB_PASSWORD=hunter2hunter2":                 "hunter2hunter2",
+		"Authorization: Bearer abcdefghijklmnop1234":                               "abcdefghijklmnop1234",
+		"token=ghp_abcdefghijklmnopqrstuvwxyz0123":                                 "ghp_abcdefghijklmnopqrstuvwxyz0123",
+		"DB_PASSWORD=hunter2hunter2":                                               "hunter2hunter2",
 		"{\n  \"password\": \"Zq9xLm2Vb7Nc4Rt8\",\n  \"hostname\": \"0.0.0.0\"\n}": "Zq9xLm2Vb7Nc4Rt8",
-		"{\"api_key\":\"abc123def456ghi789\"}":                                 "abc123def456ghi789",
-		"url postgres://user:s3cretpw@host/db":                                   "s3cretpw",
-		"key sk-abcdefghijklmnopqrstuvwx":                                        "sk-abcdefghijklmnopqrstuvwx",
-		"-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----": "MIIabc",
+		"{\"api_key\":\"abc123def456ghi789\"}":                                     "abc123def456ghi789",
+		"url postgres://user:s3cretpw@host/db":                                     "s3cretpw",
+		"key sk-abcdefghijklmnopqrstuvwx":                                          "sk-abcdefghijklmnopqrstuvwx",
+		"-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----":   "MIIabc",
 	}
 	for in, secret := range cases {
 		out := Redact(in, DefaultRedactors())

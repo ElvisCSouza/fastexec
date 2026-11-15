@@ -19,11 +19,16 @@ type FileStore struct {
 	Lim Limits
 }
 
-func defaultStore() Store {
-	dir := os.Getenv("FASTEXEC_CORPUS_DIR")
-	if dir == "" {
-		dir = config.Get().Dir("corpus")
+// Dir is the folder samples are written to (FASTEXEC_CORPUS_DIR overrides the data folder).
+func Dir() string {
+	if dir := os.Getenv("FASTEXEC_CORPUS_DIR"); dir != "" {
+		return dir
 	}
+	return config.Get().Dir("corpus")
+}
+
+func defaultStore() Store {
+	dir := Dir()
 	if dir == "" {
 		return nil
 	}

@@ -84,6 +84,12 @@ from telemetry and stays on this computer.
 - Kept 72 h (`FASTEXEC_CORPUS_TTL_H`), at most 50 MB (`FASTEXEC_CORPUS_MAX_MB`), at most 256 KB of raw output per call.
   Files are readable only by the user.
 
+`fastexec stats --corpus` shows how many samples the corpus has per command family (git, build_test, listagem, busca,
+logs, ...) against the targets for the comparison (200 in all, 20 per family). It looks inside wrappers such as
+`bash -lc "..."`, `powershell -Command "..."` and `cd x && ...` to find the program that really ran, leaves out calls
+about the corpus itself and counts a repeated command with the same output once. Adding a wrapper or a family is a
+table entry in `internal/corpus/family.go`.
+
 ## Turning it off
 
 Either:
