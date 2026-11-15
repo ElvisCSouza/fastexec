@@ -69,23 +69,24 @@ func (r Report) Render() string {
 // renderAB mostra, por regra sob A/B, os dois braços (regra ligada x desligada). É a leitura do experimento:
 // a regra só vence se reduzir tokens lidos sem subir repetidas nem erros.
 func (r Report) renderAB(b *strings.Builder) {
-	b.WriteString("\n6. A/B da fase 4 (regra ligada em metade das conversas)\n")
+	b.WriteString("\n6. A/B POR REGRA: metade das conversas roda COM a regra, metade SEM; o resto do FastExec é igual nos dois lados\n")
 	if !r.ABActive {
 		b.WriteString("   Desligado: sem seção \"ab\" ligada no config.json (nenhuma regra muda de lado).\n")
 		return
 	}
+	b.WriteString("   COM a regra = ela agiu (menos tokens, risco de esconder). SEM a regra = saída crua, só para comparar (linha de base).\n")
 	dano := func(s ArmSide) string {
 		rc, raw, rep := s.Dano["retry_after_cut"], s.Dano["raw_flag"], s.Dano["repeated_hint"]
 		return fmt.Sprintf("%d (%d/%d/%d)", rc+raw+rep, rc, raw, rep)
 	}
-	fmt.Fprintf(b, "   %-10s %-7s %8s %13s %9s %6s  %-19s %s\n", "regra", "braço", "chamadas", "tokens lidos", "repetidas", "erros", "dano rc/raw/rep", "cmd ms (n)")
+	fmt.Fprintf(b, "   %-10s %-4s %8s %13s %9s %6s  %-19s %s\n", "regra", "caso", "chamadas", "tokens lidos", "repetidas", "erros", "dano rc/raw/rep", "cmd ms (n)")
 	events := map[string]int64{}
 	for _, c := range r.Savings.Cats {
 		events[c.Cat] = c.Events
 	}
 	for _, a := range r.Arms {
-		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", a.Rule, "ligada", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors, dano(a.On), a.On.CmdMs, a.On.CmdN)
-		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", "", "deslig.", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors, dano(a.Off), a.Off.CmdMs, a.Off.CmdN)
+		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", a.Rule, "COM", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors, dano(a.On), a.On.CmdMs, a.On.CmdN)
+		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", "", "SEM", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors, dano(a.Off), a.Off.CmdMs, a.Off.CmdN)
 		fmt.Fprintf(b, "     -> coletas na janela: %s | %s\n", collectState(events[a.Rule]), armVerdict(a))
 	}
 	fmt.Fprintf(b, "   Regra: decide com %d coletas da regra (eventos na janela, sem piso de tempo); vence reduzindo tokens lidos por chamada sem subir dano, repetidas ou erros; empate = manter. Contar só o A/B ligado (confira a janela).\n", ArmMinSamples)

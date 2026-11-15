@@ -192,7 +192,7 @@ func TestArmStatsSplits(t *testing.T) {
 	if a.On.Tokens+a.Off.Tokens != 10000 {
 		t.Fatalf("tokens: %+v", a)
 	}
-	if out := r.Render(); !strings.Contains(out, "A/B da fase 4") || !strings.Contains(out, "clean") {
+	if out := r.Render(); !strings.Contains(out, "A/B POR REGRA") || !strings.Contains(out, "clean") {
 		t.Errorf("render sem a seção A/B:\n%s", out)
 	}
 }

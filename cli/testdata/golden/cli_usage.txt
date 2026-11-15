@@ -51,6 +51,7 @@ usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--corpus
   --errors   only error records      --tools   only the per-tool breakdown
   --measure  measured vs estimated savings, harm signals, usage per feature, exec overhead
   --corpus   recorded exec outputs: samples per command family against the comparison targets
+  --corpus-rules  offline: how much group/dedup would save on the recorded outputs
   --reset    delete the telemetry database
 --- stderr
 
