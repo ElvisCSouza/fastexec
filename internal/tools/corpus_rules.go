@@ -25,11 +25,12 @@ func CorpusRulesReport(dir string) string {
 
 // groupReport aplica o reagrupamento real (regroupListingFor) a cada amostra de listagem e soma o que ele pouparia.
 func groupReport(b *strings.Builder, samples []corpus.Sample) {
-	applied, rawLines, groupedLines, saved := 0, 0, 0, 0
+	recognized, applied, rawLines, groupedLines, saved := 0, 0, 0, 0, 0
 	for _, s := range samples {
 		if parseListingKind(s.Label) == listingNone {
 			continue
 		}
+		recognized++
 		if grouped, _, ok := regroupListingFor("", s.Label, s.Raw); ok {
 			applied++
 			rawLines += savLines(s.Raw)
@@ -37,8 +38,8 @@ func groupReport(b *strings.Builder, samples []corpus.Sample) {
 			saved += len(s.Raw) - len(grouped)
 		}
 	}
-	fmt.Fprintf(b, "  group: %d amostra(s) casariam | %d linhas -> %d | %d B (~%d tokens)\n",
-		applied, rawLines, groupedLines, saved, tokens(saved))
+	fmt.Fprintf(b, "  group: %d listagem(ns) reconhecida(s) pelo predicado | %d casariam (>=%d caminhos) | %d linhas -> %d | %d B (~%d tokens)\n",
+		recognized, applied, listingGroupMinLines, rawLines, groupedLines, saved, tokens(saved))
 }
 
 // dedupReport aproxima o dedup: mesma saída (com o nome do spill mascarado) do mesmo comando no mesmo host, acima do
