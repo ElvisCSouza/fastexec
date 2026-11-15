@@ -82,9 +82,9 @@ func (r Report) renderAB(b *strings.Builder) {
 	for _, a := range r.Arms {
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", a.Rule, "ligada", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors, dano(a.On), a.On.CmdMs, a.On.CmdN)
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", "", "deslig.", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors, dano(a.Off), a.Off.CmdMs, a.Off.CmdN)
-		fmt.Fprintf(b, "     -> %s\n", armVerdict(a))
+		fmt.Fprintf(b, "     -> amostra: ligada %s / deslig. %s | %s\n", sampleState(a.On), sampleState(a.Off), armVerdict(a))
 	}
-	b.WriteString("   Regra: vence reduzindo tokens lidos por chamada sem subir dano, repetidas ou erros; empate = manter. Só vale para chamadas com o A/B ligado (confira a janela).\n")
+	fmt.Fprintf(b, "   Regra: decide com %d coletas (chamadas) por braço, sem piso de tempo; vence reduzindo tokens lidos por chamada sem subir dano, repetidas ou erros; empate = manter. Contar só o A/B ligado (confira a janela).\n", ArmMinSamples)
 }
 
 // armVerdict compara os braços por chamada (tamanhos de braço diferentes) e emite o veredito mecânico do ADR-002.
@@ -104,6 +104,14 @@ func armVerdict(a ArmStat) string {
 	}
 	return fmt.Sprintf("%s | tokens/chamada %.0f vs %.0f | dano/chamada %.2f vs %.2f | repetidas/chamada %.2f vs %.2f",
 		verdict, onTok, offTok, onDano, offDano, onRep, offRep)
+}
+
+// sampleState diz se o braço já juntou coletas bastantes (ArmMinSamples chamadas).
+func sampleState(s ArmSide) string {
+	if s.Calls >= ArmMinSamples {
+		return fmt.Sprintf("ok (%d)", s.Calls)
+	}
+	return fmt.Sprintf("faltam %d (%d)", ArmMinSamples-s.Calls, s.Calls)
 }
 
 func perCall(total int64, calls int) float64 {

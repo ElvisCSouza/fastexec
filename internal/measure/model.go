@@ -12,6 +12,10 @@ const BytesPerToken = 3.5
 // CmdUnknown marca uma chamada sem o tempo do comando registrado (anterior à coluna cmd_ms).
 const CmdUnknown int64 = -1
 
+// ArmMinSamples é o mínimo de coletas (chamadas) por braço do A/B antes de ler o veredito. Não há piso de
+// tempo: a regra é decidida quando os dois braços juntarem coletas bastantes.
+const ArmMinSamples = 30
+
 // Window é a janela de tempo do relatório, independente de como a fonte a filtra.
 type Window struct {
 	Today bool // o dia local de hoje
