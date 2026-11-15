@@ -121,18 +121,22 @@ func Render(s Summary) string {
 		status = fmt.Sprintf("faltam %d", MinTotal-s.Used)
 	}
 	fmt.Fprintf(&b, "  meta total: %d (%s)\n\n", MinTotal, status)
-	fmt.Fprintf(&b, "Por família (meta %d cada; \"grandes\" = saída bruta de %d KB ou mais, as que um filtro realmente muda):\n", MinPerCategory, BigRaw/1024)
+	fmt.Fprintf(&b, "Por família. A meta é de %d amostras GRANDES (saída bruta de %d KB ou mais) em cada família: só nelas um filtro muda algo.\n", MinPerCategory, BigRaw/1024)
 	for _, c := range s.Categories {
 		st := "ok"
-		if c.N < MinPerCategory {
-			st = fmt.Sprintf("faltam %d", MinPerCategory-c.N)
+		if c.Big < MinPerCategory {
+			st = fmt.Sprintf("faltam %d grandes", MinPerCategory-c.Big)
 		}
 		fmt.Fprintf(&b, "  %-11s %4d amostras | %3d grandes | %3d com erro | %s\n", c.Name, c.N, c.Big, c.Errors, st)
 		fmt.Fprintf(&b, "              %s\n", topTools(c.Tools, 6))
 	}
-	missing := missingFamilies(s)
-	if len(missing) > 0 {
+	if missing := missingFamilies(s); len(missing) > 0 {
 		fmt.Fprintf(&b, "\nFamílias sem nenhuma amostra: %s\n", strings.Join(missing, ", "))
+	}
+	if ready := readyFamilies(s); len(ready) > 0 {
+		fmt.Fprintf(&b, "Prontas para comparar: %s\n", strings.Join(ready, ", "))
+	} else {
+		fmt.Fprintf(&b, "Nenhuma família pronta para comparar ainda.\n")
 	}
 	return b.String()
 }
@@ -152,6 +156,26 @@ func missingFamilies(s Summary) []string {
 		}
 	}
 	return out
+}
+
+// readyFamilies are the wanted families that reached the big-sample target.
+func readyFamilies(s Summary) []string {
+	var out []string
+	for _, c := range s.Categories {
+		if c.Big >= MinPerCategory && isWanted(c.Name) {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
+func isWanted(name string) bool {
+	for _, w := range wanted {
+		if w == name {
+			return true
+		}
+	}
+	return false
 }
 
 func topTools(m map[string]int, n int) string {

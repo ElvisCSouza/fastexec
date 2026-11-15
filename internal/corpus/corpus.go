@@ -36,13 +36,15 @@ type Store interface {
 // Limits bound what is kept.
 type Limits struct {
 	MaxRaw   int           // bytes of Raw kept per sample
-	TTL      time.Duration // samples older than this are deleted
-	MaxTotal int64         // bytes in the store; the oldest go first
+	TTL      time.Duration // small samples older than this are deleted
+	BigTTL   time.Duration // same for big samples (raw output of BigRaw bytes or more)
+	MaxSmall int           // small samples kept; the oldest beyond this go
+	MaxTotal int64         // bytes in the store; small samples go first, then the oldest big ones
 }
 
-// DefaultLimits: 256 KB per sample, 3 days, 50 MB.
+// DefaultLimits: 256 KB per sample; small 72 h and 500 of them; big 14 days; 50 MB in all.
 func DefaultLimits() Limits {
-	return Limits{MaxRaw: 256 << 10, TTL: 72 * time.Hour, MaxTotal: 50 << 20}
+	return Limits{MaxRaw: 256 << 10, TTL: 72 * time.Hour, BigTTL: 14 * 24 * time.Hour, MaxSmall: 500, MaxTotal: 50 << 20}
 }
 
 // Enabled reports whether recording was asked for: FASTEXEC_CORPUS=1/0 in the environment wins, otherwise the
@@ -57,11 +59,18 @@ func Enabled() bool {
 	return config.Get().Corpus
 }
 
-// LimitsFromEnv applies FASTEXEC_CORPUS_TTL_H and FASTEXEC_CORPUS_MAX_MB over the defaults.
+// LimitsFromEnv applies FASTEXEC_CORPUS_TTL_H, FASTEXEC_CORPUS_BIG_TTL_H, FASTEXEC_CORPUS_MAX_SMALL and
+// FASTEXEC_CORPUS_MAX_MB over the defaults.
 func LimitsFromEnv() Limits {
 	l := DefaultLimits()
 	if n, err := strconv.Atoi(os.Getenv("FASTEXEC_CORPUS_TTL_H")); err == nil && n > 0 {
 		l.TTL = time.Duration(n) * time.Hour
+	}
+	if n, err := strconv.Atoi(os.Getenv("FASTEXEC_CORPUS_BIG_TTL_H")); err == nil && n > 0 {
+		l.BigTTL = time.Duration(n) * time.Hour
+	}
+	if n, err := strconv.Atoi(os.Getenv("FASTEXEC_CORPUS_MAX_SMALL")); err == nil && n > 0 {
+		l.MaxSmall = n
 	}
 	if n, err := strconv.Atoi(os.Getenv("FASTEXEC_CORPUS_MAX_MB")); err == nil && n > 0 {
 		l.MaxTotal = int64(n) << 20
@@ -127,7 +136,7 @@ func (c *Capture) Finish(returned string) {
 		ReturnedBytes: len(returned), Returned: Redact(returned, c.redact),
 	}
 	if err := c.store.Save(s); err == nil {
-		pruneOnce(c.store)
+		pruneIfDue(c.store)
 	}
 }
 

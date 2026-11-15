@@ -81,8 +81,11 @@ from telemetry and stays on this computer.
   host, command line, exit code, command time, the raw output and what FastExec returned.
 - Secrets are masked before writing (bearer and API tokens, `password=`-style values, URL passwords, private key
   blocks). Masking is a safety net, not a guarantee: do not share the folder.
-- Kept 72 h (`FASTEXEC_CORPUS_TTL_H`), at most 50 MB (`FASTEXEC_CORPUS_MAX_MB`), at most 256 KB of raw output per call.
-  Files are readable only by the user.
+- Retention has two tracks, because only big outputs (raw output of 10 KB or more) are changed by a filter. Big
+  samples are kept 14 days (`FASTEXEC_CORPUS_BIG_TTL_H`) and are the last to go when the folder is full; small ones
+  are kept 72 h (`FASTEXEC_CORPUS_TTL_H`), at most 500 of them (`FASTEXEC_CORPUS_MAX_SMALL`). The whole folder stays under
+  50 MB (`FASTEXEC_CORPUS_MAX_MB`) and each call keeps at most 256 KB of raw output. Old samples are removed at most
+  every 10 minutes while the background process runs. Files are readable only by the user.
 
 `fastexec stats --corpus` shows how many samples the corpus has per command family (git, build_test, listagem, busca,
 logs, ...) against the targets for the comparison (200 in all, 20 per family). It looks inside wrappers such as
