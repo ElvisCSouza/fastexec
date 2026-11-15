@@ -69,6 +69,19 @@ Five short sections, computed from the same database (code in `internal/measure`
 Adding a saving category, a harm detector or a notice type is a registration in `internal/measure`; the report
 code does not change.
 
+## Output corpus (off by default)
+
+For comparing filters and other tools offline, with no model calls, `exec` can record real outputs. It is separate
+from telemetry and stays on this computer.
+
+- Turn on with `FASTEXEC_CORPUS=1` in the environment of the AI client; nothing is recorded otherwise.
+- Each call that ran a command becomes one JSON file in the `corpus` data folder (`FASTEXEC_CORPUS_DIR` overrides):
+  host, command line, exit code, command time, the raw output and what FastExec returned.
+- Secrets are masked before writing (bearer and API tokens, `password=`-style values, URL passwords, private key
+  blocks). Masking is a safety net, not a guarantee: do not share the folder.
+- Kept 72 h (`FASTEXEC_CORPUS_TTL_H`), at most 50 MB (`FASTEXEC_CORPUS_MAX_MB`), at most 256 KB of raw output per call.
+  Files are readable only by the user.
+
 ## Turning it off
 
 Either:

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"homelab/fastexec/internal/config"
+	"homelab/fastexec/internal/corpus"
 	"homelab/fastexec/internal/telemetry"
 	"homelab/fastexec/internal/transport"
 )
@@ -65,11 +66,21 @@ func HandleExec(args ExecArgs) (string, error) {
 	argCmd, argCwd, bashNote := remediateLocalWindowsPaths(args.Host, args.Command, args.Cwd)
 	args.Command, args.Cwd = argCmd, argCwd
 	note = joinNotes(note, bashNote)
-	out, err := handleExec(args)
+	rec := corpus.Begin(args.Host, execLabel(args)) // nil when the corpus is off (FASTEXEC_CORPUS)
+	out, err := handleExec(args, rec)
+	rec.Finish(out)
 	return withHostNote(note, out, err), err
 }
 
-func handleExec(args ExecArgs) (string, error) {
+// execLabel is the text that names the call: the shell line, or the argv joined.
+func execLabel(args ExecArgs) string {
+	if len(args.Argv) > 0 {
+		return strings.Join(args.Argv, " ")
+	}
+	return args.Command
+}
+
+func handleExec(args ExecArgs, rec *corpus.Capture) (string, error) {
 	hasCmd, hasArgv := args.Command != "", len(args.Argv) > 0
 	switch {
 	case hasCmd && hasArgv:
@@ -228,6 +239,7 @@ func handleExec(args ExecArgs) (string, error) {
 		return "", err
 	}
 	telemetry.NoteCommandMs(res.Duration) // overhead do FastExec = tempo da chamada - tempo do comando
+	rec.SetRaw(res.Stdout, res.Stderr, res.ExitCode, res.Duration)
 	if res.JobID != "" {
 		return withHostNote(shellNote, handoffResult(*res, timeout), nil), nil
 	}
