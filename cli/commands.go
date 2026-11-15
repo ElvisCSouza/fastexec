@@ -329,7 +329,7 @@ func cmdPing(subArgs []string) {
 // cmdStats atende: stats.
 func cmdStats(subArgs []string) {
 	filter := telemetry.StatsFilter{}
-	measureMode, corpusMode := false, false
+	measureMode, corpusMode, corpusRulesMode := false, false, false
 	for _, arg := range subArgs {
 		switch strings.ToLower(arg) {
 		case "--help", "-h", "help":
@@ -338,8 +338,9 @@ func cmdStats(subArgs []string) {
 			fmt.Println("  Shows telemetry & audit for the period, plus a savings summary.")
 			fmt.Println("  --errors   only error records      --tools   only the per-tool breakdown")
 			fmt.Println("  --measure  measured vs estimated savings, harm signals, usage per feature, exec overhead")
-				fmt.Println("  --corpus   recorded exec outputs: samples per command family against the comparison targets")
-				fmt.Println("  --reset    delete the telemetry database")
+			fmt.Println("  --corpus   recorded exec outputs: samples per command family against the comparison targets")
+			fmt.Println("  --corpus-rules  offline: how much group/dedup would save on the recorded outputs")
+			fmt.Println("  --reset    delete the telemetry database")
 			return
 		case "--today", "-t":
 			filter.Today = true
@@ -351,6 +352,8 @@ func cmdStats(subArgs []string) {
 			measureMode = true
 		case "--corpus":
 			corpusMode = true
+		case "--corpus-rules":
+			corpusRulesMode = true
 		case "--reset", "--clear":
 			filter.ResetDB = true
 		case "today":
@@ -366,6 +369,11 @@ func cmdStats(subArgs []string) {
 
 	if corpusMode {
 		fmt.Print(corpus.RenderDir(corpus.Dir(), nil))
+		return
+	}
+
+	if corpusRulesMode {
+		fmt.Print(tools.CorpusRulesReport(corpus.Dir()))
 		return
 	}
 
