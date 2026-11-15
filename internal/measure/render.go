@@ -82,8 +82,43 @@ func (r Report) renderAB(b *strings.Builder) {
 	for _, a := range r.Arms {
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", a.Rule, "ligada", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors, dano(a.On), a.On.CmdMs, a.On.CmdN)
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", "", "deslig.", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors, dano(a.Off), a.Off.CmdMs, a.Off.CmdN)
+		fmt.Fprintf(b, "     -> %s\n", armVerdict(a))
 	}
-	b.WriteString("   Veredito: vence reduzindo tokens lidos sem subir dano (rc/raw/rep), repetidas ou erros; empate = manter.\n")
+	b.WriteString("   Regra: vence reduzindo tokens lidos por chamada sem subir dano, repetidas ou erros; empate = manter. Só vale para chamadas com o A/B ligado (confira a janela).\n")
+}
+
+// armVerdict compara os braços por chamada (tamanhos de braço diferentes) e emite o veredito mecânico do ADR-002.
+func armVerdict(a ArmStat) string {
+	if a.On.Calls == 0 || a.Off.Calls == 0 {
+		return "sem amostra em um braço"
+	}
+	onTok, offTok := perCall(a.On.Tokens, a.On.Calls), perCall(a.Off.Tokens, a.Off.Calls)
+	onDano, offDano := perCall(int64(danoTotal(a.On)), a.On.Calls), perCall(int64(danoTotal(a.Off)), a.Off.Calls)
+	onRep, offRep := perCall(int64(a.On.Repeats), a.On.Calls), perCall(int64(a.Off.Repeats), a.Off.Calls)
+	verdict := "empate: manter"
+	switch {
+	case onTok > offTok*1.02:
+		verdict = "rever: ligada lê mais"
+	case onTok < offTok*0.98 && onDano <= offDano && onRep <= offRep:
+		verdict = "vence: manter"
+	}
+	return fmt.Sprintf("%s | tokens/chamada %.0f vs %.0f | dano/chamada %.2f vs %.2f | repetidas/chamada %.2f vs %.2f",
+		verdict, onTok, offTok, onDano, offDano, onRep, offRep)
+}
+
+func perCall(total int64, calls int) float64 {
+	if calls == 0 {
+		return 0
+	}
+	return float64(total) / float64(calls)
+}
+
+func danoTotal(s ArmSide) int {
+	n := 0
+	for _, v := range s.Dano {
+		n += v
+	}
+	return n
 }
 
 // maxRulesShown e ruleTextMax mantêm a lista de avisos curta: o que importa é o topo.
