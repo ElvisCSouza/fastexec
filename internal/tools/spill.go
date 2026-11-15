@@ -62,8 +62,10 @@ func cleanSpill(dir string) {
 
 // shapeOrCap shapes big exec output; anything it cannot save falls back to
 // the plain capOutput so no information is dropped silently.
-func shapeOrCap(s string) string {
-	out := shapeOrCapInner(s)
+func shapeOrCap(s string) string { return shapeOrCapFor("", s) }
+
+func shapeOrCapFor(id, s string) string {
+	out := shapeOrCapInner(id, s)
 	if len(s) > len(out) {
 		telemetry.NoteSavingDetail(telemetry.CatCut, len(s), len(out),
 			fmt.Sprintf("raw output had %d lines; returned %d (head and tail kept, the rest left out)", savLines(s), savLines(out)))
@@ -71,8 +73,8 @@ func shapeOrCap(s string) string {
 	return out
 }
 
-func shapeOrCapInner(s string) string {
-	if os.Getenv("FASTEXEC_NO_SHAPE") != "" || outputFilterOff() || len(s) <= execSoftCap() {
+func shapeOrCapInner(id, s string) string {
+	if os.Getenv("FASTEXEC_NO_SHAPE") != "" || outputFilterOff() || abOff("cut", id) || len(s) <= execSoftCap() {
 		return capOutput(s)
 	}
 	if out, ok := shapeBig(s, execSoftCap()); ok {

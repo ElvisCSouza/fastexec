@@ -313,8 +313,12 @@ func splitBuildBlocks(fam buildFamily, text string) []buildBlock {
 // compactBuildOutput devolve o texto comprimido, a nota de rodapé e ok=false quando não há o que compactar
 // (comando fora da lista, saída já curta, ganho pequeno ou compactação abortada pela checagem de segurança).
 func compactBuildOutput(label string, exitCode int, stdout, stderr string) (string, string, bool) {
+	return compactBuildOutputFor("", label, exitCode, stdout, stderr)
+}
+
+func compactBuildOutputFor(id, label string, exitCode int, stdout, stderr string) (string, string, bool) {
 	tgt, found := detectBuildTarget(label)
-	if !found || outputFilterOff() {
+	if !found || outputFilterOff() || abOff("clean", id) {
 		return "", "", false
 	}
 	var parts []string

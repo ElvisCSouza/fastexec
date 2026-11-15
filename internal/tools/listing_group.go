@@ -254,7 +254,11 @@ func listingNote(o *listingOmitted) string {
 // regroupListing reagrupa a saída quando ela é uma listagem recursiva reconhecida e grande. ok=false: devolva a saída
 // como veio. 'note' é o rodapé que ensina o caminho de volta ('--raw').
 func regroupListing(label, stdout string) (text, note string, ok bool) {
-	if listingGroupOff() {
+	return regroupListingFor("", label, stdout)
+}
+
+func regroupListingFor(id, label, stdout string) (text, note string, ok bool) {
+	if listingGroupOff() || abOff("group", id) {
 		return "", "", false
 	}
 	kind := parseListingKind(label)

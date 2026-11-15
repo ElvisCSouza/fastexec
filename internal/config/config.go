@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"homelab/fastexec/internal/ab"
 )
 
 // DefaultPort é a porta do daemon server-exec quando o endereço do host não traz porta.
@@ -47,6 +49,9 @@ type Config struct {
 	// do PATH da máquina, que o processo do daemon não tem como adivinhar. Quem
 	// lê é o internal/lsp, na ordem env > config > PATH > pastas conhecidas.
 	DotnetSDK string `json:"dotnet_sdk,omitempty"`
+	// AB liga a fase 4 da rodada: metade das conversas recebe a regra, metade não (bucket determinístico).
+	// Sem a seção, tudo ligado como sempre.
+	AB *ab.Config `json:"ab,omitempty"`
 
 	path string // arquivo lido ("" se não existe)
 	err  error  // erro de leitura ou validação: o FastExec segue com os padrões e o `fastexec config` mostra

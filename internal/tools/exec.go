@@ -150,8 +150,9 @@ func handleExec(args ExecArgs, rec *corpus.Capture) (string, error) {
 
 	// Saída de build/teste (go/dotnet/npm/tsc/cargo): o '--raw' e FASTEXEC_NO_OUTPUT_FILTER desligam a compactação
 	// (build_compact.go). O marcador só sai de comando de família reconhecida — em qualquer outro ele é do programa.
+	id := identity(args.Caller, args.Conv) // fase 4: identidade do A/B (a conversa, senão o canal)
 	buildNote := ""
-	buildRaw := outputFilterOff()
+	buildRaw := outputFilterOff() || abOff("clean", id)
 	if newLabel, stripped := stripBuildRawEscape(&args); stripped {
 		label, buildRaw = newLabel, true
 		buildNote = "[FastExec] raw output as asked: build/test output not compacted."
@@ -258,7 +259,7 @@ func handleExec(args ExecArgs, rec *corpus.Capture) (string, error) {
 	if !rawEscape && !outputFilterOff() && !res.TimedOut && res.ExitCode == 0 {
 		// Listagem recursiva grande vira uma linha por diretório (listing_group.go). Nenhum arquivo é omitido: o
 		// texto é o mesmo, reagrupado. O '--raw' (rawEscape) desliga.
-		if grouped, note, ok := regroupListing(label, res.Stdout); ok {
+		if grouped, note, ok := regroupListingFor(id, label, res.Stdout); ok {
 			raw := res.Stdout
 			res.Stdout, listingHint = strings.TrimRight(grouped, "\r\n")+"\n", note
 			noteListingGroup(raw, res.Stdout)
@@ -270,12 +271,12 @@ func handleExec(args ExecArgs, rec *corpus.Capture) (string, error) {
 	// compactação só é aceita se nenhum bloco de erro do original tiver ficado de fora (compactBuildOutput confere).
 	compactNote := ""
 	if !buildRaw && !res.TimedOut {
-		if body, note, ok := compactBuildOutput(label, res.ExitCode, res.Stdout, res.Stderr); ok {
+		if body, note, ok := compactBuildOutputFor(id, label, res.ExitCode, res.Stdout, res.Stderr); ok {
 			res.Stdout, res.Stderr, compactNote = strings.TrimRight(body, "\r\n")+"\n", "", note
 		}
 	}
 
-	out, ferr := formatExecResult(label, *res)
+	out, ferr := formatExecResultFor(id, label, *res)
 	if searchHint != "" {
 		out = strings.TrimRight(out, "\r\n") + "\n" + searchHint
 	} else if listingHint != "" {
@@ -429,7 +430,11 @@ func execFailureHints(out, label, unixLbl string, res *transport.ExecResult) str
 }
 
 func formatExecResult(command string, res transport.ExecResult) (string, error) {
-	out, err := formatExecOutput(command, res)
+	return formatExecResultFor("", command, res)
+}
+
+func formatExecResultFor(id, command string, res transport.ExecResult) (string, error) {
+	out, err := formatExecOutputFor(id, command, res)
 	if res.Leftover > 0 {
 		out += fmt.Sprintf("\n[warning] %d child process(es) outlived the command and were killed with it; for background or long-running work use tool 'job' (action 'start').", res.Leftover)
 	}
@@ -437,9 +442,13 @@ func formatExecResult(command string, res transport.ExecResult) (string, error) 
 }
 
 func formatExecOutput(command string, res transport.ExecResult) (string, error) {
+	return formatExecOutputFor("", command, res)
+}
+
+func formatExecOutputFor(id, command string, res transport.ExecResult) (string, error) {
 	needle := searchNeedle(command) // termo buscado: linha gigante cortada mostra a ocorrência
 	stdout, stderr := res.Stdout, res.Stderr
-	if !outputFilterOff() { // FASTEXEC_NO_OUTPUT_FILTER=1: saída íntegra, nenhuma limpeza
+	if !(outputFilterOff() || abOff("clean", id)) { // FASTEXEC_NO_OUTPUT_FILTER=1: saída íntegra, nenhuma limpeza
 		stdout = cleanOutputFor(res.Stdout, needle)
 		stderr = cleanOutputFor(res.Stderr, needle)
 		if rawN, cleanN := len(res.Stdout)+len(res.Stderr), len(stdout)+len(stderr); rawN > cleanN {
@@ -468,7 +477,7 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 		if errMsg == "" {
 			errMsg = fmt.Sprintf("command failed with exit code %d (no output)", res.ExitCode)
 		}
-		errMsg = shapeOrCap(errMsg)
+		errMsg = shapeOrCapFor(id, errMsg)
 		if res.Local && isWindowsCmdletMismatch(command, errMsg) {
 			errMsg += "\n[FastExec Hint] Host 'local' (Windows) runs commands through cmd.exe. For PowerShell cmdlets use argv ['pwsh','-NoProfile','-Command','-'] with the script in 'input'; for files use read_file / edit_file."
 		}
@@ -479,7 +488,7 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 		// mais, medido no bench). O '[exit N]' continua abrindo o texto (é dele que o erro do MCP se origina) e o
 		// stdout vem depois, marcado e anunciado, para não ser lido como mensagem de erro.
 		if stderr != "" && stdout != "" {
-			out += "\n[stdout before the failure]\n" + shapeOrCap(stdout) +
+			out += "\n[stdout before the failure]\n" + shapeOrCapFor(id, stdout) +
 				"\n[FastExec] The command failed, but the output above was produced before the failure: it is the command's stdout, not part of the error."
 		}
 		if isBenignExitCode1(command, stdout, stderr) {
@@ -489,23 +498,23 @@ func formatExecOutput(command string, res transport.ExecResult) (string, error) 
 	}
 
 	if stdout == "" && stderr != "" {
-		return shapeOrCap(stderr), nil
+		return shapeOrCapFor(id, stderr), nil
 	}
 
 	// Exit 0 com erro no stderr (ex.: `pwsh -Command -` segue após um throw e sai 0): antes o stderr era
 	// descartado e a LLM via só o stdout, sem saber que algo falhou. Só anexa quando o stderr tem cara de erro,
 	// para não trazer progresso/avisos comuns.
 	if errPart := stderrErrors(stderr); errPart != "" {
-		return shapeOrCap(strings.TrimRight(stdout, "\r\n") + "\n[stderr]\n" + errPart +
+		return shapeOrCapFor(id, strings.TrimRight(stdout, "\r\n")+"\n[stderr]\n"+errPart+
 			"\n[FastExec] Exit code was 0, but the command wrote errors to stderr (above): check that it really did what you expected."), nil
 	}
 
 	// avisos do daemon remoto (ex.: processo em segundo plano que ficou rodando) sempre chegam à LLM
 	if notes := daemonNotes(stderr); notes != "" {
-		return shapeOrCap(strings.TrimRight(stdout, "\r\n") + "\n" + notes), nil
+		return shapeOrCapFor(id, strings.TrimRight(stdout, "\r\n")+"\n"+notes), nil
 	}
 
-	return shapeOrCap(stdout), nil
+	return shapeOrCapFor(id, stdout), nil
 }
 
 var stderrErrorRegex = regexp.MustCompile(`(?i)(exception|\berror\b|\bfatal\b|traceback|not recognized|cannot find|could not|failed|permission denied|no such file)`)

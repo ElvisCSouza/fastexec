@@ -46,7 +46,7 @@ func execDedupOff() bool { return os.Getenv("FASTEXEC_NO_EXEC_DEDUP") == "1" }
 
 // dedupExecOutput returns out unchanged, or a stub when out repeats the previous identical run (see above).
 func dedupExecOutput(args ExecArgs, label, out string) string {
-	if execDedupOff() || len(out) < execDedupMinBytes {
+	if execDedupOff() || abOff("dedup", identity(args.Caller, args.Conv)) || len(out) < execDedupMinBytes {
 		return out
 	}
 	sum := sha256.Sum256([]byte(dedupFingerprintText(out)))

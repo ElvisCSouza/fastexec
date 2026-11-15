@@ -43,7 +43,7 @@ func readCall(a ReadFileArgs) string {
 // capRead cuts data to readWholeCap bytes (at a line boundary, or at a rune boundary inside one huge line) and says
 // how to read on. Disabled with FASTEXEC_NO_READ_CAP=1.
 func capRead(data string, args ReadFileArgs) string {
-	if len(data) <= readWholeCap || os.Getenv("FASTEXEC_NO_READ_CAP") != "" {
+	if len(data) <= readWholeCap || os.Getenv("FASTEXEC_NO_READ_CAP") != "" || abOff("readcap", identity(args.Caller, args.Conv)) {
 		return data
 	}
 	cut := strings.LastIndexByte(data[:readWholeCap], '\n')
