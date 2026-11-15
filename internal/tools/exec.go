@@ -287,7 +287,7 @@ func handleExec(args ExecArgs, rec *corpus.Capture) (string, error) {
 		out += "\n" + searchExcludedNote
 	}
 	if !searchGuardOff() {
-		out = execFailureHints(out, label, unixLbl, res)
+		out = execFailureHintsFor(id, out, label, unixLbl, res)
 		// Busca por "Tipo.Membro": o hint genérico de rename vira a chamada pronta, com o arquivo da declaração.
 		if res.ExitCode == 0 && !res.TimedOut && strings.Contains(out, memberSearchHint) {
 			if plan := memberRenamePlan(args.Cwd, label); plan != "" {
@@ -404,25 +404,37 @@ func unixLabel(label string, hasArgv bool, argv []string) string {
 // ranges) dão o caminho nativo direto para o mesmo erro, e só quando nenhuma cabe é que a nota genérica aparece.
 // O texto de 'out' (o erro original) nunca é escondido: a nota é acrescentada no fim.
 func execFailureHints(out, label, unixLbl string, res *transport.ExecResult) string {
+	return execFailureHintsFor("", out, label, unixLbl, res)
+}
+
+// execFailureHintsFor é o execFailureHints ciente da identidade: a dica pedagógica sai só na primeira vez por
+// conversa (hintOnce), para não repetir a mesma dica (repeated_hint custa tokens e não muda o comportamento).
+func execFailureHintsFor(id, out, label, unixLbl string, res *transport.ExecResult) string {
 	unixNote := unixShellNoteFor(unixLbl, res)
 	add := func(note string) string { return strings.TrimRight(out, "\r\n") + "\n" + note }
+	first := func(kind, note string) string {
+		if hintOnce(id, kind) {
+			return add(note)
+		}
+		return out
+	}
 	switch {
 	case isEditScript(label):
-		return add(editScriptHint)
+		return first("edit-script", editScriptHint)
 	case isDeclSearch(label):
-		return add(declSearchHint)
+		return first("decl-search", declSearchHint)
 	case isMemberSearch(label):
-		return add(memberSearchHint)
+		return first("member-search", memberSearchHint)
 	case isCallSearch(label):
-		return add(callSearchHint)
+		return first("call-search", callSearchHint)
 	case isLineSliceRead(label):
-		return add(lineSliceHint)
+		return first("line-slice", lineSliceHint)
 	case isBroadSearch(label) && nonEmptyLines(res.Stdout) >= broadSearchMinLines:
-		return add(broadSearchHint)
+		return first("broad-search", broadSearchHint)
 	case isPythonMissing(res.Stdout + res.Stderr):
 		return add(pythonMissingHint)
 	case isFileAggregate(label):
-		return add(aggregateHint)
+		return first("file-aggregate", aggregateHint)
 	case unixNote != "":
 		return add(unixNote)
 	}
