@@ -12,6 +12,10 @@ import (
 	"homelab/fastexec/internal/transport"
 )
 
+// maxListEntries limita quantos itens 'list' devolve numa chamada: uma pasta com milhares de arquivos virava um
+// JSON de ~800 KB (~225 mil tokens) no contexto. Acima do teto, a resposta diz quanto ficou de fora.
+const maxListEntries = 400
+
 type FileOpsArgs struct {
 	Host   string `json:"host,omitempty"`
 	Action string `json:"action"` // "copy", "move", "delete", "mkdir", "list"
@@ -189,6 +193,17 @@ func handleLocalFileOp(args FileOpsArgs) (string, error) {
 				IsDir:   e.IsDir(),
 				ModTime: info.ModTime(),
 			})
+		}
+		if len(items) > maxListEntries {
+			out := struct {
+				Items     []FileItem `json:"items"`
+				Truncated bool       `json:"truncated"`
+				Total     int        `json:"total"`
+				Note      string     `json:"note"`
+			}{items[:maxListEntries], true, len(items),
+				fmt.Sprintf("listing truncated to %d of %d entries; narrow the path or filter with exec", maxListEntries, len(items))}
+			b, _ := json.Marshal(out)
+			return string(b), nil
 		}
 		b, _ := json.Marshal(items)
 		return string(b), nil
