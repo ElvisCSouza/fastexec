@@ -61,7 +61,25 @@ func (r Report) Render() string {
 		b.WriteString("   Limite: o cliente não informa id de conversa; o canal é o mais próximo disponível.\n")
 		b.WriteString("   Tipo de tarefa não é registrado: tokens por tipo de tarefa fica para a fase do A/B.\n")
 	}
+
+	r.renderAB(&b)
 	return b.String()
+}
+
+// renderAB mostra, por regra sob A/B, os dois braços (regra ligada x desligada). É a leitura do experimento:
+// a regra só vence se reduzir tokens lidos sem subir repetidas nem erros.
+func (r Report) renderAB(b *strings.Builder) {
+	b.WriteString("\n6. A/B da fase 4 (regra ligada em metade das conversas)\n")
+	if !r.ABActive {
+		b.WriteString("   Desligado: sem seção \"ab\" ligada no config.json (nenhuma regra muda de lado).\n")
+		return
+	}
+	fmt.Fprintf(b, "   %-10s %-7s %8s %13s %9s %6s\n", "regra", "braço", "chamadas", "tokens lidos", "repetidas", "erros")
+	for _, a := range r.Arms {
+		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d\n", a.Rule, "ligada", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors)
+		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d\n", "", "deslig.", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors)
+	}
+	b.WriteString("   Veredito: vence reduzindo tokens lidos sem subir repetidas/erros; empate = manter.\n")
 }
 
 // maxRulesShown e ruleTextMax mantêm a lista de avisos curta: o que importa é o topo.

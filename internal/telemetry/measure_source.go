@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/measure"
 )
 
@@ -25,7 +26,7 @@ func windowWhere(w measure.Window) string {
 
 func (s sqlSource) Calls(w measure.Window) ([]measure.Call, error) {
 	rows, err := s.db.Query(`SELECT id, COALESCE(NULLIF(client,''), session_id, ''), tool, COALESCE(command_summary,''),
-		args_hash, marks, truncated, COALESCE(success,1), conversation != '', COALESCE(est_tokens_out,0),
+		args_hash, marks, truncated, COALESCE(success,1), COALESCE(conversation,''), COALESCE(est_tokens_out,0),
 		COALESCE(duration_ms,0), cmd_ms
 		FROM audit WHERE ` + windowWhere(w) + ` ORDER BY id`)
 	if err != nil {
@@ -36,12 +37,11 @@ func (s sqlSource) Calls(w measure.Window) ([]measure.Call, error) {
 	for rows.Next() {
 		var c measure.Call
 		var trunc, ok int
-		var conv bool
-		if err := rows.Scan(&c.ID, &c.Channel, &c.Tool, &c.Summary, &c.ArgsHash, &c.Marks, &trunc, &ok, &conv,
+		if err := rows.Scan(&c.ID, &c.Channel, &c.Tool, &c.Summary, &c.ArgsHash, &c.Marks, &trunc, &ok, &c.Conversation,
 			&c.TokensOut, &c.DurMs, &c.CmdMs); err != nil {
 			return nil, err
 		}
-		c.Truncated, c.OK, c.HasConversation = trunc != 0, ok != 0, conv
+		c.Truncated, c.OK, c.HasConversation = trunc != 0, ok != 0, c.Conversation != ""
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -98,7 +98,7 @@ func RenderMeasure(filter StatsFilter) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	r, err := measure.Build(sqlSource{db}, measureWindow(filter), measure.DefaultPolicy(), measure.DefaultDetectors())
+	r, err := measure.BuildWithAB(sqlSource{db}, measureWindow(filter), measure.DefaultPolicy(), measure.DefaultDetectors(), config.Get().AB)
 	if err != nil {
 		return "", err
 	}

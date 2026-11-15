@@ -1,8 +1,11 @@
 package measure
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"homelab/fastexec/internal/ab"
 )
 
 func TestPolicyDefaultAndUnknown(t *testing.T) {
@@ -163,6 +166,47 @@ func TestBuildAndRender(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("saída sem %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestArmStatsSplits(t *testing.T) {
+	var calls []Call
+	for i := 0; i < 100; i++ {
+		calls = append(calls, Call{ID: int64(i + 1), Channel: "c", Conversation: fmt.Sprintf("conv:%d", i), Tool: "exec", TokensOut: 100, OK: true})
+	}
+	cfg := ab.Config{Enabled: true, Rules: []string{"clean"}, Salt: "s", Percent: 50}
+	r, err := BuildWithAB(fakeSource{calls: calls}, Window{}, DefaultPolicy(), DefaultDetectors(), &cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.ABActive || len(r.Arms) != 1 {
+		t.Fatalf("braços: %+v", r.Arms)
+	}
+	a := r.Arms[0]
+	if a.On.Calls+a.Off.Calls != 100 {
+		t.Fatalf("soma das chamadas: %+v", a)
+	}
+	if a.On.Calls < 40 || a.On.Calls > 60 {
+		t.Fatalf("proporção fora de 40-60: %+v", a)
+	}
+	if a.On.Tokens+a.Off.Tokens != 10000 {
+		t.Fatalf("tokens: %+v", a)
+	}
+	if out := r.Render(); !strings.Contains(out, "A/B da fase 4") || !strings.Contains(out, "clean") {
+		t.Errorf("render sem a seção A/B:\n%s", out)
+	}
+}
+
+func TestABOffWithoutConfig(t *testing.T) {
+	r, err := Build(fakeSource{}, Window{}, DefaultPolicy(), DefaultDetectors())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ABActive {
+		t.Fatal("A/B ativo sem a seção \"ab\"")
+	}
+	if out := r.Render(); !strings.Contains(out, "Desligado") {
+		t.Errorf("render deveria dizer que o A/B está desligado:\n%s", out)
 	}
 }
 

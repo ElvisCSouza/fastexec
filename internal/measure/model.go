@@ -38,6 +38,7 @@ func (w Window) Label() string {
 type Call struct {
 	ID              int64
 	Channel         string // client (fallback: session_id): um canal por processo MCP
+	Conversation    string // id de conversa informado pelo cliente ("" quando não há)
 	Tool            string
 	Summary         string
 	ArgsHash        string
