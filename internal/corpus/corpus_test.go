@@ -38,10 +38,18 @@ func TestNilCaptureIsHarmless(t *testing.T) {
 	c.Finish("x") // must not panic
 }
 
-func TestBeginOffByDefault(t *testing.T) {
-	t.Setenv("FASTEXEC_CORPUS", "")
-	if Begin("local", "ls") != nil {
-		t.Fatal("corpus must be off unless FASTEXEC_CORPUS=1")
+func TestEnvZeroTurnsItOffEvenIfConfigAsksForIt(t *testing.T) {
+	t.Setenv("FASTEXEC_CORPUS", "0")
+	if Enabled() || Begin("local", "ls") != nil {
+		t.Fatal("FASTEXEC_CORPUS=0 must win over the config file")
+	}
+}
+
+func TestEnvOneTurnsItOn(t *testing.T) {
+	t.Setenv("FASTEXEC_CORPUS", "1")
+	t.Setenv("FASTEXEC_CORPUS_DIR", t.TempDir())
+	if !Enabled() || Begin("local", "ls") == nil {
+		t.Fatal("FASTEXEC_CORPUS=1 must turn it on")
 	}
 }
 

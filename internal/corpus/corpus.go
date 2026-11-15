@@ -6,6 +6,7 @@
 package corpus
 
 import (
+	"homelab/fastexec/internal/config"
 	"os"
 	"strconv"
 	"time"
@@ -44,8 +45,17 @@ func DefaultLimits() Limits {
 	return Limits{MaxRaw: 256 << 10, TTL: 72 * time.Hour, MaxTotal: 50 << 20}
 }
 
-// Enabled reports whether recording was asked for.
-func Enabled() bool { return os.Getenv("FASTEXEC_CORPUS") == "1" }
+// Enabled reports whether recording was asked for: FASTEXEC_CORPUS=1/0 in the environment wins, otherwise the
+// "corpus" setting of the config file (the daemon does not always inherit the AI client's environment).
+func Enabled() bool {
+	switch os.Getenv("FASTEXEC_CORPUS") {
+	case "1":
+		return true
+	case "0":
+		return false
+	}
+	return config.Get().Corpus
+}
 
 // LimitsFromEnv applies FASTEXEC_CORPUS_TTL_H and FASTEXEC_CORPUS_MAX_MB over the defaults.
 func LimitsFromEnv() Limits {

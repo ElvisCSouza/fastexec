@@ -39,6 +39,9 @@ type Config struct {
 	DataDir     string          `json:"data_dir,omitempty"`
 	HandoffDir  string          `json:"handoff_dir,omitempty"`
 	Telemetry   *bool           `json:"telemetry,omitempty"`
+	// Corpus liga a gravação de saídas reais do exec (internal/corpus) sem depender do ambiente do cliente de IA,
+	// que o daemon nem sempre herda. FASTEXEC_CORPUS=1/0 no ambiente tem precedência.
+	Corpus bool `json:"corpus,omitempty"`
 	// DotnetSDK é a pasta de um .NET SDK que o FastExec deve usar para os
 	// servidores .NET (C#). Existe para o SDK portátil: uma pasta própria, fora
 	// do PATH da máquina, que o processo do daemon não tem como adivinhar. Quem

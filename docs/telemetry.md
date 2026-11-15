@@ -74,7 +74,9 @@ code does not change.
 For comparing filters and other tools offline, with no model calls, `exec` can record real outputs. It is separate
 from telemetry and stays on this computer.
 
-- Turn on with `FASTEXEC_CORPUS=1` in the environment of the AI client; nothing is recorded otherwise.
+- Turn on with `"corpus": true` in `~/.fastexec/config.json` (the reliable way: the background process does not always
+  inherit the AI client's environment) or `FASTEXEC_CORPUS=1` in the environment. `FASTEXEC_CORPUS=0` turns it off over
+  the file. Nothing is recorded otherwise. Restart the background process after changing it: `fastexec daemon-stop`.
 - Each call that ran a command becomes one JSON file in the `corpus` data folder (`FASTEXEC_CORPUS_DIR` overrides):
   host, command line, exit code, command time, the raw output and what FastExec returned.
 - Secrets are masked before writing (bearer and API tokens, `password=`-style values, URL passwords, private key
