@@ -28,9 +28,10 @@ type Report struct {
 // ArmSide é o que um braço do A/B somou para uma regra.
 type ArmSide struct {
 	Calls   int
-	Tokens  int64 // tokens lidos pelo modelo
-	Repeats int   // chamadas repetidas (mesmo canal e args_hash)
-	Errors  int   // chamadas com falha
+	Tokens  int64          // tokens lidos pelo modelo
+	Repeats int            // chamadas repetidas (mesmo canal e args_hash)
+	Errors  int            // chamadas com falha
+	Dano    map[string]int // sinais de dano por detector (retry_after_cut, raw_flag, repeated_hint...)
 }
 
 // ArmStat compara os dois braços de uma regra: On = regra ligada (tratado), Off = regra desligada (controle).
@@ -107,50 +108,61 @@ func BuildWithAB(src Source, w Window, p BasisPolicy, ds []HarmDetector, abc *ab
 	}
 	if abc != nil && abc.Enabled && len(abc.Rules) > 0 {
 		r.ABActive = true
-		r.Arms = armStats(calls, *abc)
+		r.Arms = armStats(calls, *abc, ds)
 	}
 	return r, nil
 }
 
 // armStats separa as chamadas nos dois braços de cada regra do A/B. A identidade é a mesma da operação:
 // "conv:<id>" quando o cliente informa o id, senão o canal. Regra fora da lista não é separada.
-func armStats(calls []Call, c ab.Config) []ArmStat {
-	by := map[string]*ArmStat{}
+func armStats(calls []Call, c ab.Config, ds []HarmDetector) []ArmStat {
+	seen := map[string]bool{}
 	var order []string
 	for _, rule := range c.Rules {
-		if _, ok := by[rule]; ok {
-			continue
+		if !seen[rule] {
+			seen[rule] = true
+			order = append(order, rule)
 		}
-		by[rule] = &ArmStat{Rule: rule}
-		order = append(order, rule)
 	}
-	seen := map[string]int{}
+	on := map[string][]Call{}
+	off := map[string][]Call{}
 	for _, cl := range calls {
 		id := armIdentity(cl)
-		key := cl.Channel + "|" + cl.ArgsHash
-		seen[key]++
-		rep := seen[key] > 1
 		for _, rule := range order {
-			st := by[rule]
-			side := &st.On
 			if c.Off(rule, id) {
-				side = &st.Off
-			}
-			side.Calls++
-			side.Tokens += cl.TokensOut
-			if rep {
-				side.Repeats++
-			}
-			if !cl.OK {
-				side.Errors++
+				off[rule] = append(off[rule], cl)
+			} else {
+				on[rule] = append(on[rule], cl)
 			}
 		}
 	}
 	out := make([]ArmStat, 0, len(order))
 	for _, rule := range order {
-		out = append(out, *by[rule])
+		out = append(out, ArmStat{Rule: rule, On: sideStats(on[rule], ds), Off: sideStats(off[rule], ds)})
 	}
 	return out
+}
+
+// sideStats resume um braço: chamadas, tokens lidos, repetidas, erros e os sinais de dano (detectores).
+func sideStats(calls []Call, ds []HarmDetector) ArmSide {
+	s := ArmSide{Dano: map[string]int{}}
+	seen := map[string]int{}
+	for _, cl := range calls {
+		s.Calls++
+		s.Tokens += cl.TokensOut
+		key := cl.Channel + "|" + cl.ArgsHash
+		seen[key]++
+		if seen[key] > 1 {
+			s.Repeats++
+		}
+		if !cl.OK {
+			s.Errors++
+		}
+	}
+	for _, d := range ds {
+		s.Dano[d.Name()] = len(d.Detect(calls))
+	}
+	return s
 }
 
 func armIdentity(c Call) string {

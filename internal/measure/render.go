@@ -74,12 +74,16 @@ func (r Report) renderAB(b *strings.Builder) {
 		b.WriteString("   Desligado: sem seção \"ab\" ligada no config.json (nenhuma regra muda de lado).\n")
 		return
 	}
-	fmt.Fprintf(b, "   %-10s %-7s %8s %13s %9s %6s\n", "regra", "braço", "chamadas", "tokens lidos", "repetidas", "erros")
-	for _, a := range r.Arms {
-		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d\n", a.Rule, "ligada", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors)
-		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d\n", "", "deslig.", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors)
+	dano := func(s ArmSide) string {
+		rc, raw, rep := s.Dano["retry_after_cut"], s.Dano["raw_flag"], s.Dano["repeated_hint"]
+		return fmt.Sprintf("%d (%d/%d/%d)", rc+raw+rep, rc, raw, rep)
 	}
-	b.WriteString("   Veredito: vence reduzindo tokens lidos sem subir repetidas/erros; empate = manter.\n")
+	fmt.Fprintf(b, "   %-10s %-7s %8s %13s %9s %6s  %s\n", "regra", "braço", "chamadas", "tokens lidos", "repetidas", "erros", "dano rc/raw/rep")
+	for _, a := range r.Arms {
+		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %s\n", a.Rule, "ligada", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors, dano(a.On))
+		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %s\n", "", "deslig.", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors, dano(a.Off))
+	}
+	b.WriteString("   Veredito: vence reduzindo tokens lidos sem subir dano (rc/raw/rep), repetidas ou erros; empate = manter.\n")
 }
 
 // maxRulesShown e ruleTextMax mantêm a lista de avisos curta: o que importa é o topo.
