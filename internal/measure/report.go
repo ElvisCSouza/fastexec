@@ -32,6 +32,8 @@ type ArmSide struct {
 	Repeats int            // chamadas repetidas (mesmo canal e args_hash)
 	Errors  int            // chamadas com falha
 	Dano    map[string]int // sinais de dano por detector (retry_after_cut, raw_flag, repeated_hint...)
+	CmdMs   int64          // mediana do tempo do comando dentro do exec (só execs medidos)
+	CmdN    int            // execs com tempo medido nesse braço
 }
 
 // ArmStat compara os dois braços de uma regra: On = regra ligada (tratado), Off = regra desligada (controle).
@@ -159,10 +161,28 @@ func sideStats(calls []Call, ds []HarmDetector) ArmSide {
 			s.Errors++
 		}
 	}
+	var cms []int64
+	for _, cl := range calls {
+		if cl.CmdMs >= 0 {
+			cms = append(cms, cl.CmdMs)
+		}
+	}
+	s.CmdN = len(cms)
+	s.CmdMs = medianMs(cms)
 	for _, d := range ds {
 		s.Dano[d.Name()] = len(d.Detect(calls))
 	}
 	return s
+}
+
+// medianMs devolve a mediana de uma lista de milissegundos (0 se vazia).
+func medianMs(v []int64) int64 {
+	if len(v) == 0 {
+		return 0
+	}
+	sorted := append([]int64(nil), v...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return sorted[len(sorted)/2]
 }
 
 func armIdentity(c Call) string {
