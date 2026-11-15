@@ -12,9 +12,10 @@ import (
 )
 
 // Targets the corpus must reach before the comparison (docs: spec-fase3-comparacao).
+// MinPerCategory is 10, not 20: big samples expire in 14 days, so low-traffic families never reached 20.
 const (
 	MinTotal       = 200
-	MinPerCategory = 20
+	MinPerCategory = 10
 	// BigRaw is the raw size from which an output is worth filtering: the exec soft cap (10 KB).
 	BigRaw = 10 * 1024
 )

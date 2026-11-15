@@ -63,7 +63,7 @@ func TestSummarizeExcludesDedupesAndCounts(t *testing.T) {
 		t.Fatalf("git stat wrong: %+v", git)
 	}
 	out := Render(s)
-	for _, want := range []string{"faltam 197", "build_test", "faltam 19 grandes", "Famílias sem nenhuma amostra: listagem, busca, logs", "Nenhuma família pronta"} {
+	for _, want := range []string{"faltam 197", "build_test", "faltam 9 grandes", "Famílias sem nenhuma amostra: listagem, busca, logs", "Nenhuma família pronta"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report missing %q:\n%s", want, out)
 		}
