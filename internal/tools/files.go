@@ -283,16 +283,17 @@ func handleReadFile(args ReadFileArgs) (string, error) {
 	noSlice := args.Offset == 0 && args.Limit == 0 && args.Ranges == "" && args.Pattern == "" && args.Symbol == ""
 	whole := noSlice && args.StartLine == 0 && args.EndLine == 0
 	lineRange := noSlice && !whole
+	sliceOff := readSliceOff(identity(args.Caller, args.Conv)) // regra "slice" (fase 4)
 	// done: o texto já passou pelo teto (ou é um outline, que tem teto próprio); o teto vale para TODO modo e host.
 	done := false
 	switch {
-	case whole:
+	case whole && !sliceOff:
 		if g, ok, note := graphFirstRead(args, out, 0, 0); ok {
 			out, done = g, true
 		} else if note != "" {
 			out, done = strings.TrimRight(capRead(out, args), "\r\n")+"\n\n"+note, true
 		}
-	case lineRange && (args.EndLine == 0 || args.EndLine-max(args.StartLine, 1)+1 > graphMinLines):
+	case lineRange && !sliceOff && (args.EndLine == 0 || args.EndLine-max(args.StartLine, 1)+1 > graphMinLines):
 		if full, ferr := handleReadFileInner(ReadFileArgs{Host: args.Host, Path: args.Path}); ferr == nil {
 			if g, ok, note := graphFirstRead(args, full, args.StartLine, args.EndLine); ok {
 				out, done = g, true
@@ -309,8 +310,8 @@ func handleReadFile(args ReadFileArgs) (string, error) {
 	}
 	// A hint only for the same read made again (same file AND same selection): reading a file in different
 	// ranges is what read_file is for and must not be called re-reading.
-		noteSeen(identity(args.Caller, args.Conv), args.Host, args.Path)
-		if noteRead(identity(args.Caller, args.Conv), args.Host, args.Path+"|"+readSignature(args)) == rereadHintAt {
+	noteSeen(identity(args.Caller, args.Conv), args.Host, args.Path)
+	if noteRead(identity(args.Caller, args.Conv), args.Host, args.Path+"|"+readSignature(args)) == rereadHintAt {
 		out = strings.TrimRight(out, "\r\n") + "\n\n[FastExec Hint] This exact read was made 3 times; the text is the same unless the file changed. To locate code without re-reading: code_outline(path, symbol='name') gives the line; read_file(pattern='regex', context=3) returns only matching lines."
 	}
 	return out, err
@@ -519,11 +520,11 @@ func handleWriteFile(args WriteFileArgs, impact bool) (string, error) {
 		}
 		// Fase A do assistente de linguagem (lsp_autoedit.go): roda com o texto VELHO ainda no disco, que é o
 		// que dá posição válida ao servidor. Sem servidor, ae é nil e tudo abaixo é o de sempre.
-			var ae *autoEdit
-			if !args.skipAuto {
-				ae = autoEditBegin(args.Host, args.Path, oldText, args.Content)
-			}
-			defer ae.Close()
+		var ae *autoEdit
+		if !args.skipAuto {
+			ae = autoEditBegin(args.Host, args.Path, oldText, args.Content)
+		}
+		defer ae.Close()
 		final := ae.Text(args.Content)
 		contentBytes = []byte(final)
 		captureUndo(args.Path) // o conteúdo de antes, uma vez por operação (o rename já pode tê-lo guardado)
@@ -761,6 +762,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
 		}
+		noteEditSaving(len(content), len(args.Replacement), args.Path)
 		return note + ae.Finish(), nil
 	}
 
@@ -781,7 +783,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 	newContent := content
 	// oldLines/newLines: as linhas que a edição tirou e pôs — é isso que a resposta conta ('+A -R lines'), e não o
 	// tamanho em bytes, que o modelo não usa para nada.
-	oldLines, newLines := 0, 0
+	oldLines, newLines, patchBytes := 0, 0, 0
 	var notes []string
 	// applied: em que posição do conteúdo final cada troca começou (a prova citada na resposta)
 	applied := make([]int, 0, len(ops))
@@ -843,6 +845,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 			}
 		}
 		applied = append(applied, at)
+		patchBytes += len(op.Target) + len(op.Replacement)
 		oldLines += editLineCount(t)
 		newLines += editLineCount(r)
 	}
@@ -875,6 +878,7 @@ func handleEditFile(args EditFileArgs) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("could not write '%s': %w", args.Path, err)
 	}
+	noteEditSaving(len(content), patchBytes, args.Path)
 
 	// Resposta mínima: arquivo, linhas que entraram e saíram, número de trechos trocados — e só isso antes dos avisos
 	// automáticos (prova da edição, [graph], [lsp]). O arquivo e o diff inteiro nunca voltam.

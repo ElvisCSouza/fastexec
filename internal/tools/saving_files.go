@@ -58,6 +58,13 @@ func localFileSize(host, path string) int {
 	return int(info.Size())
 }
 
+// noteEditSaving anota a economia de editar por trecho (regra "edit"): a ferramenta comum reenviaria o arquivo
+// inteiro; o patch é o que o agente mandou.
+func noteEditSaving(fileBytes, patchBytes int, path string) {
+	telemetry.NoteSavingDetail(telemetry.CatEdit, fileBytes, patchBytes,
+		fmt.Sprintf("edited by patch: %d B file, %d B of changes sent", fileBytes, patchBytes))
+}
+
 // noteReadSaving: ler um trecho (ou um resumo) devolve menos que o arquivo inteiro, que é o que um cat/Read faria.
 func noteReadSaving(host, path, out string) {
 	size := localFileSize(host, path)

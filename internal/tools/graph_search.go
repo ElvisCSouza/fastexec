@@ -611,6 +611,9 @@ func withRawEscape(cmd string) string {
 // tryGraphSearch responde a busca pelo grafo. handled=false: rode o comando; note (quando não vazio) explica o que
 // aconteceu (índice refeito, teto estourado, repetição, busca crua pedida).
 func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled bool, note string) {
+	if !autofixOn(identity(args.Caller, args.Conv)) {
+		return "", false, ""
+	}
 	if raw || searchGuardOff() || os.Getenv("FASTEXEC_NO_GRAPH_SEARCH") != "" {
 		return "", false, ""
 	}

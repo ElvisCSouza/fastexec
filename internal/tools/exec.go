@@ -457,7 +457,7 @@ func formatExecOutputFor(id, command string, res transport.ExecResult) (string, 
 	}
 
 	if res.TimedOut {
-		return formatTimeout(res.Duration, stdout, stderr)
+		return formatTimeout(id, res.Duration, stdout, stderr)
 	}
 
 	if res.ExitCode != 0 {
@@ -549,7 +549,11 @@ func stderrErrors(stderr string) string {
 
 // formatTimeout devolve ao agente um desfecho inequívoco: estourou o prazo, a árvore foi encerrada e o que foi emitido
 // até o corte. Assim ele nunca precisa adivinhar se o comando rodou.
-func formatTimeout(elapsedMs int64, stdout, stderr string) (string, error) {
+func formatTimeout(id string, elapsedMs int64, stdout, stderr string) (string, error) {
+	if timeoutPartialOff(id) {
+		return fmt.Sprintf("[timeout after %.1fs; process tree killed]\n[FastExec Guidance] For long work (> 30 s) use the 'job' tool (action 'start').", float64(elapsedMs)/1000),
+			fmt.Errorf("timeout after %.1fs", float64(elapsedMs)/1000)
+	}
 	telemetry.NoteAvoidedDetail(telemetry.CatTimeout, len(stdout)+len(stderr), 0,
 		fmt.Sprintf("Timed out after %.1f s; returned the %d B emitted so far instead of letting the client cut the call", float64(elapsedMs)/1000, len(stdout)+len(stderr)))
 	head := fmt.Sprintf("[timeout after %.1fs; process tree killed]", float64(elapsedMs)/1000)
@@ -682,6 +686,9 @@ var sleepFn = time.Sleep
 // Se a pausa pedida for <= 15s, executa a espera controlada em Go e retorna aviso pedagógico.
 // Se > 15s, bloqueia com instrução explícita de usar job assíncrono.
 func tryRemediateSleep(label string, args ExecArgs) (string, bool, error) {
+	if !autofixOn(identity(args.Caller, args.Conv)) {
+		return "", false, nil
+	}
 	var targetStr string
 	if len(args.Argv) > 0 {
 		exe := strings.ToLower(strings.TrimSuffix(filepath.Base(args.Argv[0]), ".exe"))
@@ -775,6 +782,9 @@ func detectCatCommand(args ExecArgs) (string, string) {
 // tryRemediateCat tenta ler o arquivo diretamente via HandleReadFile (zero-process), retornando
 // o conteúdo com um cabeçalho explicativo pedagógico.
 func tryRemediateCat(args ExecArgs) (string, bool, error) {
+	if !autofixOn(identity(args.Caller, args.Conv)) {
+		return "", false, nil
+	}
 	cmdName, candidatePath := detectCatCommand(args)
 	if candidatePath == "" {
 		return "", false, nil
@@ -915,6 +925,9 @@ func detectListCommand(args ExecArgs) (cmdName string, candidatePath string) {
 // tryRemediateList intercepta listagens de diretório simples e executa via file_ops (action='list'),
 // economizando criação de processos e normalizando o retorno.
 func tryRemediateList(args ExecArgs) (string, bool, error) {
+	if !autofixOn(identity(args.Caller, args.Conv)) {
+		return "", false, nil
+	}
 	_, candidatePath := detectListCommand(args)
 	if candidatePath == "" {
 		return "", false, nil
@@ -1041,6 +1054,9 @@ func cdRegexesFor(cwd string) *cdRegexes {
 
 // tryRemediateCd remove o prefixo redundante 'cd <cwd padrão> &&' quando o host tem cwd padrão na config.
 func tryRemediateCd(args *ExecArgs) (out string, handled bool, hint string) {
+	if !autofixOn(identity(args.Caller, args.Conv)) {
+		return "", false, ""
+	}
 	cmd := strings.TrimSpace(args.Command)
 	if cmd == "" {
 		return "", false, ""

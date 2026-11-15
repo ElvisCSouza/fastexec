@@ -194,6 +194,9 @@ func isAbsAny(p string) bool {
 
 // tryRemediateReadScript roda os passos pelo read_file. handled=false: o comando segue para o shell.
 func tryRemediateReadScript(args ExecArgs) (string, bool) {
+	if !autofixOn(identity(args.Caller, args.Conv)) {
+		return "", false
+	}
 	target, err := transport.ResolveHost(args.Host)
 	if err != nil || target.IsSSH {
 		return "", false
