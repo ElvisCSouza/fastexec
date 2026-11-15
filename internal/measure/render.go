@@ -79,12 +79,16 @@ func (r Report) renderAB(b *strings.Builder) {
 		return fmt.Sprintf("%d (%d/%d/%d)", rc+raw+rep, rc, raw, rep)
 	}
 	fmt.Fprintf(b, "   %-10s %-7s %8s %13s %9s %6s  %-19s %s\n", "regra", "braço", "chamadas", "tokens lidos", "repetidas", "erros", "dano rc/raw/rep", "cmd ms (n)")
+	events := map[string]int64{}
+	for _, c := range r.Savings.Cats {
+		events[c.Cat] = c.Events
+	}
 	for _, a := range r.Arms {
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", a.Rule, "ligada", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors, dano(a.On), a.On.CmdMs, a.On.CmdN)
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", "", "deslig.", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors, dano(a.Off), a.Off.CmdMs, a.Off.CmdN)
-		fmt.Fprintf(b, "     -> amostra: ligada %s / deslig. %s | %s\n", sampleState(a.On), sampleState(a.Off), armVerdict(a))
+		fmt.Fprintf(b, "     -> coletas na janela: %s | %s\n", collectState(events[a.Rule]), armVerdict(a))
 	}
-	fmt.Fprintf(b, "   Regra: decide com %d coletas (chamadas) por braço, sem piso de tempo; vence reduzindo tokens lidos por chamada sem subir dano, repetidas ou erros; empate = manter. Contar só o A/B ligado (confira a janela).\n", ArmMinSamples)
+	fmt.Fprintf(b, "   Regra: decide com %d coletas da regra (eventos na janela, sem piso de tempo); vence reduzindo tokens lidos por chamada sem subir dano, repetidas ou erros; empate = manter. Contar só o A/B ligado (confira a janela).\n", ArmMinSamples)
 }
 
 // armVerdict compara os braços por chamada (tamanhos de braço diferentes) e emite o veredito mecânico do ADR-002.
@@ -106,12 +110,13 @@ func armVerdict(a ArmStat) string {
 		verdict, onTok, offTok, onDano, offDano, onRep, offRep)
 }
 
-// sampleState diz se o braço já juntou coletas bastantes (ArmMinSamples chamadas).
-func sampleState(s ArmSide) string {
-	if s.Calls >= ArmMinSamples {
-		return fmt.Sprintf("ok (%d)", s.Calls)
+// collectState diz se a regra já juntou coletas bastantes (ArmMinSamples eventos da regra na janela). O evento
+// só existe no braço tratado (regra ligada); como o sorteio é 50%, ~metade das ocasiões gera evento.
+func collectState(n int64) string {
+	if n >= ArmMinSamples {
+		return fmt.Sprintf("ok (%d)", n)
 	}
-	return fmt.Sprintf("faltam %d (%d)", ArmMinSamples-s.Calls, s.Calls)
+	return fmt.Sprintf("faltam %d (%d)", int64(ArmMinSamples)-n, n)
 }
 
 func perCall(total int64, calls int) float64 {
