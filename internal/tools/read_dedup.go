@@ -18,7 +18,7 @@ import (
 
 const (
 	readDedupMinBytes = 1500
-	readDedupTTL      = 10 * time.Minute
+	readDedupTTL      = 30 * time.Minute
 )
 
 type readSeen struct {
