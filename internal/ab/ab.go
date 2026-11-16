@@ -37,13 +37,20 @@ func (c Config) window(t time.Time) int {
 	return int(t.Unix() / (int64(w) * 60))
 }
 
+// rulePhase dá 0 ou 1 fixo por regra, para o switchback não alternar todas as regras na mesma janela.
+func (c Config) rulePhase(rule string) int {
+	h := sha1.Sum([]byte(c.Salt + "|phase|" + rule))
+	return int(h[0] % 2)
+}
+
 // OffAt decide a regra na hora t: por conversa (padrão) ou por janela de tempo (switchback).
 func (c Config) OffAt(rule, conversation string, t time.Time) bool {
 	if !c.Enabled || !c.covers(rule) {
 		return false
 	}
 	if c.Switchback() {
-		return c.window(t)%2 == 1 // janela ímpar = SEM (regra desligada)
+		// Fase por regra: regras não flipam todas juntas (decorrelaciona tempo e regra).
+		return (c.window(t)+c.rulePhase(rule))%2 == 1
 	}
 	if conversation == "" {
 		return false

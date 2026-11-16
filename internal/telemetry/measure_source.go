@@ -28,7 +28,7 @@ func windowWhere(w measure.Window) string {
 func (s sqlSource) Calls(w measure.Window) ([]measure.Call, error) {
 	rows, err := s.db.Query(`SELECT id, COALESCE(NULLIF(client,''), session_id, ''), tool, COALESCE(command_summary,''),
 		args_hash, marks, truncated, COALESCE(success,1), COALESCE(conversation,''), COALESCE(est_tokens_out,0),
-		COALESCE(duration_ms,0), cmd_ms, timestamp
+		COALESCE(duration_ms,0), cmd_ms, CAST(strftime('%s', timestamp) AS INTEGER)
 		FROM audit WHERE ` + windowWhere(w) + ` ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -38,14 +38,14 @@ func (s sqlSource) Calls(w measure.Window) ([]measure.Call, error) {
 	for rows.Next() {
 		var c measure.Call
 		var trunc, ok int
-		var ts string
+		var epoch int64
 		if err := rows.Scan(&c.ID, &c.Channel, &c.Tool, &c.Summary, &c.ArgsHash, &c.Marks, &trunc, &ok, &c.Conversation,
-			&c.TokensOut, &c.DurMs, &c.CmdMs, &ts); err != nil {
+			&c.TokensOut, &c.DurMs, &c.CmdMs, &epoch); err != nil {
 			return nil, err
 		}
 		c.Truncated, c.OK, c.HasConversation = trunc != 0, ok != 0, c.Conversation != ""
-		if t, perr := time.Parse("2006-01-02 15:04:05", ts); perr == nil {
-			c.At = t
+		if epoch > 0 {
+			c.At = time.Unix(epoch, 0)
 		}
 		out = append(out, c)
 	}
