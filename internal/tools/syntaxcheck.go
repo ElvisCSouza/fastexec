@@ -8,6 +8,7 @@ package tools
 //	Outras linguagens: sem camada 1 (a camada 2, o servidor de linguagem, responde por elas).
 
 import (
+	"encoding/json"
 	"go/parser"
 	"go/scanner"
 	"go/token"
@@ -40,6 +41,8 @@ func syntaxCheck(path, text string) ([]syntaxIssue, syntaxState) {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".go":
 		return goSyntax(path, text), syntaxReady
+	case ".json":
+		return jsonSyntax(text), syntaxReady
 	case ".cs":
 		issues, st, _ := lsp.RoslynSyntax(text)
 		switch st {
@@ -61,10 +64,41 @@ func syntaxCheck(path, text string) ([]syntaxIssue, syntaxState) {
 // syntaxLanguage diz se o arquivo tem camada 1 (para decidir, antes de pagar qualquer coisa, se vale validar).
 func syntaxLanguage(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go", ".cs":
+	case ".go", ".cs", ".json":
 		return true
 	}
 	return false
+}
+
+// jsonSyntax valida o texto com o parser da stdlib (determinístico, in-process). Devolve o primeiro erro, com a
+// linha calculada a partir do offset que o encoding/json informa.
+func jsonSyntax(text string) []syntaxIssue {
+	var v any
+	err := json.Unmarshal([]byte(text), &v)
+	if err == nil {
+		return nil
+	}
+	if se, ok := err.(*json.SyntaxError); ok {
+		line, col := offsetLineCol(text, int(se.Offset))
+		return []syntaxIssue{{line: line, col: col, msg: se.Error()}}
+	}
+	return []syntaxIssue{{line: 1, col: 1, msg: err.Error()}}
+}
+
+// offsetLineCol converte um offset em bytes para linha/coluna (1-based).
+func offsetLineCol(text string, off int) (int, int) {
+	if off > len(text) {
+		off = len(text)
+	}
+	line, col := 1, 1
+	for i := 0; i < off; i++ {
+		if text[i] == '\n' {
+			line, col = line+1, 1
+		} else {
+			col++
+		}
+	}
+	return line, col
 }
 
 // goSyntax usa o parser da stdlib. Só erros de sintaxe: o go/parser não faz análise de tipos, que é da camada 2.
