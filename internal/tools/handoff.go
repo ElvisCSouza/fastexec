@@ -285,7 +285,7 @@ func handleHandoffSave(dir string, args HandoffArgs) (string, error) {
 	// Atualiza o ponteiro latest.md
 	_ = os.WriteFile(latestPath, []byte(content), 0644)
 
-	res := fmt.Sprintf("[FastExec Handoff] Saved:\n- File: %s\n- Pointer updated: %s\n\n---\n%s", filePath, latestPath, content)
+	res := fmt.Sprintf("[FastExec Handoff] Saved: %s (%d bytes); pointer updated: %s. The text is in the file; use action='latest' to read it back.", filePath, len(content), latestPath)
 	return res, nil
 }
 
