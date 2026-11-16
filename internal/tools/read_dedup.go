@@ -16,10 +16,7 @@ import (
 	"homelab/fastexec/internal/telemetry"
 )
 
-const (
-	readDedupMinBytes = 1500
-	readDedupTTL      = 30 * time.Minute
-)
+const readDedupMinBytes = 1500
 
 type readSeen struct {
 	hash    string
@@ -50,7 +47,7 @@ func dedupReadOutput(args ReadFileArgs, out string) string {
 		readDedupSeen = map[string]*readSeen{}
 	}
 	e := readDedupSeen[key]
-	if e == nil || e.hash != h || now.Sub(e.at) > readDedupTTL {
+	if e == nil || e.hash != h {
 		readDedupSeen[key] = &readSeen{hash: h, at: now}
 		return out
 	}
