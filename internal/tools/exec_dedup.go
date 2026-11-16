@@ -17,10 +17,7 @@ import (
 // meaningful size within execDedupTTL, the 2nd identical result is replaced by a short stub and the 3rd returns the
 // full text again, so the agent is never locked out of content it needs. A different output always passes through.
 
-const (
-	execDedupMinBytes = 3000
-	execDedupTTL      = 5 * time.Minute
-)
+const execDedupMinBytes = 3000
 
 type execSeen struct {
 	hash    string
@@ -61,7 +58,7 @@ func dedupExecOutput(args ExecArgs, label, out string) string {
 		execDedupSeen = map[string]*execSeen{}
 	}
 	e := execDedupSeen[key]
-	if e == nil || e.hash != h || now.Sub(e.at) > execDedupTTL {
+	if e == nil || e.hash != h {
 		execDedupSeen[key] = &execSeen{hash: h, at: now}
 		return out
 	}
