@@ -21,7 +21,7 @@ func TestGoSyntaxValidAndNoTypeAnalysis(t *testing.T) {
 }
 
 func TestSyntaxNoneForOtherLanguages(t *testing.T) {
-	for _, p := range []string{"a.ts", "a.rb", "a.rs", "README.md"} {
+	for _, p := range []string{"a.kt", "a.rb", "a.rs", "README.md"} {
 		if _, st := syntaxCheck(p, "qualquer coisa {"); st != syntaxNone {
 			t.Fatalf("%s: state=%v", p, st)
 		}

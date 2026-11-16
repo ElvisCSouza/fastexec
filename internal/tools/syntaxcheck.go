@@ -64,7 +64,7 @@ func syntaxCheck(path, text string) ([]syntaxIssue, syntaxState) {
 // syntaxLanguage diz se o arquivo tem camada 1 (para decidir, antes de pagar qualquer coisa, se vale validar).
 func syntaxLanguage(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go", ".cs", ".json", ".js", ".mjs", ".cjs", ".zig", ".sh", ".bash", ".zsh", ".ksh", ".py", ".pyi":
+	case ".go", ".cs", ".json", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".zig", ".sh", ".bash", ".zsh", ".ksh", ".py", ".pyi":
 		return true
 	}
 	return false

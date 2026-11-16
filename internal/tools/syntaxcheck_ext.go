@@ -27,6 +27,7 @@ var extProbe = map[string][]string{
 	"bash":    {"--version"},
 	"python":  {"--version"},
 	"python3": {"--version"},
+	"tsc":     {"--version"},
 }
 
 func extToolPath(name string) string {
@@ -62,8 +63,77 @@ func externalSyntax(path, text string) ([]syntaxIssue, syntaxState) {
 		return fileChecker("bash", []string{"-n"}, path, text)
 	case ".py", ".pyi":
 		return stdinChecker([]string{"python", "python3"}, []string{"-c", "import sys,ast; ast.parse(sys.stdin.read())"}, text)
+	case ".ts", ".tsx", ".mts", ".cts":
+		return tsChecker(path, text)
 	}
 	return nil, syntaxNone
+}
+
+// extReTsc casa a linha do compilador: "arq.ts(1,19): error TS1109: Expression expected."
+var extReTsc = regexp.MustCompile(`\((\d+),(\d+)\): error TS(\d+): (.*)`)
+
+// tsChecker valida TS/TSX com o próprio compilador (tsc --noEmit), mas só reporta diagnósticos SINTÁTICOS. Erro de
+// tipo (TS2xxx), de módulo (TS2307) e os contextuais (TS13xx, top-level await; TS12xx de opção) ficam de fora — são
+// camada 2, e num arquivo solto viram ruído. Sem tsc no PATH => silêncio (best-effort).
+func tsChecker(path, text string) ([]syntaxIssue, syntaxState) {
+	exe := extToolPath("tsc")
+	if exe == "" {
+		return nil, syntaxNone
+	}
+	f, err := os.CreateTemp("", "fx-syntax-*"+filepath.Ext(path))
+	if err != nil {
+		return nil, syntaxNone
+	}
+	name := f.Name()
+	_, _ = f.WriteString(text)
+	_ = f.Close()
+	defer os.Remove(name)
+	args := []string{"--noEmit", "--skipLibCheck"}
+	if strings.EqualFold(filepath.Ext(path), ".tsx") {
+		args = append(args, "--jsx", "preserve")
+	}
+	out, ok := extRun(exe, append(args, name), "")
+	if !ok {
+		return nil, syntaxNone
+	}
+	if iss := tsFirstSyntax(out); iss != nil {
+		return []syntaxIssue{*iss}, syntaxReady
+	}
+	return nil, syntaxReady
+}
+
+// tsFirstSyntax devolve o primeiro diagnóstico sintático da saída do tsc, ou nil.
+func tsFirstSyntax(out string) *syntaxIssue {
+	for _, l := range strings.Split(out, "\n") {
+		m := extReTsc.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		code, _ := strconv.Atoi(m[3])
+		if !tsSyntaxCode(code) {
+			continue
+		}
+		line, _ := strconv.Atoi(m[1])
+		col, _ := strconv.Atoi(m[2])
+		return &syntaxIssue{id: "TS" + m[3], line: line, col: col, msg: oneLine(m[4])}
+	}
+	return nil
+}
+
+// tsSyntaxCode diz se o código do tsc é de sintaxe. O parser emite 1xxx (exceto 12xx/13xx, que dependem de opções ou
+// de tipos) e a gramática de JSX em 17xxx.
+func tsSyntaxCode(code int) bool {
+	if code >= 17000 && code < 18000 {
+		return true
+	}
+	if code >= 1000 && code < 1200 {
+		return true
+	}
+	switch code {
+	case 1200, 1206: // parser em 12xx: fim de linha antes de '=>', decorator em contexto inválido
+		return true
+	}
+	return false
 }
 
 func fileChecker(tool string, flags []string, path, text string) ([]syntaxIssue, syntaxState) {
