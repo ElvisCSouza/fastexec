@@ -236,6 +236,11 @@ func (a *autoEdit) layer2Result(text string, s1 layer1) semanticResult {
 	}
 	if a.client == nil {
 		if !a.serverAvailable() {
+			// TS sem servidor: o próprio tsc de projeto faz a checagem de tipos, tardia (tsHandOff). Só sem o tsc
+			// também, aí é "sem servidor" mesmo.
+			if a.lang == "typescript" && extToolPath("tsc") != "" && tsProjectRoot(a.abs) != "" {
+				return semTsc
+			}
 			return semNoServer
 		}
 		return semPending // o servidor sobe em segundo plano (handOff) e o diagnóstico chega depois
@@ -443,6 +448,11 @@ func (a *autoEdit) statusLine(s1 layer1, semantic semanticResult) string {
 			return "" // edição de arquivo existente: avisa uma vez por pasta, não a cada edição
 		}
 		return "✓ sintaxe · tipos não verificados (arquivo fora do projeto)"
+	case semTsc:
+		if s1.ok {
+			return "✓ sintaxe · tipos via tsc a caminho (sem servidor de typescript)"
+		}
+		return ""
 	case semNoServer:
 		if !once("noserver|" + a.lang) {
 			return ""
@@ -496,6 +506,7 @@ const (
 	semPending                         // servidor ainda não respondeu sobre esta versão
 	semNoProject                       // arquivo fora de projeto: só sintaxe
 	semNoServer                        // não há servidor desta linguagem nesta máquina
+	semTsc                             // TS sem servidor: tipos pelo tsc de projeto, entregues depois (tsHandOff)
 )
 
 // serverAvailable: o servidor da linguagem existe nesta máquina (instalado e com o que ele precisa para subir).

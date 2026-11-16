@@ -836,6 +836,9 @@ func (a *autoEdit) Finish() string {
 	if sem == semPending {
 		defer a.handOff(text) // a resposta sai agora; o diagnóstico desta versão chega na próxima chamada
 	}
+	if sem == semTsc {
+		defer a.tsHandOff(text) // idem, pelo tsc de projeto (sem servidor de typescript)
+	}
 	// O patch anunciado antes da formatação descreveria um arquivo que não existe mais no disco: reescrever
 	// aqui é o que faz o `git apply -R` do aviso devolver o original.
 	if a.undo != "" {
