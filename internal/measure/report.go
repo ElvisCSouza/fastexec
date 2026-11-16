@@ -2,6 +2,7 @@ package measure
 
 import (
 	"sort"
+	"strconv"
 
 	"homelab/fastexec/internal/ab"
 )
@@ -22,6 +23,7 @@ type Report struct {
 	Templates         map[string]string // id do aviso -> texto-modelo
 	// Fase 4 (A/B): preenchido só quando há seção "ab" ligada no config.json.
 	ABActive bool
+	ABSwitch bool // A/B por janela de tempo (switchback), não por conversa
 	Arms     []ArmStat
 }
 
@@ -114,6 +116,7 @@ func BuildWithAB(src Source, w Window, p BasisPolicy, ds []HarmDetector, abc *ab
 	}
 	if abc != nil && abc.Enabled && len(abc.Rules) > 0 {
 		r.ABActive = true
+		r.ABSwitch = abc.Switchback()
 		r.Arms = armStats(calls, *abc, ds)
 	}
 	return r, nil
@@ -130,12 +133,16 @@ func armStats(calls []Call, c ab.Config, ds []HarmDetector) []ArmStat {
 			order = append(order, rule)
 		}
 	}
+	idOf := armIdentity
+	if c.Switchback() {
+		idOf = func(cl Call) string { return "w" + strconv.Itoa(c.Window(cl.At)) }
+	}
 	on := map[string][]Call{}
 	off := map[string][]Call{}
 	for _, cl := range calls {
 		id := armIdentity(cl)
 		for _, rule := range order {
-			if c.Off(rule, id) {
+			if c.OffAt(rule, id, cl.At) {
 				off[rule] = append(off[rule], cl)
 			} else {
 				on[rule] = append(on[rule], cl)
@@ -144,13 +151,13 @@ func armStats(calls []Call, c ab.Config, ds []HarmDetector) []ArmStat {
 	}
 	out := make([]ArmStat, 0, len(order))
 	for _, rule := range order {
-		out = append(out, ArmStat{Rule: rule, On: sideStats(on[rule], ds), Off: sideStats(off[rule], ds)})
+		out = append(out, ArmStat{Rule: rule, On: sideStats(on[rule], ds, idOf), Off: sideStats(off[rule], ds, idOf)})
 	}
 	return out
 }
 
 // sideStats resume um braço: chamadas, tokens lidos, repetidas, erros e os sinais de dano (detectores).
-func sideStats(calls []Call, ds []HarmDetector) ArmSide {
+func sideStats(calls []Call, ds []HarmDetector, idOf func(Call) string) ArmSide {
 	s := ArmSide{Dano: map[string]int{}}
 	seen := map[string]int{}
 	for _, cl := range calls {
@@ -175,7 +182,7 @@ func sideStats(calls []Call, ds []HarmDetector) ArmSide {
 	s.CmdMs = medianMs(cms)
 	byID := map[string]int64{}
 	for _, cl := range calls {
-		byID[armIdentity(cl)] += cl.TokensOut
+		byID[idOf(cl)] += cl.TokensOut
 	}
 	s.Convs = len(byID)
 	if s.Convs > 0 {

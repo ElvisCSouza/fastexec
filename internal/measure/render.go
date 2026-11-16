@@ -76,6 +76,9 @@ func (r Report) renderAB(b *strings.Builder) {
 		return
 	}
 	b.WriteString("   COM a regra = ela agiu (menos tokens, risco de esconder). SEM a regra = saída crua, só para comparar (linha de base).\n")
+	if r.ABSwitch {
+		b.WriteString("   Modo switchback: COM/SEM alternam por janela de tempo (todas as chamadas da janela no mesmo braço).\n")
+	}
 	dano := func(s ArmSide) string {
 		rc, raw, rep := s.Dano["retry_after_cut"], s.Dano["raw_flag"], s.Dano["repeated_hint"]
 		return fmt.Sprintf("%d (%d/%d/%d)", rc+raw+rep, rc, raw, rep)
@@ -88,7 +91,7 @@ func (r Report) renderAB(b *strings.Builder) {
 	for _, a := range r.Arms {
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", a.Rule, "COM", a.On.Calls, num(a.On.Tokens), a.On.Repeats, a.On.Errors, dano(a.On), a.On.CmdMs, a.On.CmdN)
 		fmt.Fprintf(b, "   %-10s %-7s %8d %13s %9d %6d  %-19s %d (%d)\n", "", "SEM", a.Off.Calls, num(a.Off.Tokens), a.Off.Repeats, a.Off.Errors, dano(a.Off), a.Off.CmdMs, a.Off.CmdN)
-		fmt.Fprintf(b, "     -> coletas: %s | equilíbrio: %s | %s\n", collectState(events[a.Rule]), balance(a), armVerdict(a))
+		fmt.Fprintf(b, "     -> coletas: %s | equilíbrio: %s | %s\n", collectState(events[a.Rule]), balance(a, r.ABSwitch), armVerdict(a, r.ABSwitch))
 	}
 	fmt.Fprintf(b, "   Método (OCE/Kohavi): sucesso = tokens/conversa, teste de superioridade (IC 95%%: vence se a diferença passa de 0); guardrail = dano/chamada (retry_after_cut+raw_flag), não-inferioridade com limite +%.0f%%; SRM se o sorteio de conversas foge de 50/50. repeated_hint e repetidas são diagnóstico, não decidem. Ver ADR-007.\n", GuardMargin*100)
 }
@@ -96,13 +99,17 @@ func (r Report) renderAB(b *strings.Builder) {
 // armVerdict aplica o método de experimento controlado (Kohavi/OCE; ADR-007): sucesso = tokens/conversa
 // (superioridade, IC 95%); guardrail = dano por chamada retry_after_cut+raw_flag (não-inferioridade, limite
 // GuardMargin); SRM quando o sorteio de conversas foge de ~50/50. repeated_hint fica de fora (confundido pelo canal).
-func armVerdict(a ArmStat) string {
+func armVerdict(a ArmStat, switchback bool) string {
 	if a.On.Convs == 0 || a.Off.Convs == 0 {
 		return "sem amostra em um braço"
 	}
-	tot := a.On.Convs + a.Off.Convs
-	rt := float64(a.On.Convs) / float64(tot)
-	srm := rt < 0.40 || rt > 0.60
+	srm := false
+	rt := 0.0
+	if !switchback {
+		tot := a.On.Convs + a.Off.Convs
+		rt = float64(a.On.Convs) / float64(tot)
+		srm = rt < 0.40 || rt > 0.60
+	}
 	diff := a.Off.MeanTok - a.On.MeanTok // positivo = COM lê menos (bom)
 	se := math.Sqrt(a.On.TokVar/float64(a.On.Convs) + a.Off.TokVar/float64(a.Off.Convs))
 	lo, hi := diff-1.96*se, diff+1.96*se
@@ -127,7 +134,10 @@ func armVerdict(a ArmStat) string {
 }
 
 // balance diz se as conversas por braço estão equilibradas (~50/50); desequilíbrio grave é SRM (ver armVerdict).
-func balance(a ArmStat) string {
+func balance(a ArmStat, switchback bool) string {
+	if switchback { // no switchback o braço é por janela de tempo: equilíbrio é por chamadas
+		return fmt.Sprintf("%d x %d chamadas", a.On.Calls, a.Off.Calls)
+	}
 	if a.On.Convs == 0 || a.Off.Convs == 0 {
 		return "n/d"
 	}

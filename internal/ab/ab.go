@@ -6,6 +6,7 @@ package ab
 import (
 	"crypto/sha1"
 	"encoding/binary"
+	"time"
 )
 
 // Config é a seção "ab" do config.json.
@@ -15,6 +16,39 @@ type Config struct {
 	Rules      []string `json:"rules,omitempty"`       // regras sob A/B; vazio = nenhuma
 	TreatedArm string   `json:"treated_arm,omitempty"` // "0" ou "1" (padrão "1"): braço que MANTÉM a regra ligada
 	Percent    int      `json:"percent,omitempty"`     // % no braço tratado (padrão e valor útil: 50)
+	// Mode "" = por conversa (padrão); "switchback" = por janela de tempo (todas as chamadas da janela no mesmo
+	// braço). Switchback serve à realidade de 1 usuário: usa cada chamada como amostra em vez de cada conversa.
+	Mode      string `json:"mode,omitempty"`
+	WindowMin int    `json:"window_min,omitempty"` // minutos por janela no switchback (padrão 60)
+}
+
+// Switchback reporta se o A/B alterna por janela de tempo.
+func (c Config) Switchback() bool { return c.Mode == "switchback" }
+
+// Window dá o índice da janela de tempo (switchback) de t.
+func (c Config) Window(t time.Time) int { return c.window(t) }
+
+// window devolve o índice da janela de tempo (em minutos) de t.
+func (c Config) window(t time.Time) int {
+	w := c.WindowMin
+	if w <= 0 {
+		w = 60
+	}
+	return int(t.Unix() / (int64(w) * 60))
+}
+
+// OffAt decide a regra na hora t: por conversa (padrão) ou por janela de tempo (switchback).
+func (c Config) OffAt(rule, conversation string, t time.Time) bool {
+	if !c.Enabled || !c.covers(rule) {
+		return false
+	}
+	if c.Switchback() {
+		return c.window(t)%2 == 1 // janela ímpar = SEM (regra desligada)
+	}
+	if conversation == "" {
+		return false
+	}
+	return c.Arm(rule, conversation) != c.treatedArm()
 }
 
 // Braços de uma conversa numa regra.
@@ -58,10 +92,15 @@ func (c Config) Arm(rule, conversation string) int {
 	return Control
 }
 
-// Off diz se a regra deve ser DESLIGADA nesta conversa: só quando o A/B está ligado, a regra está na lista e a
-// conversa caiu no braço não tratado. Sem conversa, a regra fica ligada.
+// Off decide a regra agora (OffAt com o relógio atual). Mantém a assinatura por conversa.
 func (c Config) Off(rule, conversation string) bool {
-	if !c.Enabled || conversation == "" || !c.covers(rule) {
+	if !c.Enabled {
+		return false
+	}
+	if c.Switchback() {
+		return c.OffAt(rule, conversation, time.Now())
+	}
+	if conversation == "" || !c.covers(rule) {
 		return false
 	}
 	return c.Arm(rule, conversation) != c.treatedArm()

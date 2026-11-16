@@ -1,6 +1,9 @@
 package ab
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestOffWhenDisabled(t *testing.T) {
 	c := Config{Enabled: false, Rules: []string{"clean"}}
@@ -44,6 +47,18 @@ func TestProportion(t *testing.T) {
 	}
 	if treated < n*45/100 || treated > n*55/100 {
 		t.Fatalf("proporção fora de 45-55%%: %d de %d", treated, n)
+	}
+}
+
+func TestSwitchback(t *testing.T) {
+	c := Config{Enabled: true, Rules: []string{"clean"}, Mode: "switchback", WindowMin: 30}
+	base := time.Unix(1700000000, 0)
+	a := c.OffAt("clean", "x", base)
+	if c.OffAt("clean", "y", base) != a {
+		t.Fatal("na mesma janela o braço é o mesmo, independente da conversa")
+	}
+	if c.OffAt("clean", "x", base.Add(30*time.Minute)) == a {
+		t.Fatal("a janela seguinte alterna o braço")
 	}
 }
 

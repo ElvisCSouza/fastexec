@@ -3,7 +3,10 @@
 // lê tudo por uma porta (Source) que o pacote telemetry implementa sobre SQLite.
 package measure
 
-import "strconv"
+import (
+	"strconv"
+	"time"
+)
 
 // BytesPerToken é a conversão usada em todo o FastExec (mesmo valor de telemetry.BytesPerToken;
 // um teste em telemetry garante que os dois não divergem).
@@ -45,8 +48,9 @@ func (w Window) Label() string {
 // Call é uma chamada de ferramenta registrada na auditoria.
 type Call struct {
 	ID              int64
-	Channel         string // client (fallback: session_id): um canal por processo MCP
-	Conversation    string // id de conversa informado pelo cliente ("" quando não há)
+	At              time.Time // quando a chamada aconteceu (para o switchback por janela)
+	Channel         string    // client (fallback: session_id): um canal por processo MCP
+	Conversation    string    // id de conversa informado pelo cliente ("" quando não há)
 	Tool            string
 	Summary         string
 	ArgsHash        string
