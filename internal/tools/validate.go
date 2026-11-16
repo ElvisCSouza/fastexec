@@ -81,10 +81,13 @@ func srcLine(text string, line int) string {
 	return s
 }
 
-// errLine monta "✗ Foo.cs:30 CS1002 msg │ código".
-func errLine(rel string, line int, id, msg, src, suffix string) string {
+// errLine monta "✗ Foo.cs:30:5 CS1002 msg │ código". col <= 0 omite a coluna (quando a fonte só dá a linha).
+func errLine(rel string, line, col int, id, msg, src, suffix string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "✗ %s:%d", rel, line)
+	if col > 0 {
+		fmt.Fprintf(&b, ":%d", col)
+	}
 	if id != "" {
 		b.WriteString(" " + id)
 	}
@@ -147,7 +150,7 @@ func (a *autoEdit) layer1(text string) layer1 {
 			a.extra = append(a.extra, moreErrs(len(fresh)-i))
 			break
 		}
-		a.extra = append(a.extra, errLine(a.relOrBase(), e.line, e.id, e.msg, srcLine(text, e.line), ""))
+		a.extra = append(a.extra, errLine(a.relOrBase(), e.line, e.col, e.id, e.msg, srcLine(text, e.line), ""))
 	}
 	markOutstanding(a.abs)
 	return layer1{blocked: true, state: st}
@@ -214,7 +217,7 @@ func (a *autoEdit) layer2(text string, s1 layer1) (verified bool) {
 				break
 			}
 			ln := d.Range.Start.Line + 1
-			a.extra = append(a.extra, errLine(a.relOrBase(), ln, diagID(d), d.Message, srcLine(cur, ln), ""))
+			a.extra = append(a.extra, errLine(a.relOrBase(), ln, d.Range.Start.Character+1, diagID(d), d.Message, srcLine(cur, ln), ""))
 		}
 		markOutstanding(a.abs)
 		return true
@@ -330,7 +333,7 @@ func (a *autoEdit) checkDependents() (unverified int) {
 		if rel == "" {
 			rel = filepath.Base(f)
 		}
-		a.extra = append(a.extra, errLine(rel, ln, diagID(d), d.Message, src, "(efeito da sua edição)"))
+		a.extra = append(a.extra, errLine(rel, ln, d.Range.Start.Character+1, diagID(d), d.Message, src, "(efeito da sua edição)"))
 		markOutstanding(f)
 		if len(errs) > 1 {
 			hidden += len(errs) - 1
@@ -587,7 +590,7 @@ func (a *autoEdit) handOff(text string) {
 				break
 			}
 			ln := d.Range.Start.Line + 1
-			queueLate("⏱ diagnóstico tardio " + errLine(rel, ln, diagID(d), d.Message, srcLine(string(b), ln), "")[len("✗ "):])
+			queueLate("⏱ diagnóstico tardio " + errLine(rel, ln, d.Range.Start.Character+1, diagID(d), d.Message, srcLine(string(b), ln), "")[len("✗ "):])
 		}
 	}()
 }

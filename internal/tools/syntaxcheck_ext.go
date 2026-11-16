@@ -120,6 +120,24 @@ func tsFirstSyntax(out string) *syntaxIssue {
 	return nil
 }
 
+// zigFmtDirty diz se o zig fmt mudaria o texto. Best-effort: sem zig no PATH, false (silêncio).
+func zigFmtDirty(text string) bool {
+	exe := extToolPath("zig")
+	if exe == "" {
+		return false
+	}
+	f, err := os.CreateTemp("", "fx-fmt-*.zig")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_, _ = f.WriteString(text)
+	_ = f.Close()
+	defer os.Remove(name)
+	out, ok := extRun(exe, []string{"fmt", "--check", name}, "")
+	return ok && strings.TrimSpace(out) != ""
+}
+
 // tsSyntaxCode diz se o código do tsc é de sintaxe. O parser emite 1xxx (exceto 12xx/13xx, que dependem de opções ou
 // de tipos) e a gramática de JSX em 17xxx.
 func tsSyntaxCode(code int) bool {

@@ -8,7 +8,10 @@ package tools
 //	Outras linguagens: sem camada 1 (a camada 2, o servidor de linguagem, responde por elas).
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"go/format"
 	"go/parser"
 	"go/scanner"
 	"go/token"
@@ -118,6 +121,77 @@ func goSyntax(path, text string) []syntaxIssue {
 		out = append(out, syntaxIssue{line: e.Pos.Line, col: e.Pos.Column, msg: e.Msg})
 	}
 	return out
+}
+
+// styleHint devolve no máximo UMA linha "· ..." sobre formato/estilo do texto gravado. Não é erro e não bloqueia:
+// é o sinal determinístico de "format on save"/lint que a IDE daria. Go pelo gofmt in-process; Zig pelo zig fmt;
+// JSON pela chave repetida (o encoding/json engole, fica a última). "" quando não há nada a dizer.
+func styleHint(path, text string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		if src, err := format.Source([]byte(text)); err == nil && !bytes.Equal(src, []byte(text)) {
+			return "· formatação: o gofmt mudaria este arquivo (rode gofmt -w)"
+		}
+	case ".json":
+		if key, line := jsonDupKey(text); key != "" {
+			return fmt.Sprintf("· JSON: chave %q repetida (linha %d; o parser fica com a última)", key, line)
+		}
+	case ".zig":
+		if zigFmtDirty(text) {
+			return "· formatação: o zig fmt mudaria este arquivo"
+		}
+	}
+	return ""
+}
+
+// jsonDupKey devolve a primeira chave repetida no mesmo objeto, com a linha (1-based), ou "" se não houver. Percorre
+// os tokens com o encoding/json, in-process, sem regexp.
+func jsonDupKey(text string) (string, int) {
+	dec := json.NewDecoder(strings.NewReader(text))
+	type frame struct {
+		obj       bool
+		expectKey bool
+		keys      map[string]bool
+	}
+	var stack []*frame
+	for {
+		tok, err := dec.Token()
+		if err != nil { // io.EOF ou JSON inválido (este último é da camada de sintaxe, não daqui)
+			return "", 0
+		}
+		switch t := tok.(type) {
+		case json.Delim:
+			switch t {
+			case '{':
+				stack = append(stack, &frame{obj: true, expectKey: true, keys: map[string]bool{}})
+			case '[':
+				stack = append(stack, &frame{})
+			case '}', ']':
+				stack = stack[:len(stack)-1]
+				if n := len(stack); n > 0 && stack[n-1].obj {
+					stack[n-1].expectKey = true
+				}
+			}
+		case string:
+			if n := len(stack); n > 0 && stack[n-1].obj {
+				f := stack[n-1]
+				if f.expectKey {
+					if f.keys[t] {
+						line, _ := offsetLineCol(text, int(dec.InputOffset()))
+						return t, line
+					}
+					f.keys[t] = true
+					f.expectKey = false
+				} else {
+					f.expectKey = true // era um valor string; a próxima chave pode vir
+				}
+			}
+		default:
+			if n := len(stack); n > 0 && stack[n-1].obj {
+				stack[n-1].expectKey = true
+			}
+		}
+	}
 }
 
 // newSyntaxIssues tira os erros que já existiam antes da edição (mesmo código e mesma mensagem: a linha pode ter

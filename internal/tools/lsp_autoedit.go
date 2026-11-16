@@ -119,14 +119,14 @@ type autoEdit struct {
 	lines     []string
 
 	// validação em tempo real (validate.go)
-	isNew          bool                // o arquivo não existia: todo erro conta como novo e o arquivo inteiro é validado
-	noRoot         bool                // nem git nem marcador de projeto: só a camada 1 (sintaxe)
-	lang           string              // id da linguagem (lsp.Language.ID)
-	extra          []string            // linhas de erro/estado; não entram no teto das notas, são o que a LLM precisa ler
+	isNew          bool                 // o arquivo não existia: todo erro conta como novo e o arquivo inteiro é validado
+	noRoot         bool                 // nem git nem marcador de projeto: só a camada 1 (sintaxe)
+	lang           string               // id da linguagem (lsp.Language.ID)
+	extra          []string             // linhas de erro/estado; não entram no teto das notas, são o que a LLM precisa ler
 	deps           map[string]*depState // arquivos que a edição pode ter quebrado (D8), com o "antes" de cada um
-	depsUnverified int                 // quantos desses o servidor não respondeu a tempo
-	depScan        int                 // teto de arquivos conferidos (0 = validateDepScan); o rename pelo compilador confere todos
-	ident          string              // quem edita (canal/conversa); "" = desconhecido, e aí nada é omitido
+	depsUnverified int                  // quantos desses o servidor não respondeu a tempo
+	depScan        int                  // teto de arquivos conferidos (0 = validateDepScan); o rename pelo compilador confere todos
+	ident          string               // quem edita (canal/conversa); "" = desconhecido, e aí nada é omitido
 }
 
 // autoEditBegin abre uma edição assistida e roda a fase A. Devolve nil quando não há nada exato a fazer — e aí
@@ -663,12 +663,12 @@ func textMentionSites(root, name, newName string, budget time.Duration) []string
 		for i, ln := range strings.Split(string(b), "\n") {
 			if strings.Contains(ln, name) && maskWord(ln, name) != ln {
 				// A linha vai junto: com ela o modelo edita direto, sem abrir o arquivo antes e depois.
-					t := strings.TrimSpace(ln)
-					if newName != "" && len([]rune(t)) <= 200 {
-						out = append(out, fmt.Sprintf("%s:%d `%s` -> `%s`", relToRoot(root, p), i+1, t, renameWord(t, name, newName)))
-					} else {
-						out = append(out, fmt.Sprintf("%s:%d `%s`", relToRoot(root, p), i+1, cutRunes(t, 80)))
-					}
+				t := strings.TrimSpace(ln)
+				if newName != "" && len([]rune(t)) <= 200 {
+					out = append(out, fmt.Sprintf("%s:%d `%s` -> `%s`", relToRoot(root, p), i+1, t, renameWord(t, name, newName)))
+				} else {
+					out = append(out, fmt.Sprintf("%s:%d `%s`", relToRoot(root, p), i+1, cutRunes(t, 80)))
+				}
 				break // uma linha por arquivo basta para o modelo achar o resto
 			}
 		}
@@ -821,6 +821,12 @@ func (a *autoEdit) Finish() string {
 	}
 	if line := a.statusLine(s1, sem); line != "" {
 		a.extra = append(a.extra, line)
+	}
+	// Estilo (formato/chave repetida): só com a sintaxe limpa e sem erro semântico na tela, uma vez por arquivo.
+	if s1.ok && sem != semErrors {
+		if line := styleHint(a.abs, text); line != "" && once("style|"+a.abs) {
+			a.extra = append(a.extra, line)
+		}
 	}
 	if !s1.blocked && sem != semErrors { // com erro na tela o que importa é o erro, não onde rodar o teste
 		if line := a.relatedTestsLine(); line != "" {
