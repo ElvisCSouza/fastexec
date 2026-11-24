@@ -13,7 +13,8 @@ columns existed.
 ## Fluxo
 
 1. `cli.Main` calls `telemetry.SetBuildVersion(cli.Version)` and `telemetry.SetInvokeMode("cli")`. The MCP branch sets
-   `"proxy"`; `daemon.RunDaemon` sets `"daemon"`.
+   `"proxy"`; `daemon.RunDaemon` sets `"daemon"`. `mcp.NewServer` captures `telemetry.BuildVersion()` right after, so
+   the MCP `initialize` announces the same version the telemetry rows record.
 2. The MCP `initialize` request carries `clientInfo.name` and `clientInfo.version`. The server keeps the sanitized name
    (through the existing caller id) and the sanitized version, capped at 32 characters.
 3. On `tools/call` the proxy injects two hidden arguments: `_caller` (`name#pid`) and `_client_version`. Existing hidden
@@ -79,8 +80,11 @@ string literals with single quotes doubled.
   Showing it would mislead (it would describe all builds). Discarded: filtering savings (needs a new query path).
 - Filter values are built as SQL literals, not bind args, because `periodWhere` returns a string and takes no args.
   Escaping is covered by a test that tries an injection string.
-- The MCP `serverInfo.version` is still a hard-coded `"1.3.0"`. It is not the build version and is left unchanged
-  here (out of scope for this task).
+- The MCP `serverInfo.version` is the process identity version, not a fixed number: `NewServer` captures
+  `telemetry.BuildVersion()` (injected by `cli.Main` via `SetBuildVersion`), so the initialize answer and the
+  `app_version` column come from one source. A hand-built `Server` (tests only) falls back to the `unknown` sentinel.
+  Discarded: `mcp` importing `cli` (import cycle) and keeping the old hard-coded `"1.3.0"` (audit attributed behavior
+  to the wrong build).
 
 ## Limites e dívidas conhecidas
 

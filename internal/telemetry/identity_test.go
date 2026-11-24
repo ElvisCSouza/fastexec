@@ -53,6 +53,11 @@ func TestNewWriteRecordsIdentity(t *testing.T) {
 	t.Cleanup(func() { buildVersion = prevVer })
 	SetBuildVersion("test-1.2.3")
 
+	// BuildVersion is the single read path: it returns exactly what SetBuildVersion stored.
+	if got := BuildVersion(); got != "test-1.2.3" {
+		t.Fatalf("BuildVersion = %q, want test-1.2.3", got)
+	}
+
 	db := legacyDB(t)
 	e := withIdentity(AuditEntry{Tool: "exec", Client: "cursor#42", ClientVersion: "0.9"})
 	if err := writeEntry(db, e); err != nil {

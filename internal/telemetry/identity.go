@@ -27,6 +27,12 @@ func SetBuildVersion(v string) {
 	}
 }
 
+// BuildVersion returns the FastExec version of this process (app_version): the ldflags value, `dev` in a local
+// build without it, `unknown` when it was never set. Single source for every place that shows the build version.
+func BuildVersion() string {
+	return buildVersion
+}
+
 // SetInvokeMode records how this process was started (invoke_mode).
 func SetInvokeMode(m string) {
 	if m = strings.TrimSpace(m); m != "" {

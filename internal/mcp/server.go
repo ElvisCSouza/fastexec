@@ -71,6 +71,7 @@ type Server struct {
 	clientMu      sync.Mutex
 	clientName    string // clientInfo.name do initialize (ex.: claude-ai, local-agent-mode-fastexec)
 	clientVersion string // clientInfo.version do initialize ("" se o cliente não mandou)
+	version       string // serverInfo.version: a versão do processo, capturada de telemetry em NewServer
 	mu            sync.Mutex
 	writer        *bufio.Writer
 	Forwarder     func(name string, rawArgs json.RawMessage) (ToolCallResult, error)
@@ -81,8 +82,18 @@ func NewServer() *Server {
 		telemetry.Init()
 	}
 	return &Server{
-		writer: bufio.NewWriter(os.Stdout),
+		writer:  bufio.NewWriter(os.Stdout),
+		version: telemetry.BuildVersion(), // mesma fonte da identidade do processo (cli.Main injeta via SetBuildVersion)
 	}
+}
+
+// serverVersion devolve a versão anunciada no serverInfo do initialize: a mesma da identidade de telemetria, capturada
+// em NewServer. Um Server construído à mão (só em testes) cai no sentinel "unknown" da identidade.
+func (s *Server) serverVersion() string {
+	if s.version != "" {
+		return s.version
+	}
+	return telemetry.Unknown
 }
 
 func (s *Server) writeResponse(resp JSONRPCResponse) {
@@ -388,7 +399,7 @@ func (s *Server) serve(r io.Reader) error {
 					},
 					"serverInfo": map[string]any{
 						"name":    "fastexec",
-						"version": "1.3.0",
+						"version": s.serverVersion(),
 					},
 				},
 			})
