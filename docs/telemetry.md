@@ -19,6 +19,40 @@ One row per tool call:
 | command summary | the command line, cleaned, cut at 120 characters |
 | error message | the first error line, cut at 300 characters |
 
+### Outcome columns
+
+Rows written by this version carry an explicit outcome (`outcome_schema = 1`):
+
+| Column | Meaning |
+|---|---|
+| `transport_ok` | 1 = the handler was reached and replied; 0 = the reply was lost after the call reached the daemon; -1 = unknown |
+| `tool_ok` | 1 = the tool succeeded; 0 = the tool reported an error; -1 = unknown (transport lost) |
+| `command_exit_code` | exit code of the command (`exec`) when it ran; -1 when it did not run or is unknown |
+| `error_type` | one of the classes below; empty on success |
+| `effect_unknown` | 1 = the call may have had an effect we cannot confirm; 0 = no effect; -1 = unknown |
+
+Classes (`error_type`):
+
+| Class | When | Group in `stats` |
+|---|---|---|
+| `invalid_params`, `guard_rejected`, `not_found` | bad arguments, blocked by a guard, unknown tool | Usage / validation |
+| `command_failed` | the command ran and exited non-zero (`exit_code` kept) | Command non-zero exit |
+| `timeout`, `tool_internal`, `transport_lost` | the call timed out, a handler panicked or the reply was lost | Infrastructure failure |
+| `unknown` | an error that matches no rule above | Unknown error class |
+
+A classification is a rule on the error text, so a new error wording lands in `unknown` until a rule is added.
+Validation errors never count as infrastructure failures.
+
+**Legacy rows.** Rows written before these columns exist keep `outcome_schema = 0` and `-1` in the new columns.
+They are not reclassified or backfilled: `stats` counts them only as "legacy rows" with their success flag.
+
+**Possible double count.** When the reply to a daemon call is lost after it was sent, the proxy records a
+`transport_lost` row (`transport_ok = 0`, `effect_unknown = 1`), with `duration_ms` measured from the start of the call
+to the loss. If the daemon had already recorded the execution, the same call appears twice: the daemon row and the
+proxy row. The proxy does not retry, so the effect is not repeated; only the count is. This is a known debt of this
+slice. There is no correlation id between the two rows, so the duplicate is not removed in `stats`; fixing it needs an
+id shared by the proxy and the daemon, which is out of scope here.
+
 File contents and command output are never stored.
 
 **Invariant:** every new row is written with text that is valid UTF-8 and has recognizable credentials masked
@@ -68,7 +102,9 @@ fastexec stats --help       # short usage
 ```
 
 The report shows totals, success rate, latency (average and p95), traffic and estimated tokens, a per-tool table,
-the largest returns, the latest errors and a short `SAVINGS` block for the same period (tokens read, tokens saved,
+the largest returns, the latest errors, an `OUTCOMES` block (only when the period has rows with an explicit outcome:
+success, infrastructure failure, usage/validation, command non-zero exit with its exit codes, unknown class, and a
+count of legacy rows that are not reclassified) and a short `SAVINGS` block for the same period (tokens read, tokens saved,
 "without FastExec" and the percentage — the same numbers as the savings report, see `docs/savings.md`). The database
 is plain SQLite: the `sql` module or any SQLite tool can query the `audit` table directly.
 
@@ -93,6 +129,9 @@ Five short sections, computed from the same database (code in `internal/measure`
    existed are counted apart.
 5. **Tokens per channel** (one channel = one MCP process). The client does not send a conversation id, so the
    channel is the closest unit available; the report says so.
+
+After these five sections the report adds the same `OUTCOMES` block as `fastexec stats`, for the same window, and only
+when the window has rows with an explicit outcome. It does not change the measures above.
 
 Adding a saving category, a harm detector or a notice type is a registration in `internal/measure`; the report
 code does not change.

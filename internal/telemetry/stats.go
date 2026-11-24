@@ -284,6 +284,11 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 		sb.WriteString("No errors in the selected period.\n\n")
 	}
 
+	// Desfecho explícito (linhas novas). Antes do bloco de economia; sem linhas novas, nada muda.
+	if oc, oerr := queryOutcomes(db, whereClause); oerr == nil {
+		sb.WriteString(renderOutcomes(oc))
+	}
+
 	// Bloco de economia: números vindos da MESMA soma do relatório do painel (savingsTotals), para o CLI e o
 	// painel nunca divergirem (invariante de docs/savings.md). Falha de leitura aqui não derruba o stats.
 	if st, serr := savingsTotalsForStats(db, filter); serr == nil {

@@ -45,6 +45,7 @@ type AuditEntry struct {
 	DocLinks       []string  // .md citados no texto que o agente viu (vai para doc_links)
 	MarkDefs       []MarkDef // marcas desta resposta com o texto-modelo (vai para mark_catalog, uma vez por id)
 	Savings        []Saving  // economias desta chamada (tabela saving)
+	Outcome        *Outcome  // desfecho explícito (outcome.go); nil = linha sem desfecho (legado: outcome_schema=0)
 }
 
 var (
@@ -90,7 +91,8 @@ func Init() {
 	once.Do(func() {
 		dbPath := getDBPath()
 		var err error
-		dbInstance, err = sql.Open("sqlite", dbPath)
+		// busy_timeout no DSN vale para toda conexão do pool; o PRAGMA abaixo só atinge a conexão que o executa.
+		dbInstance, err = sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)")
 		if err != nil {
 			noteFailure("open "+dbPath, err)
 			dbInstance = nil
@@ -230,6 +232,27 @@ func setupAuditSchema(db *sql.DB) {
 			}
 		}
 	}
+	// Desfecho (outcome.go). Só ADD COLUMN com DEFAULT: nada é reescrito, e linhas antigas ficam "desconhecido".
+	for _, c := range []struct{ name, def string }{
+		{"outcome_schema", "INTEGER NOT NULL DEFAULT 0"},
+		{"transport_ok", "INTEGER NOT NULL DEFAULT -1"},
+		{"tool_ok", "INTEGER NOT NULL DEFAULT -1"},
+		{"command_exit_code", "INTEGER NOT NULL DEFAULT -1"},
+		{"error_type", "TEXT NOT NULL DEFAULT ''"},
+		{"effect_unknown", "INTEGER NOT NULL DEFAULT -1"},
+	} {
+		if !existing[c.name] {
+			addAuditColumn(db, c.name, c.def)
+		}
+	}
+}
+
+// addAuditColumn adiciona uma coluna. Duas conexões (CLI e daemon) podem migrar juntas: a que chega depois recebe
+// "duplicate column", e isso é o resultado desejado, não uma falha.
+func addAuditColumn(db *sql.DB, name, def string) {
+	if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s %s;", name, def)); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		noteFailure("schema migration", err)
+	}
 }
 
 // Close fecha o banco (usado pelos testes antes de apagar a pasta temporária: no Windows um SQLite aberto
@@ -261,9 +284,14 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		bytes_in, bytes_out, est_tokens_in, est_tokens_out,
 		success, exit_code, error_message, command_summary,
 		truncated, no_result, client, conversation, graph, graph_saved_kb,
-		args_hash, out_hash, marks, doc, doc_from, doc_how, cmd_ms
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		args_hash, out_hash, marks, doc, doc_from, doc_how, cmd_ms,
+		outcome_schema, transport_ok, tool_ok, command_exit_code, error_type, effect_unknown
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
+	o, schema := UnknownOutcome, 0
+	if e.Outcome != nil {
+		o, schema = *e.Outcome, 1
+	}
 	res, err := db.Exec(
 		query,
 		e.SessionID, e.Tool, e.Host, e.DurationMs,
@@ -271,6 +299,7 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		boolInt(e.Success), e.ExitCode, e.ErrorMessage, e.CommandSummary,
 		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation, e.Graph, e.GraphSavedKB,
 		e.ArgsHash, e.OutHash, e.Marks, e.Doc, e.DocFrom, e.DocHow, cmdMsValue(e.CmdMs),
+		schema, o.TransportOK, o.ToolOK, o.CommandExitCode, o.ErrorType, o.EffectUnknown,
 	)
 	if err == nil && len(e.Savings) > 0 {
 		id, _ := res.LastInsertId()

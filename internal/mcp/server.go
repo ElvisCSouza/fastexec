@@ -125,14 +125,39 @@ type AfterSendError struct{ Err error }
 func (e *AfterSendError) Error() string { return e.Err.Error() }
 func (e *AfterSendError) Unwrap() error { return e.Err }
 
+// transportLostEntry: linha da chamada cuja resposta se perdeu depois do envio ao daemon. start é o instante ANTES de
+// o Forwarder rodar, para que DurationMs seja a duração real da chamada (inclui a espera até a perda).
+func transportLostEntry(name string, rawArgs json.RawMessage, err error, start time.Time) telemetry.AuditEntry {
+	client, conversation := callerOf(rawArgs)
+	host, summary := telemetry.SummarizeCall(name, rawArgs)
+	return telemetry.AuditEntry{
+		Tool:           name,
+		Host:           host,
+		DurationMs:     time.Since(start).Milliseconds(),
+		BytesIn:        len(rawArgs),
+		Success:        false,
+		ExitCode:       1,
+		ErrorMessage:   "transport_lost: " + err.Error(),
+		CommandSummary: summary,
+		Client:         client,
+		Conversation:   conversation,
+		ArgsHash:       telemetry.ArgsHash(rawArgs),
+		Outcome:        outcomePtr(telemetry.LostOutcome()),
+	}
+}
+
 func (s *Server) dispatchTool(name string, rawArgs json.RawMessage) ToolCallResult {
 	if s.Forwarder != nil {
+		start := time.Now()
 		res, err := s.Forwarder(name, rawArgs)
 		if err == nil {
 			return res
 		}
 		var sent *AfterSendError
 		if errors.As(err, &sent) {
+			// A perda da resposta não gerava linha nenhuma. Agora gera uma (transport_ok=0) no proxy. Se o daemon
+			// também gravou a execução, a chamada aparece duas vezes (docs/telemetry.md, "Desfecho").
+			telemetry.Record(transportLostEntry(name, rawArgs, err, start))
 			return ToolCallResult{IsError: true, Content: []ToolContent{{Type: "text", Text: "[FastExec] The call reached the daemon but no reply came back (" + err.Error() + "). It may have run: check its effect (job status, file contents) before repeating it."}}}
 		}
 	}
@@ -146,6 +171,9 @@ func cmdMsPtr(ms int64) *int64 {
 	}
 	return &ms
 }
+
+// outcomePtr: o desfecho como ponteiro para AuditEntry.Outcome (nil = linha legada).
+func outcomePtr(o telemetry.Outcome) *telemetry.Outcome { return &o }
 
 func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) {
 	start := time.Now()
@@ -174,6 +202,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 			Conversation:   conversation,
 			ArgsHash:       telemetry.ArgsHash(rawArgs),
 			Marks:          "args-refused",
+			Outcome:        outcomePtr(telemetry.InvalidOutcome()),
 		})
 		return ToolCallResult{
 			Content: []ToolContent{{Type: "text", Text: nerr.Error()}},
@@ -199,6 +228,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 				ExitCode:       1,
 				ErrorMessage:   fmt.Sprintf("PANIC: %v", r),
 				CommandSummary: summary,
+				Outcome:        outcomePtr(telemetry.PanicOutcome()),
 			})
 		}
 	}()
@@ -229,6 +259,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 				ExitCode:       1,
 				ErrorMessage:   errMsg,
 				CommandSummary: summary,
+				Outcome:        outcomePtr(telemetry.NotFoundOutcome()),
 			})
 			return ToolCallResult{
 				Content: []ToolContent{{Type: "text", Text: errMsg}},
@@ -244,7 +275,9 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	success := (err == nil)
 	errMsg := ""
 	exitCode := 0
+	outcome := telemetry.SuccessOutcome(cmdMs >= 0)
 	if err != nil {
+		outcome = telemetry.FailureOutcome(err, outText) // antes de outText receber o texto do erro
 		errMsg, exitCode = errorCause(err, outText)
 		if outText == "" {
 			outText = err.Error()
@@ -283,6 +316,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		Truncated:      name == "exec" && tools.IsTruncated(outText),
 		NoResult:       name == "exec" && tools.IsNoResult(outText),
 		Savings:        savings,
+		Outcome:        &outcome,
 	})
 
 	return ToolCallResult{

@@ -115,5 +115,10 @@ func RenderMeasure(filter StatsFilter) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return r.Render(), nil
+	out := r.Render()
+	// Desfecho explícito da mesma janela (só aparece com linhas outcome_schema=1). Não altera o Source.
+	if oc, oerr := queryOutcomes(db, "WHERE "+windowWhere(measureWindow(filter))); oerr == nil {
+		out += renderOutcomes(oc)
+	}
+	return out, nil
 }
