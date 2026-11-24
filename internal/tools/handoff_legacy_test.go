@@ -2,6 +2,7 @@ package tools
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,5 +66,97 @@ func TestLegacyHandoffRowsAreMasked(t *testing.T) {
 		if strings.Contains(text, c) {
 			t.Errorf("canary %q leaked into handoff facts", c)
 		}
+	}
+}
+
+// handoff save grava o texto do modelo (notes/pending) sanitizado: canário mascarado,
+// texto legítimo e unicode sobrevivem.
+func TestHandoffSaveMasksNotesAndPending(t *testing.T) {
+	tmpDir := t.TempDir()
+	if _, err := handleHandoffSave(tmpDir, HandoffArgs{
+		Action:  "save",
+		Topic:   "mask-test",
+		Notes:   "deploy feito com " + hoTokenCanary + " e acentuação correta",
+		Pending: "rotacionar " + hoPassCanary + " amanhã",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "latest.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(data)
+	if !utf8.ValidString(content) {
+		t.Error("handoff salvo não é UTF-8 válido")
+	}
+	for _, c := range []string{hoTokenCanary, hoPassCanary, "CANARYHANDOFF"} {
+		if strings.Contains(content, c) {
+			t.Errorf("canário %q vazou no handoff salvo", c)
+		}
+	}
+	if !strings.Contains(content, "[REDACTED") {
+		t.Error("placeholder de redação ausente no handoff salvo")
+	}
+	for _, want := range []string{"e acentuação correta", "amanhã"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("texto legítimo %q não sobreviveu à sanitização", want)
+		}
+	}
+}
+
+// Arquivo legado gravado sem máscara: latest e search mascaram na leitura, sem reescrever o arquivo.
+func TestHandoffReadMasksLegacyFileWithoutRewriting(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacy := "# Handoff legado\n\nuse token " + hoTokenCanary + " no deploy\ncom " + hoPassCanary + " e erro \x80 aqui\nmarker-legado\n"
+	name := "2026-01-01-legado-handoff-velho.md"
+	legacyPath := filepath.Join(tmpDir, name)
+	if err := os.WriteFile(legacyPath, []byte(legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := handleHandoffLatest(tmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !utf8.ValidString(got) {
+		t.Error("latest não retornou UTF-8 válido para arquivo legado")
+	}
+	for _, c := range []string{hoTokenCanary, hoPassCanary, "CANARYHANDOFF"} {
+		if strings.Contains(got, c) {
+			t.Errorf("canário %q vazou na leitura do legado", c)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED") || !strings.Contains(got, "marker-legado") {
+		t.Errorf("leitura do legado perdeu placeholder ou texto legítimo: %q", got)
+	}
+
+	// O arquivo datado legado não é reescrito...
+	after, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != legacy {
+		t.Error("arquivo legado foi reescrito")
+	}
+	// ...mas o ponteiro latest.md criado a partir dele é gravado já mascarado.
+	ptr, err := os.ReadFile(filepath.Join(tmpDir, "latest.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(ptr), "CANARYHANDOFF") {
+		t.Error("ponteiro latest.md criado a partir do legado contém canário")
+	}
+
+	res, err := handleHandoffSearch(tmpDir, "marker-legado", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []string{hoTokenCanary, hoPassCanary, "CANARYHANDOFF"} {
+		if strings.Contains(res, c) {
+			t.Errorf("canário %q vazou no search do legado", c)
+		}
+	}
+	if !strings.Contains(res, "marker-legado") {
+		t.Error("search não encontrou o texto legítimo do legado")
 	}
 }

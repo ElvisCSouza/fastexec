@@ -849,7 +849,8 @@ Every `code_graph` answer carries one `basis:` line right after its header. It s
 
 Session notes for the next session, built from the telemetry (files touched, commands that failed) plus the
 model's own summary: `save`, `latest` (a ~300-token briefing for a cold start), `search`, `list`. Stored as
-Markdown in the handoff folder.
+Markdown in the handoff folder. The model's own text (notes, pending items) is sanitized before writing and
+`latest`/`search` mask legacy handoff files on read without rewriting them (see docs/telemetry.md).
 
 ## tool_manage and modules
 

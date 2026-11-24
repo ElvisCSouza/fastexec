@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+	"unicode/utf8"
 )
 
 // Sample is one recorded exec call. Raw is what the command printed (stdout then stderr); Returned is what
@@ -127,7 +128,13 @@ func (c *Capture) Finish(returned string) {
 	}
 	raw, trunc := c.raw, false
 	if len(raw) > c.lim.MaxRaw {
-		raw, trunc = raw[:c.lim.MaxRaw], true
+		// The cap is in bytes, but the cut backs off to a rune boundary: a truncated
+		// sample is never left with half a character, and the cap stays respected.
+		cut := c.lim.MaxRaw
+		for cut > 0 && !utf8.RuneStart(raw[cut]) {
+			cut--
+		}
+		raw, trunc = raw[:cut], true
 	}
 	s := Sample{
 		At: c.started.UTC(), Host: c.host, Label: Redact(c.label, c.redact),

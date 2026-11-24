@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func newStore(t *testing.T, lim Limits) *FileStore {
@@ -90,6 +91,36 @@ func TestRawTruncatedAtLimit(t *testing.T) {
 	s := readAll(t, st.Dir)[0]
 	if len(s.Raw) != 100 || !s.RawTruncated || s.RawBytes != 500 {
 		t.Fatalf("raw=%d truncated=%v raw_bytes=%d", len(s.Raw), s.RawTruncated, s.RawBytes)
+	}
+}
+
+// Um rune multibyte posicionado para cair exatamente na fronteira do teto de 256 KB: o corte em
+// bytes pegaria só parte dele e deixaria UTF-8 inválido. O corte recua até o início do rune.
+func TestRawCutAtLimitNeverSplitsRune(t *testing.T) {
+	lim := DefaultLimits()                 // 256 KB
+	for _, r := range []string{"日", "😀"} { // 3 e 4 bytes
+		raw := strings.Repeat("a", lim.MaxRaw-len(r)+1) + r + "tail"
+		st := newStore(t, lim)
+		c := newCapture(st, lim, nil, "local", "big")
+		c.SetRaw(raw, "", 0, 1)
+		c.Finish("r")
+		s := readAll(t, st.Dir)[0]
+		if !s.RawTruncated {
+			t.Fatalf("%q: sample deveria estar truncada", r)
+		}
+		if !utf8.ValidString(s.Raw) {
+			t.Errorf("%q: raw truncado não é UTF-8 válido (últimos bytes: %x)", r, s.Raw[len(s.Raw)-4:])
+		}
+		if len(s.Raw) > lim.MaxRaw {
+			t.Errorf("%q: teto violado: raw=%d max=%d", r, len(s.Raw), lim.MaxRaw)
+		}
+		want := strings.Repeat("a", lim.MaxRaw-len(r)+1)
+		if s.Raw != want {
+			t.Errorf("%q: corte não recuou até a fronteira do rune: raw=%d want=%d", r, len(s.Raw), len(want))
+		}
+		if s.RawBytes != len(raw) {
+			t.Errorf("%q: raw_bytes=%d, esperado %d", r, s.RawBytes, len(raw))
+		}
 	}
 }
 

@@ -86,7 +86,10 @@ File contents and command output are never stored.
 to UTF-8 first. Masking runs before truncation, so a secret cut at the limit is still masked, and truncation counts
 runes, never splitting a character. The same masking (`corpus.Sanitize`) is applied when reading old rows in `fastexec stats` (largest returns, latest
 errors, per-tool tables and the savings block), in the savings report, in `stats --measure` (call text, mark templates)
-and in handoff, so rows written before this change are shown masked too. The database itself is not rewritten.
+and in handoff, so rows written before this change are shown masked too. Handoff text gets the same treatment:
+`save` sanitizes the model's own notes and pending items before writing them, and `latest`/`search` mask legacy
+handoff files on read without rewriting them (the `latest.md` pointer they create from a legacy file is written masked).
+The database itself is not rewritten.
 
 Masking covers: bearer/basic tokens, known token shapes (GitHub, GitLab, Slack, AWS, Google, Stripe, npm, OpenAI-style
 keys, JWTs), PEM private key blocks (including a truncated one), CLI flags such as `--password x` or `--token=x`,
@@ -103,8 +106,7 @@ masking ordinary code; it is written from the documented positional form, and wa
 - A secret with no recognizable shape and no credential-like key name is not masked. Unknown formats are not caught.
 - Key names are matched by name; the device pattern covers only the positional constructor form above.
 - Old rows are masked on read, not scrubbed. Anyone with the database file can still read what was written before.
-- The masking of read-side text does not cover handoff save, notes and pending items (`handoff save/notes/pending`),
-  which still write their own text unmasked. This is a known gap, not handled by this change.
+- Old handoff files are masked on read the same way, not rewritten; their bytes on disk are unchanged.
 - Do not share the database file as if it were clean.
 
 A command line can still contain a secret you typed into it (a password in a `curl` URL, for example); the masking
@@ -184,7 +186,8 @@ from telemetry and stays on this computer.
   host, command line, exit code, command time, the raw output and what FastExec returned.
 - Secrets are masked before writing (bearer and API tokens, `password=`-style values, URL passwords, private key
   blocks, and the device key literal described above). Masking is a safety net, not a guarantee: do not share the
-  folder. The size cut of a sample is made by bytes, so the last character of a truncated sample may be incomplete.
+  folder. The size cut of a sample backs off to a rune boundary, so a truncated sample is always valid UTF-8 — no half
+  character — and the 256 KB cap is respected.
 - Retention has two tracks, because only big outputs (raw output of 10 KB or more) are changed by a filter. Big
   samples are kept 14 days (`FASTEXEC_CORPUS_BIG_TTL_H`) and are the last to go when the folder is full; small ones
   are kept 72 h (`FASTEXEC_CORPUS_TTL_H`), at most 500 of them (`FASTEXEC_CORPUS_MAX_SMALL`). The whole folder stays under

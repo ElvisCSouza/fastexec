@@ -237,13 +237,18 @@ func handleHandoffSave(dir string, args HandoffArgs) (string, error) {
 	failures := facts.Failures
 	recentValidations := facts.RecentValidations
 
+	// Texto livre do modelo: mesma sanitização da telemetria antes de gravar
+	// (máscara de credenciais + UTF-8 válido). Texto legítimo passa igual.
+	notes := corpus.Sanitize(strings.TrimSpace(args.Notes))
+	pending := corpus.Sanitize(strings.TrimSpace(args.Pending))
+
 	// Monta o Markdown estruturado
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Handoff — %s — %s\n\n", strings.Title(strings.ReplaceAll(topic, "-", " ")), now.Format("2006-01-02 15:04")))
 
 	sb.WriteString("## Goal / summary\n")
-	if strings.TrimSpace(args.Notes) != "" {
-		sb.WriteString(strings.TrimSpace(args.Notes))
+	if notes != "" {
+		sb.WriteString(notes)
 		sb.WriteString("\n\n")
 	} else {
 		sb.WriteString(fmt.Sprintf("Work session on %s, consolidated automatically from FastExec telemetry.\n\n", topic))
@@ -278,8 +283,8 @@ func handleHandoffSave(dir string, args HandoffArgs) (string, error) {
 	}
 
 	sb.WriteString("## Pending / next steps\n")
-	if strings.TrimSpace(args.Pending) != "" {
-		sb.WriteString(strings.TrimSpace(args.Pending))
+	if pending != "" {
+		sb.WriteString(pending)
 		sb.WriteString("\n")
 	} else {
 		sb.WriteString("Continuar a partir dos arquivos modificados listados acima.\n")
@@ -302,7 +307,8 @@ func handleHandoffSave(dir string, args HandoffArgs) (string, error) {
 func handleHandoffLatest(dir string) (string, error) {
 	latestPath := filepath.Join(dir, "latest.md")
 	if data, err := os.ReadFile(latestPath); err == nil && len(data) > 0 {
-		return string(data), nil
+		// Arquivo legado pode ter sido gravado sem máscara: mascara na leitura, sem reescrevê-lo.
+		return corpus.Sanitize(string(data)), nil
 	}
 
 	// Se latest.md não existe, busca o mais recente na pasta
@@ -329,9 +335,10 @@ func handleHandoffLatest(dir string) (string, error) {
 		return "", err
 	}
 
-	// Aproveita para criar o latest.md
-	_ = os.WriteFile(latestPath, data, 0644)
-	return string(data), nil
+	// Aproveita para criar o latest.md — já com o texto mascarado, pois é uma gravação nova
+	content := corpus.Sanitize(string(data))
+	_ = os.WriteFile(latestPath, []byte(content), 0644)
+	return content, nil
 }
 
 func handleHandoffSearch(dir, query string, limit int) (string, error) {
@@ -368,6 +375,8 @@ func handleHandoffSearch(dir, query string, limit int) (string, error) {
 		}
 
 		content := string(data)
+		// Arquivo legado: mascara na leitura, sem reescrever; os snippets vêm do texto mascarado.
+		content = corpus.Sanitize(content)
 		if strings.Contains(strings.ToLower(content), lowerQ) {
 			lines := strings.Split(content, "\n")
 			var hitLines []string
