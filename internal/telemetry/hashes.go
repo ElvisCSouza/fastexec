@@ -29,6 +29,7 @@ func ArgsHash(rawArgs []byte) string {
 	}
 	delete(m, "_caller")
 	delete(m, "_conversation")
+	delete(m, "_client_version")
 	b, err := json.Marshal(m) // encoding/json sorts map keys
 	if err != nil {
 		return ""

@@ -326,14 +326,44 @@ func cmdPing(subArgs []string) {
 	}
 }
 
+// flagValue reads "--name value" or "--name=value" at args[*i]. It advances *i past a separate value. A missing
+// value is an error: the command stops rather than silently ignoring the filter.
+func flagValue(args []string, i *int, name string) (string, bool) {
+	arg := args[*i]
+	if strings.HasPrefix(arg, name+"=") {
+		return strings.TrimPrefix(arg, name+"="), true
+	}
+	if arg != name {
+		return "", false
+	}
+	if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
+		fmt.Fprintf(os.Stderr, "fastexec stats: %s needs a value\n", name)
+		os.Exit(2)
+	}
+	*i++
+	return args[*i], true
+}
+
 // cmdStats atende: stats.
 func cmdStats(subArgs []string) {
 	filter := telemetry.StatsFilter{}
 	measureMode, corpusMode, corpusRulesMode := false, false, false
-	for _, arg := range subArgs {
+	for i := 0; i < len(subArgs); i++ {
+		arg := subArgs[i]
+		// --build X / --build=X and --client X / --client=X isolate one build or one MCP client.
+		if v, ok := flagValue(subArgs, &i, "--build"); ok {
+			filter.Build = v
+			continue
+		}
+		if v, ok := flagValue(subArgs, &i, "--client"); ok {
+			filter.Client = v
+			continue
+		}
 		switch strings.ToLower(arg) {
 		case "--help", "-h", "help":
-			fmt.Println("usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--corpus] [--reset|--clear] [<period>]")
+			fmt.Println("usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--corpus] [--reset|--clear] [--build <v>] [--client <name>] [<period>]")
+			fmt.Println("  --build X   only rows of FastExec build X (app_version or app_build)")
+			fmt.Println("  --client X  only rows of MCP client X (client_name)")
 			fmt.Println("  <period>  1h, 24h, 7d ... (hours or days; bare 'today' and 'week' also work)")
 			fmt.Println("  Shows telemetry & audit for the period, plus a savings summary.")
 			fmt.Println("  --errors   only error records      --tools   only the per-tool breakdown")

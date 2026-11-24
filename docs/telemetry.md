@@ -19,6 +19,24 @@ One row per tool call:
 | command summary | the command line, cleaned, cut at 120 characters |
 | error message | the first error line, cut at 300 characters |
 
+### Build and client columns
+
+Each row also says which FastExec build wrote it and which MCP client made the call. The full design is in
+[telemetry-identity.md](telemetry-identity.md).
+
+| Column | Meaning | Value when unknown |
+|---|---|---|
+| `app_version` | FastExec version of the process (`cli.Version`, set at build time) | `unknown` |
+| `app_build` | VCS revision of the binary: first 12 hex chars, plus `+dirty` when the tree had changes | `unknown` |
+| `client_name` | MCP client name from `initialize` (`clientInfo.name`), without the pid | `unknown` |
+| `client_pid` | pid of the client process, split from the `client` column (`name#pid`) | `-1` |
+| `client_version` | MCP client version from `initialize` (`clientInfo.version`), at most 32 characters | `unknown` |
+| `invoke_mode` | how the process ran: `proxy` (MCP over stdio), `daemon` (background worker), `cli` (direct command) | `unknown` |
+
+The existing `client` column is kept unchanged (`name#pid`). Unknown values are written explicitly: `unknown` for
+text and `-1` for integers. Nothing is backfilled: rows written before these columns existed read as unknown, and the
+columns are added with a constant default, so an old database migrates without rewriting its rows.
+
 ### Outcome columns
 
 Rows written by this version carry an explicit outcome (`outcome_schema = 1`):
@@ -100,6 +118,16 @@ fastexec stats --errors     # only failures
 fastexec stats --tools      # only the per-tool table
 fastexec stats --help       # short usage
 ```
+
+Isolate one build or one client with `--build` and `--client` (each accepts `--build X` or `--build=X`):
+
+```
+fastexec stats --build 1.4.0           # rows of build 1.4.0 (matches app_version or app_build)
+fastexec stats --client cursor 7d      # rows of the MCP client named cursor, last 7 days
+```
+
+With a filter, the report starts with a `Filter:` line and leaves out the `SAVINGS` block: the savings totals are
+computed over all rows and do not respect the filter. Without these flags the output is unchanged.
 
 The report shows totals, success rate, latency (average and p95), traffic and estimated tokens, a per-tool table,
 the largest returns, the latest errors, an `OUTCOMES` block (only when the period has rows with an explicit outcome:

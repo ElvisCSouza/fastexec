@@ -33,6 +33,12 @@ type AuditEntry struct {
 	Truncated      bool
 	NoResult       bool
 	Client         string    // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
+	ClientName     string    // parte "name" de Client ("unknown" se ausente); preenchido em withIdentity
+	ClientPID      int64     // parte "pid" de Client (-1 se ausente); preenchido em withIdentity
+	ClientVersion  string    // clientInfo.version do cliente MCP ("unknown" se ausente)
+	AppVersion     string    // versão do FastExec que gerou a linha (cli.Version)
+	AppBuild       string    // revisão VCS do binário (12 hex, "+dirty" se havia alterações); "unknown" se ausente
+	InvokeMode     string    // proxy | daemon | cli
 	Conversation   string    // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
 	Graph          string    // decisão do grafo: outline, repeat, search ("" = nenhuma)
 	GraphSavedKB   int       // tamanho do texto que o outline substituiu
@@ -245,6 +251,19 @@ func setupAuditSchema(db *sql.DB) {
 			addAuditColumn(db, c.name, c.def)
 		}
 	}
+	// Identidade (identity.go): mesma regra. Linhas antigas ficam 'unknown' / -1 pelo DEFAULT, sem backfill.
+	for _, c := range []struct{ name, def string }{
+		{"app_version", "TEXT NOT NULL DEFAULT 'unknown'"},
+		{"app_build", "TEXT NOT NULL DEFAULT 'unknown'"},
+		{"client_name", "TEXT NOT NULL DEFAULT 'unknown'"},
+		{"client_version", "TEXT NOT NULL DEFAULT 'unknown'"},
+		{"client_pid", "INTEGER NOT NULL DEFAULT -1"},
+		{"invoke_mode", "TEXT NOT NULL DEFAULT 'unknown'"},
+	} {
+		if !existing[c.name] {
+			addAuditColumn(db, c.name, c.def)
+		}
+	}
 }
 
 // addAuditColumn adiciona uma coluna. Duas conexões (CLI e daemon) podem migrar juntas: a que chega depois recebe
@@ -285,8 +304,9 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		success, exit_code, error_message, command_summary,
 		truncated, no_result, client, conversation, graph, graph_saved_kb,
 		args_hash, out_hash, marks, doc, doc_from, doc_how, cmd_ms,
-		outcome_schema, transport_ok, tool_ok, command_exit_code, error_type, effect_unknown
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		outcome_schema, transport_ok, tool_ok, command_exit_code, error_type, effect_unknown,
+		app_version, app_build, client_name, client_version, client_pid, invoke_mode
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	o, schema := UnknownOutcome, 0
 	if e.Outcome != nil {
@@ -300,6 +320,8 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		boolInt(e.Truncated), boolInt(e.NoResult), e.Client, e.Conversation, e.Graph, e.GraphSavedKB,
 		e.ArgsHash, e.OutHash, e.Marks, e.Doc, e.DocFrom, e.DocHow, cmdMsValue(e.CmdMs),
 		schema, o.TransportOK, o.ToolOK, o.CommandExitCode, o.ErrorType, o.EffectUnknown,
+		orUnknown(e.AppVersion), orUnknown(e.AppBuild), orUnknown(e.ClientName), orUnknown(e.ClientVersion),
+		clientPIDValue(e.ClientPID), orUnknown(e.InvokeMode),
 	)
 	if err == nil && len(e.Savings) > 0 {
 		id, _ := res.LastInsertId()
@@ -343,6 +365,22 @@ func cmdMsValue(ms *int64) int64 {
 	return *ms
 }
 
+// orUnknown grava o sentinela de texto quando o campo não foi informado.
+func orUnknown(s string) string {
+	if s == "" {
+		return Unknown
+	}
+	return s
+}
+
+// clientPIDValue grava o sentinela de inteiro (-1) quando o pid não foi informado.
+func clientPIDValue(pid int64) int64 {
+	if pid <= 0 {
+		return UnknownPID
+	}
+	return pid
+}
+
 func boolInt(b bool) int {
 	if b {
 		return 1
@@ -362,6 +400,7 @@ func Record(e AuditEntry) {
 	if e.SessionID == "" {
 		e.SessionID = sessionIDVal
 	}
+	e = withIdentity(e)
 	if e.EstTokensIn == 0 && e.BytesIn > 0 {
 		e.EstTokensIn = int(float64(e.BytesIn) / 3.5)
 	}

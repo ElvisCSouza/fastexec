@@ -23,6 +23,10 @@ type StatsFilter struct {
 	OnlyErrors bool
 	OnlyTools  bool
 	ResetDB    bool
+	// Build isolates rows of one FastExec build: matches app_version or app_build. Client isolates one MCP client
+	// by client_name. Both are optional; rows written before these columns existed never match.
+	Build  string
+	Client string
 }
 
 type GlobalSummary struct {
@@ -103,6 +107,9 @@ func RenderStats(filter StatsFilter) (string, error) {
 	var total int64
 	_ = db.QueryRow(`SELECT COUNT(*) FROM audit`).Scan(&total)
 	out = fmt.Sprintf("Database: %s (%d records)\n", path, total) + out
+	if seg := segmentLabel(filter); seg != "" {
+		out = "Filter: " + seg + "\n" + out
+	}
 	if r := failureReport(); r != "" {
 		out += "\n\n" + r
 	}
@@ -146,13 +153,42 @@ func ParsePeriod(arg string) (int, bool) {
 
 // periodWhere monta o filtro temporal da consulta; "" quando não há janela.
 func periodWhere(filter StatsFilter) string {
+	var conds []string
 	switch {
 	case filter.Today:
-		return "WHERE date(timestamp, 'localtime') = date('now', 'localtime')"
+		conds = append(conds, "date(timestamp, 'localtime') = date('now', 'localtime')")
 	case filter.PeriodH > 0:
-		return fmt.Sprintf("WHERE timestamp >= datetime('now', '-%d hours')", filter.PeriodH)
+		conds = append(conds, fmt.Sprintf("timestamp >= datetime('now', '-%d hours')", filter.PeriodH))
 	}
-	return ""
+	if filter.Build != "" {
+		b := sqlLiteral(filter.Build)
+		conds = append(conds, "(app_version = "+b+" OR app_build = "+b+")")
+	}
+	if filter.Client != "" {
+		conds = append(conds, "client_name = "+sqlLiteral(filter.Client))
+	}
+	if len(conds) == 0 {
+		return ""
+	}
+	return "WHERE " + strings.Join(conds, " AND ")
+}
+
+// segmentLabel describes the build/client isolation of a stats call ("" when none). The savings block is left out
+// under a segment: its totals do not take the segment into account.
+func segmentLabel(filter StatsFilter) string {
+	var parts []string
+	if filter.Build != "" {
+		parts = append(parts, "build="+filter.Build)
+	}
+	if filter.Client != "" {
+		parts = append(parts, "client="+filter.Client)
+	}
+	return strings.Join(parts, " ")
+}
+
+// sqlLiteral quotes a value as an SQLite string literal (the values come from the command line).
+func sqlLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 // periodDescription descreve a janela para cabeçalhos e mensagens.
@@ -182,6 +218,9 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 
 	if summary.TotalCalls == 0 {
 		_, period := periodDescription(filter)
+		if seg := segmentLabel(filter); seg != "" {
+			period += ", " + seg
+		}
 		return fmt.Sprintf("No telemetry records (%s).", period), nil
 	}
 
@@ -291,15 +330,18 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 
 	// Bloco de economia: números vindos da MESMA soma do relatório do painel (savingsTotals), para o CLI e o
 	// painel nunca divergirem (invariante de docs/savings.md). Falha de leitura aqui não derruba o stats.
-	if st, serr := savingsTotalsForStats(db, filter); serr == nil {
-		sb.WriteString("--------------------------------------------------------------------------------\n")
-		sb.WriteString(fmt.Sprintf("SAVINGS (%s)\n", savingsBlockLabel(filter)))
-		sb.WriteString("--------------------------------------------------------------------------------\n")
-		fmt.Fprintf(&sb, "Tokens read: ~%d | Tokens saved: ~%d | Without FastExec: ~%d (%.1f%%)\n",
-			st.SentTokens, st.SavedTokens, st.WithoutTokens, st.Percent)
-		fmt.Fprintf(&sb, "Calls: %d | Round trips avoided: %d | Failures avoided: %d\n",
-			st.Calls, st.TripsAvoided, st.FailuresAvoided)
-		sb.WriteString("\n")
+	// Sob filtro de build/cliente o bloco fica de fora: as somas do painel não respeitam o segmento.
+	if segmentLabel(filter) == "" {
+		if st, serr := savingsTotalsForStats(db, filter); serr == nil {
+			sb.WriteString("--------------------------------------------------------------------------------\n")
+			sb.WriteString(fmt.Sprintf("SAVINGS (%s)\n", savingsBlockLabel(filter)))
+			sb.WriteString("--------------------------------------------------------------------------------\n")
+			fmt.Fprintf(&sb, "Tokens read: ~%d | Tokens saved: ~%d | Without FastExec: ~%d (%.1f%%)\n",
+				st.SentTokens, st.SavedTokens, st.WithoutTokens, st.Percent)
+			fmt.Fprintf(&sb, "Calls: %d | Round trips avoided: %d | Failures avoided: %d\n",
+				st.Calls, st.TripsAvoided, st.FailuresAvoided)
+			sb.WriteString("\n")
+		}
 	}
 
 	return sb.String(), nil

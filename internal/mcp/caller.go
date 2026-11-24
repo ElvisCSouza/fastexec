@@ -22,16 +22,32 @@ import (
 
 var callerSafe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
+// maxClientVersion bounds clientInfo.version in telemetry (client_version column).
+const maxClientVersion = 32
+
 func (s *Server) setClient(params json.RawMessage) {
 	var p struct {
 		ClientInfo struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Version string `json:"version"`
 		} `json:"clientInfo"`
 	}
 	_ = json.Unmarshal(params, &p)
+	version := callerSafe.ReplaceAllString(strings.TrimSpace(p.ClientInfo.Version), "_")
+	if len(version) > maxClientVersion {
+		version = version[:maxClientVersion]
+	}
 	s.clientMu.Lock()
 	s.clientName = callerSafe.ReplaceAllString(p.ClientInfo.Name, "_")
+	s.clientVersion = version
 	s.clientMu.Unlock()
+}
+
+// clientVersionSafe returns clientInfo.version of this connection ("" if the client did not send one).
+func (s *Server) clientVersionSafe() string {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	return s.clientVersion
 }
 
 func (s *Server) callerID() string {
@@ -115,6 +131,40 @@ func callerOf(args json.RawMessage) (caller, conversation string) {
 	}
 	_ = json.Unmarshal(args, &c)
 	return c.Caller, c.Conversation
+}
+
+// withClientVersion adds the hidden "_client_version" argument when the client sent a version; an existing value
+// is kept. It travels as hidden metadata: the argument normalizer accepts it, the model never sees it, and it is
+// excluded from the arguments hash and from bytes_in (see telemetry.ArgsHash). A typed handler that does not
+// declare it simply ignores it.
+func withClientVersion(args json.RawMessage, version string) json.RawMessage {
+	if version == "" {
+		return args
+	}
+	var m map[string]json.RawMessage
+	if len(args) == 0 {
+		m = map[string]json.RawMessage{}
+	} else if json.Unmarshal(args, &m) != nil || m == nil {
+		return args
+	}
+	if _, ok := m["_client_version"]; ok {
+		return args
+	}
+	m["_client_version"], _ = json.Marshal(version)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return args
+	}
+	return out
+}
+
+// clientVersionOf reads the hidden "_client_version" back from the arguments ("" if absent).
+func clientVersionOf(args json.RawMessage) string {
+	var c struct {
+		Version string `json:"_client_version"`
+	}
+	_ = json.Unmarshal(args, &c)
+	return c.Version
 }
 
 func (s *Server) clientNameSafe() string {

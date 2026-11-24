@@ -14,6 +14,7 @@ import (
 	"homelab/fastexec/internal/daemon"
 	"homelab/fastexec/internal/logger"
 	"homelab/fastexec/internal/mcp"
+	"homelab/fastexec/internal/telemetry"
 	"homelab/fastexec/internal/tools"
 	"homelab/fastexec/internal/transport"
 )
@@ -60,6 +61,10 @@ func cmdToken(_ []string) { fmt.Println(transport.NewToken()) }
 // Main roda o FastExec com os argumentos do processo.
 func Main() {
 	logger.Init()
+	// Identidade do processo nas linhas de telemetria (app_version, invoke_mode). "cli" é o padrão; o modo MCP e o
+	// daemon trocam em seguida.
+	telemetry.SetBuildVersion(Version)
+	telemetry.SetInvokeMode("cli")
 
 	args := os.Args[1:]
 	// O mesmo binário, chamado com nome de instalador (fastexec-setup.exe) e sem argumentos (duplo clique), abre o
@@ -69,6 +74,7 @@ func Main() {
 		return
 	}
 	if len(args) == 0 || args[0] == "mcp" {
+		telemetry.SetInvokeMode("proxy")
 		// executável trocado desde que o daemon subiu: troca o daemon, senão as tools rodam o código antigo
 		if replaced, err := daemon.EnsureCurrent(); replaced || err != nil {
 			logger.Info("[daemon] replaced a daemon from another binary (err: %v)", err)

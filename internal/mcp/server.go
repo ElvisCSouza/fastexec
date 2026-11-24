@@ -68,11 +68,12 @@ type PropertyDef struct {
 }
 
 type Server struct {
-	clientMu   sync.Mutex
-	clientName string // clientInfo.name do initialize (ex.: claude-ai, local-agent-mode-fastexec)
-	mu         sync.Mutex
-	writer     *bufio.Writer
-	Forwarder  func(name string, rawArgs json.RawMessage) (ToolCallResult, error)
+	clientMu      sync.Mutex
+	clientName    string // clientInfo.name do initialize (ex.: claude-ai, local-agent-mode-fastexec)
+	clientVersion string // clientInfo.version do initialize ("" se o cliente não mandou)
+	mu            sync.Mutex
+	writer        *bufio.Writer
+	Forwarder     func(name string, rawArgs json.RawMessage) (ToolCallResult, error)
 }
 
 func NewServer() *Server {
@@ -140,6 +141,7 @@ func transportLostEntry(name string, rawArgs json.RawMessage, err error, start t
 		ErrorMessage:   "transport_lost: " + err.Error(),
 		CommandSummary: summary,
 		Client:         client,
+		ClientVersion:  clientVersionOf(rawArgs),
 		Conversation:   conversation,
 		ArgsHash:       telemetry.ArgsHash(rawArgs),
 		Outcome:        outcomePtr(telemetry.LostOutcome()),
@@ -179,12 +181,16 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	start := time.Now()
 	rawArgs, notes, nerr := normalizeCall(name, rawArgs) // argnorm.go: nenhuma chave some em silêncio
 	client, conversation := callerOf(rawArgs)
+	clientVer := clientVersionOf(rawArgs)
 	bytesIn := len(rawArgs)
 	if client != "" {
 		bytesIn -= len(`,"_caller":""`) + len(client) // não conta os campos internos como entrada da LLM
 	}
 	if conversation != "" {
 		bytesIn -= len(`,"_conversation":""`) + len(conversation)
+	}
+	if clientVer != "" {
+		bytesIn -= len(`,"_client_version":""`) + len(clientVer)
 	}
 	host, summary := telemetry.SummarizeCall(name, rawArgs)
 	if nerr != nil {
@@ -199,6 +205,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 			ErrorMessage:   nerr.Error(),
 			CommandSummary: summary,
 			Client:         client,
+			ClientVersion:  clientVer,
 			Conversation:   conversation,
 			ArgsHash:       telemetry.ArgsHash(rawArgs),
 			Marks:          "args-refused",
@@ -228,6 +235,8 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 				ExitCode:       1,
 				ErrorMessage:   fmt.Sprintf("PANIC: %v", r),
 				CommandSummary: summary,
+				Client:         client,
+				ClientVersion:  clientVer,
 				Outcome:        outcomePtr(telemetry.PanicOutcome()),
 			})
 		}
@@ -259,6 +268,8 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 				ExitCode:       1,
 				ErrorMessage:   errMsg,
 				CommandSummary: summary,
+				Client:         client,
+				ClientVersion:  clientVer,
 				Outcome:        outcomePtr(telemetry.NotFoundOutcome()),
 			})
 			return ToolCallResult{
@@ -306,6 +317,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		ErrorMessage:   errMsg,
 		CommandSummary: summary,
 		Client:         client,
+		ClientVersion:  clientVer,
 		Conversation:   conversation,
 		Graph:          graphDecision(outText),
 		GraphSavedKB:   graphSavedKB(outText),
@@ -418,7 +430,7 @@ func (s *Server) serve(r io.Reader) error {
 				}
 
 				result := s.dispatchTool(callParams.Name, withClientCwd(callParams.Name,
-					withCaller(callParams.Arguments, s.callerID(), conversationOf(callParams.Meta)), s.clientCwd()))
+					withClientVersion(withCaller(callParams.Arguments, s.callerID(), conversationOf(callParams.Meta)), s.clientVersionSafe()), s.clientCwd()))
 				s.writeResponse(JSONRPCResponse{
 					JSONRPC: "2.0",
 					ID:      r.ID,

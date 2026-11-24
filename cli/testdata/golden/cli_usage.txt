@@ -45,7 +45,9 @@ Usage: fastexec sql "<query>" [session_or_db] [host]
 $ fastexec stats --help
 exit: 0
 --- stdout
-usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--corpus] [--reset|--clear] [<period>]
+usage: fastexec stats [--today|-t] [--errors|-e] [--tools] [--measure] [--corpus] [--reset|--clear] [--build <v>] [--client <name>] [<period>]
+  --build X   only rows of FastExec build X (app_version or app_build)
+  --client X  only rows of MCP client X (client_name)
   <period>  1h, 24h, 7d ... (hours or days; bare 'today' and 'week' also work)
   Shows telemetry & audit for the period, plus a savings summary.
   --errors   only error records      --tools   only the per-tool breakdown
