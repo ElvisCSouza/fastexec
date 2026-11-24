@@ -230,17 +230,31 @@ func TestFormatExecResultCapAt63KBIsUntouched(t *testing.T) {
 
 func TestFormatExecResultCapAt65KB(t *testing.T) {
 	t.Setenv("FASTEXEC_NO_SHAPE", "1")
+	t.Setenv("FASTEXEC_SPILL_DIR", t.TempDir())
 	in := distinctText(65 * 1024)
 	out, err := formatExecResult("cmd", transport.ExecResult{Stdout: in})
 	if err != nil {
 		t.Fatalf("err inesperado: %v", err)
 	}
-	marker := fmt.Sprintf("\n[truncated: %d bytes; only the first 16 KB returned]", len(in))
-	if !strings.HasSuffix(out, marker) {
-		t.Fatalf("marcador de truncamento ausente; fim=%q", out[len(out)-120:])
+	idx := strings.Index(out, "\n"+truncMarker)
+	if idx < 0 {
+		t.Fatalf("marcador de truncamento ausente; ini=%q", out[:min(len(out), 120)])
 	}
-	if head := out[:len(out)-len(marker)]; head != in[:16*1024] {
+	if head := out[:idx]; head != in[:16*1024] {
 		t.Fatalf("cabeça devolvida deveria ter 16 KB exatos")
+	}
+	footer := out[idx+1:]
+	wantCounts := fmt.Sprintf("Original %d lines / %d bytes; returned %d lines / %d bytes; omitted %d lines / %d bytes.",
+		countLines(in), len(in), countLines(in[:16*1024]), 16*1024,
+		countLines(in)-countLines(in[:16*1024]), len(in)-16*1024)
+	if !strings.Contains(footer, wantCounts) {
+		t.Fatalf("contagens ausentes no rodapé; rodapé=%q", footer)
+	}
+	if !strings.Contains(footer, "Spill is redacted") {
+		t.Fatalf("rodapé deveria indicar o spill redigido; rodapé=%q", footer)
+	}
+	if !strings.Contains(footer, "Filter: head only.") || !strings.Contains(footer, "(teto)") {
+		t.Fatalf("filtro ou motivo ausente no rodapé; rodapé=%q", footer)
 	}
 	if !IsTruncated(out) {
 		t.Fatalf("IsTruncated deveria reconhecer a saída truncada")

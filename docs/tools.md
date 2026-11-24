@@ -76,6 +76,19 @@ Applied to stdout and stderr before the model sees them:
 5. Repeated lines fold into `<line> ×N`; known noise (package-manager update notices, git hints) is dropped.
 6. A line longer than 500 characters keeps its start and end, or 150 characters around the searched term.
 7. Output over 64 KB keeps the first 16 KB and says so. The capture itself is bounded (first 3 MiB, last 1 MiB).
+   The cut footer states the original, returned and omitted lines and bytes, the reason (`teto`: the output was over
+   the size cap), the filter used (`head+tail`, `head only` or `byte cut (one line)`), and the exact call that brings
+   back the rest. Big output keeps the head and tail by line. Every cut path (shaped, `--raw`, `FASTEXEC_NO_OUTPUT_FILTER`,
+   `FASTEXEC_NO_SHAPE`) saves the full text to the spill folder first. The spill is **redacted**: secrets are masked before
+   it is written (line count unchanged), and the reply says `Spill is redacted`. The reply itself stays capped at 16 KB on
+   the 64 KB path; the rest is reached with `read_file(path, offset=N, limit=65536)`, an exact byte range in redacted
+   coordinates. If masking crosses the 16 KB boundary, the cursor rewinds to the longest safe common prefix: the
+   continuation may overlap a few bytes, but never skips content. If the spill cannot be written, the footer has no
+   spill line and the omitted part is not reachable from it.
+   Up to 64 KB, `--raw` and `FASTEXEC_NO_OUTPUT_FILTER` return the text byte for byte, with no spill.
+   A `read_file` that opens a spill is recorded (`cut_recovered`). That is access, not full recovery: `stats --measure`
+   reports the cuts opened, and the omitted bytes of cuts never opened, without adding opened cuts up as recovered.
+   Recovering a cut does not change the saving already recorded.
 8. Build and test output (`go build|test|vet`, `dotnet build|test|...`, `npm|yarn|pnpm|bun test|build|lint`, `npx tsc`,
    `cargo build|test|check|clippy`) is compacted on top of the above: build progress leaves, and every error and
    warning with its `file:line` stays, including the context lines right below it (the `-->` of rust, the code frame

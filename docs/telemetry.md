@@ -61,6 +61,14 @@ Classes (`error_type`):
 A classification is a rule on the error text, so a new error wording lands in `unknown` until a rule is added.
 Validation errors never count as infrastructure failures.
 
+**Cut detail.** A `cut` row in `saving` carries the detail of what was left out: original, returned and omitted lines
+and bytes, reason, filter, the cursor call, the spill path and `cut_recovered` (1 once `read_file` opened that spill).
+Rows written before these columns exist are shown as "older rows unknown"; they are not backfilled. Non-cut rows keep
+these columns NULL. `stats --measure` adds a "Cut recovery" block after the outcomes: how many cuts had their spill
+opened at least once, the omitted bytes of cuts never opened, and the note that an open is not full recovery. The
+omitted bytes of opened cuts are not reported as recovered. Masked secrets are not counted as omitted or as loss.
+Recovery never changes the saving amounts.
+
 **Legacy rows.** Rows written before these columns exist keep `outcome_schema = 0` and `-1` in the new columns.
 They are not reclassified or backfilled: `stats` counts them only as "legacy rows" with their success flag.
 

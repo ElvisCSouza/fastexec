@@ -120,5 +120,11 @@ func RenderMeasure(filter StatsFilter) (string, error) {
 	if oc, oerr := queryOutcomes(db, "WHERE "+windowWhere(measureWindow(filter))); oerr == nil {
 		out += renderOutcomes(oc)
 	}
+	// Recuperação dos cortes da mesma janela (mesmo filtro de savings_since que o Savings usa).
+	aw := windowWhere(measureWindow(filter))
+	_, sw := savingsSince(db, aw, aw)
+	if cs, cerr := queryCutSummary(db, sw); cerr == nil {
+		out += renderCutRecovery(cs)
+	}
 	return out, nil
 }

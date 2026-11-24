@@ -203,7 +203,11 @@ func setupAuditSchema(db *sql.DB) {
 		}
 		rows.Close()
 	}
-	for col, typ := range map[string]string{"size_before": "INTEGER NOT NULL DEFAULT 0", "size_after": "INTEGER NOT NULL DEFAULT 0", "note": "TEXT NOT NULL DEFAULT ''"} {
+	savingNew := map[string]string{"size_before": "INTEGER NOT NULL DEFAULT 0", "size_after": "INTEGER NOT NULL DEFAULT 0", "note": "TEXT NOT NULL DEFAULT ''"}
+	for col, typ := range cutColumns {
+		savingNew[col] = typ
+	}
+	for col, typ := range savingNew {
 		if !savingCols[col] {
 			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE saving ADD COLUMN %s %s;", col, typ)); err != nil {
 				noteFailure("schema migration saving", err)
@@ -349,8 +353,18 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 
 func writeSavings(db *sql.DB, auditID int64, items []Saving) error {
 	for _, s := range items {
-		if _, err := db.Exec(`INSERT INTO saving (audit_id, cat, bytes, trips, ms, exact, size_before, size_after, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-			auditID, s.Cat, s.Bytes, s.Trips, s.Ms, boolInt(s.Exact), s.Before, s.After, s.Note); err != nil {
+		// Cut rows carry their detail and start with cut_recovered = 0; every other row leaves the cut columns NULL.
+		args := []any{auditID, s.Cat, s.Bytes, s.Trips, s.Ms, boolInt(s.Exact), s.Before, s.After, s.Note}
+		args = append(args, cutArgs(s.Cut)...)
+		var recovered any
+		if s.Cut != nil {
+			recovered = 0
+		}
+		args = append(args, recovered)
+		if _, err := db.Exec(`INSERT INTO saving (audit_id, cat, bytes, trips, ms, exact, size_before, size_after, note,
+			cut_orig_lines, cut_orig_bytes, cut_ret_lines, cut_ret_bytes, cut_omit_lines, cut_omit_bytes,
+			cut_reason, cut_filter, cut_cursor, cut_spill, cut_recovered) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+			args...); err != nil {
 			return err
 		}
 	}

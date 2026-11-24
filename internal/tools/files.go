@@ -271,6 +271,7 @@ func HandleReadFile(args ReadFileArgs) (string, error) {
 	out, err := handleReadFile(args)
 	if err == nil {
 		noteReadSaving(args.Host, args.Path, out)
+		noteSpillRead(args.Host, args.Path)
 		out = dedupReadOutput(args, out)
 	}
 	return out, err

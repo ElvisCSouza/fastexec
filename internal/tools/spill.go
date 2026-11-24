@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"homelab/fastexec/internal/config"
+	"homelab/fastexec/internal/corpus"
 	"homelab/fastexec/internal/telemetry"
 )
 
@@ -65,35 +66,83 @@ func cleanSpill(dir string) {
 func shapeOrCap(s string) string { return shapeOrCapFor("", s) }
 
 func shapeOrCapFor(id, s string) string {
-	out := shapeOrCapInner(id, s)
-	if len(s) > len(out) {
-		telemetry.NoteSavingDetail(telemetry.CatCut, len(s), len(out),
-			fmt.Sprintf("raw output had %d lines; returned %d (head and tail kept, the rest left out)", savLines(s), savLines(out)))
+	out, info := shapeOrCapInner(id, s)
+	if info.cut() {
+		telemetry.NoteCut(len(s), len(out), info.note(), info.detail())
 	}
 	return out
 }
 
-func shapeOrCapInner(id, s string) string {
+// shapeOrCapInner returns the text to show and what was left out (zero cutInfo when nothing was cut).
+func shapeOrCapInner(id, s string) (string, cutInfo) {
 	if os.Getenv("FASTEXEC_NO_SHAPE") != "" || outputFilterOff() || abOff("cut", id) || len(s) <= execSoftCap() {
-		return capOutput(s)
+		return capOutputInfo(s)
 	}
-	if out, ok := shapeBig(s, execSoftCap()); ok {
-		return out
+	if out, info, ok := shapeBig(s, execSoftCap()); ok {
+		return out, info
 	}
-	return capOutput(s)
+	return capOutputInfo(s)
 }
 
-func shapeBig(s string, softCap int) (string, bool) {
+// cutInfo says what a cut left out. It is the source of the footer and of the telemetry record.
+type cutInfo struct {
+	origLines, origBytes int
+	retLines, retBytes   int
+	reason               string // "teto": the output was over a cap
+	filter               string // "head+tail", "head only" or "byte cut (one line)"
+	cursor               string // exact call that brings back the omitted part
+	spill                string // path of the redacted full text; empty when nothing was spilled
+}
+
+func (c cutInfo) cut() bool { return c.origBytes > c.retBytes }
+
+func (c cutInfo) note() string {
+	return fmt.Sprintf("raw output had %d lines; returned %d (%s, %s); the rest left out",
+		c.origLines, c.retLines, c.reason, c.filter)
+}
+
+func (c cutInfo) detail() telemetry.CutDetail {
+	return telemetry.CutDetail{
+		OrigLines: c.origLines, OrigBytes: c.origBytes,
+		RetLines: c.retLines, RetBytes: c.retBytes,
+		OmitLines: c.origLines - c.retLines, OmitBytes: c.origBytes - c.retBytes,
+		Reason: c.reason, Filter: c.filter, Cursor: c.cursor, Spill: c.spill,
+	}
+}
+
+// shapeBig keeps the head and tail of s within softCap bytes. The full text goes to a spill file
+// after the same secret redaction the telemetry uses (line structure kept, so the cursor line
+// numbers still match). The footer says what was left out and how to read it.
+// saveSpill writes the redacted full text of an output to the spill directory and returns its path.
+// ok is false when no spill can be written; callers then show what they can without one, so no
+// information is dropped silently.
+func saveSpill(s string) (string, bool) {
 	dir := spillDir()
 	if dir == "" {
 		return "", false
 	}
 	spillCleanOnce.Do(func() { cleanSpill(dir) })
 
-	sum := sha1.Sum([]byte(s))
+	redacted := corpus.RedactKeepLines(s, corpus.DefaultRedactors())
+	sum := sha1.Sum([]byte(redacted))
 	path := filepath.Join(dir, time.Now().Format("20060102-150405")+"-"+hex.EncodeToString(sum[:4])+".txt")
-	if err := os.WriteFile(path, []byte(s), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(redacted), 0o644); err != nil {
 		return "", false
+	}
+	return path, true
+}
+
+// spillBytesCursor is the exact read_file call that returns the spill from byte offset off on
+// (at most outputCapSize bytes per call). The offset is in redacted coordinates: the spill holds
+// the redacted text, so the head that was shown is measured after redaction too.
+func spillBytesCursor(path string, off int) string {
+	return fmt.Sprintf("read_file('%s', offset=%d, limit=%d)", path, off, outputCapSize)
+}
+
+func shapeBig(s string, softCap int) (string, cutInfo, bool) {
+	path, ok := saveSpill(s)
+	if !ok {
+		return "", cutInfo{}, false
 	}
 
 	lines := strings.Split(s, "\n")
@@ -110,22 +159,77 @@ func shapeBig(s string, softCap int) (string, bool) {
 		used += len(lines[len(lines)-1-tail]) + 1
 		tail++
 	}
+	info := cutInfo{origLines: len(lines), origBytes: len(s), reason: "teto", spill: path}
+
 	// A single enormous line leaves nothing to show: cut by bytes instead.
 	if head == 0 && tail == 0 {
 		cut := headBudget
 		for cut > 0 && !utf8.RuneStart(s[cut]) {
 			cut--
 		}
-		return fmt.Sprintf("%s\n[truncated: %d bytes in one line; only the first %d bytes shown. Full output: %s — Next: read_file(path, pattern='<text>', context=1)]",
-			s[:cut], len(s), cut, path), true
+		info.retLines, info.retBytes = 1, cut
+		info.filter = "byte cut (one line)"
+		info.cursor = "read_file(path, pattern='<text>', context=1)"
+		return s[:cut] + "\n" + footer(info, fmt.Sprintf("bytes %d-%d", cut+1, len(s))), info, true
 	}
 
+	headText := strings.Join(lines[:head], "\n")
+	tailText := strings.Join(lines[len(lines)-tail:], "\n")
 	omittedFrom, omittedTo := head+1, len(lines)-tail
-	omittedBytes := len(s) - len(strings.Join(lines[:head], "\n")) - len(strings.Join(lines[len(lines)-tail:], "\n"))
+	info.retLines = head + tail
+	info.retBytes = len(headText) + len(tailText)
+	info.filter = "head+tail"
+	info.cursor = fmt.Sprintf("read_file(path, ranges='%d-%d')", omittedFrom, min(omittedTo, omittedFrom+80))
+
 	var b strings.Builder
-	b.WriteString(strings.Join(lines[:head], "\n"))
-	fmt.Fprintf(&b, "\n[truncated: lines %d-%d omitted (%d KB of %d KB). Full output: %s — Next: read_file(path, pattern='error|fail|panic|exception', context=3) or read_file(path, ranges='%d-%d')]\n",
-		omittedFrom, omittedTo, omittedBytes/1024, len(s)/1024, path, omittedFrom, min(omittedTo, omittedFrom+80))
-	b.WriteString(strings.Join(lines[len(lines)-tail:], "\n"))
-	return b.String(), true
+	b.WriteString(headText)
+	b.WriteString("\n")
+	b.WriteString(footer(info, fmt.Sprintf("lines %d-%d", omittedFrom, omittedTo)))
+	b.WriteString("\n")
+	b.WriteString(tailText)
+	return b.String(), info, true
+}
+
+// markCutRecovered is telemetry.MarkCutRecovered, a variable so tests can see which reads mark a spill.
+var markCutRecovered = telemetry.MarkCutRecovered
+
+// noteSpillRead records that a local read_file opened a spill file. A remote read never marks a local
+// spill, and neither does a read of any other path. Host "" and "local" (any case) are local.
+func noteSpillRead(host, path string) bool {
+	if !(host == "" || strings.EqualFold(host, "local")) || !isSpillPath(path) {
+		return false
+	}
+	markCutRecovered(path)
+	return true
+}
+
+// isSpillPath reports whether p is a spill file of the current spill directory (read_file uses it to
+// record that a cut was read back).
+func isSpillPath(p string) bool {
+	if p == "" {
+		return false
+	}
+	return filepath.Dir(filepath.Clean(p)) == filepath.Clean(spillDir())
+}
+
+// countLines counts lines the way the footer reports them: a non-empty text with no newline is one line.
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+// footer is the single line that tells the model what was cut and how to get the rest back.
+// It starts with truncMarker so IsTruncated keeps recognising it.
+func footer(c cutInfo, where string) string {
+	omitLines, omitBytes := c.origLines-c.retLines, c.origBytes-c.retBytes
+	counts := fmt.Sprintf("Original %d lines / %d bytes; returned %d lines / %d bytes; omitted %d lines / %d bytes. Filter: %s.",
+		c.origLines, c.origBytes, c.retLines, c.retBytes, omitLines, omitBytes, c.filter)
+	if c.spill == "" {
+		return fmt.Sprintf("%s%s omitted (%s). %s Next: narrow the command or pipe it through head, tail or grep and run it again]",
+			truncMarker, where, c.reason, counts)
+	}
+	return fmt.Sprintf("%s%s omitted (%s). %s Spill is redacted: secrets were masked before it was saved. Full output: %s — Next: %s, or read_file(path, pattern='error|fail|panic|exception', context=3)]",
+		truncMarker, where, c.reason, counts, c.spill, c.cursor)
 }

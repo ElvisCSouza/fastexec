@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"homelab/fastexec/internal/corpus"
 )
 
 const (
@@ -232,14 +234,54 @@ func cleanOutputFor(s, needle string) string {
 }
 
 func capOutput(s string) string {
+	out, _ := capOutputInfo(s)
+	return out
+}
+
+// capOutputInfo keeps the first outputHeadLen bytes of an output over outputCapSize and says in the
+// footer what was left out. The reply stays capped, but the integral text is spilled (redacted) so
+// the rest is reachable with an exact byte cursor. Up to outputCapSize nothing is cut and nothing
+// is spilled. If the spill cannot be written, the footer says so by omitting the spill line.
+func capOutputInfo(s string) (string, cutInfo) {
 	if len(s) <= outputCapSize {
-		return s
+		return s, cutInfo{}
 	}
 	cut := outputHeadLen
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return fmt.Sprintf("%s\n%s%d bytes; only the first 16 KB returned]", s[:cut], truncMarker, len(s))
+	info := cutInfo{
+		origLines: countLines(s), origBytes: len(s),
+		retLines: countLines(s[:cut]), retBytes: cut,
+		reason: "teto", filter: "head only",
+	}
+	if path, ok := saveSpill(s); ok {
+		info.spill = path
+		// O spill está em coordenadas redigidas. Um segredo que cruza o corte pode fazer o prefixo
+		// redigido isoladamente divergir do prefixo do texto integral redigido. Nesse caso, recuar
+		// para o maior prefixo comum: repetir alguns bytes é seguro; saltar conteúdo não é.
+		full := corpus.RedactKeepLines(s, corpus.DefaultRedactors())
+		head := corpus.RedactKeepLines(s[:cut], corpus.DefaultRedactors())
+		off := len(head)
+		if !strings.HasPrefix(full, head) {
+			off = commonPrefixLen(full, head)
+			for off > 0 && off < len(full) && !utf8.RuneStart(full[off]) {
+				off--
+			}
+		}
+		info.cursor = spillBytesCursor(path, off)
+	}
+	return s[:cut] + "\n" + footer(info, fmt.Sprintf("bytes %d-%d", cut+1, len(s))), info
+}
+
+// commonPrefixLen devolve o tamanho em bytes do prefixo comum de a e b.
+func commonPrefixLen(a, b string) int {
+	n := min(len(a), len(b))
+	i := 0
+	for i < n && a[i] == b[i] {
+		i++
+	}
+	return i
 }
 
 func IsNoResult(out string) bool {

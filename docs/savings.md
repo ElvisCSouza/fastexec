@@ -49,6 +49,12 @@ termina no último intervalo com dado (não estica o resto do dia vazio). Os doi
 - Quem anda é o "With"; o "Without" é derivado (With + economia acumulada) — motivo: garante o gap igual ao
   `saved_tokens` medido e mantém os pontos finais iguais aos totais — 2026-11-12.
 - Sem TTL/invalidação: o dado só muda quando uma chamada grava; o painel recarrega pelo `last_id`.
+- Corte (`cut`): a economia é `antes − depois` só quando o texto encolhe; o registro guarda o detalhe do que ficou de
+  fora (linhas e bytes, motivo, filtro, cursor, spill). Abrir o spill com `read_file` é registrado (`cut_recovered`), mas
+  isso é acesso, não recuperação total: o bloco "Cut recovery" de `stats --measure` mostra quantos cortes foram abertos e
+  os bytes omitidos dos cortes nunca abertos, sem somar os abertos como recuperados. Não altera a economia gravada.
+  Segredo mascarado não conta como perda.
+  Linhas antigas de corte ficam "desconhecidas", sem reconstrução.
 
 ## Limites e dívidas conhecidas
 - A série é por bucket de calendário, não por evento: dentro de uma hora a curva é linear entre os extremos do bucket.

@@ -34,14 +34,15 @@ const AvoidedRoundTripMs = 15000
 
 // Saving é uma economia registrada.
 type Saving struct {
-	Cat    string `json:"cat"`
-	Bytes  int    `json:"bytes"`  // bytes que o agente deixou de ler/enviar (medido ou proxy documentado)
-	Trips  int    `json:"trips"`  // idas ao modelo evitadas
-	Ms     int64  `json:"ms"`     // tempo evitado estimado
-	Exact  bool   `json:"exact"`  // true: diferença de tamanhos medida; false: estimativa
-	Before int    `json:"before"` // tamanho que a ferramenta comum devolveria (0 se não medido)
-	After  int    `json:"after"`  // tamanho realmente devolvido
-	Note   string `json:"note"`   // o que aconteceu, em uma frase com números (aparece na tela de detalhes)
+	Cat    string     `json:"cat"`
+	Bytes  int        `json:"bytes"`         // bytes que o agente deixou de ler/enviar (medido ou proxy documentado)
+	Trips  int        `json:"trips"`         // idas ao modelo evitadas
+	Ms     int64      `json:"ms"`            // tempo evitado estimado
+	Exact  bool       `json:"exact"`         // true: diferença de tamanhos medida; false: estimativa
+	Before int        `json:"before"`        // tamanho que a ferramenta comum devolveria (0 se não medido)
+	After  int        `json:"after"`         // tamanho realmente devolvido
+	Note   string     `json:"note"`          // o que aconteceu, em uma frase com números (aparece na tela de detalhes)
+	Cut    *CutDetail `json:"cut,omitempty"` // só em cortes: o que ficou de fora e como trazer de volta
 }
 
 type callLedger struct {
