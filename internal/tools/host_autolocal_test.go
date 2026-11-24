@@ -96,7 +96,7 @@ func TestJobWindowsPathSemHostRodaLocal(t *testing.T) {
 		t.Skip("host local Windows")
 	}
 	t.Setenv("FASTEXEC_JOBS_DIR", t.TempDir()) // lista isolada: jobs de outros testes não entram no 'No local job'
-	out, err := HandleJob(JobArgs{Action: "list", Command: `type W:\ReposHomeLab\x.txt`})
+	out, err := HandleJob(JobArgs{Action: "list", Command: `type D:\repo\x.txt`})
 	if err != nil {
 		t.Fatalf("list falhou: %v", err)
 	}
