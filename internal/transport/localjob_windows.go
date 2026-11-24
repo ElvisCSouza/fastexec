@@ -166,11 +166,30 @@ func saveMeta(dir string, m LocalJobMeta) error {
 	if err != nil {
 		return err
 	}
-	tmp := metaPath(dir, m.ID) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	// Arquivo temporário próprio por escrita: o exit watcher e o stop podem gravar o mesmo job ao mesmo tempo.
+	f, err := os.CreateTemp(dir, m.ID+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, metaPath(dir, m.ID)) // escrita atômica
+	tmp := f.Name()
+	_, werr := f.Write(b)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		_ = os.Remove(tmp)
+		return werr
+	}
+	// Escrita atômica. No Windows o rename falha com "Acesso negado" enquanto um leitor (status/wait) tem o meta aberto: tenta de novo por um instante.
+	var rerr error
+	for i := 0; i < metaIOAttempts; i++ {
+		if rerr = os.Rename(tmp, metaPath(dir, m.ID)); rerr == nil {
+			return nil
+		}
+		time.Sleep(metaIOPause)
+	}
+	_ = os.Remove(tmp)
+	return rerr
 }
 
 func loadMeta(dir, id string) (LocalJobMeta, error) {
@@ -178,7 +197,15 @@ func loadMeta(dir, id string) (LocalJobMeta, error) {
 	if !jobIDRegex.MatchString(id) {
 		return m, fmt.Errorf("invalid job_id: %q", id)
 	}
-	b, err := os.ReadFile(metaPath(dir, id))
+	var b []byte
+	var err error
+	// Leitura pode colidir com o rename de saveMeta no Windows: repete o erro transitório.
+	for i := 0; i < metaIOAttempts; i++ {
+		if b, err = os.ReadFile(metaPath(dir, id)); err == nil || os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(metaIOPause)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return m, fmt.Errorf("job '%s' not found (use action='list')", id)
@@ -187,6 +214,12 @@ func loadMeta(dir, id string) (LocalJobMeta, error) {
 	}
 	return m, json.Unmarshal(b, &m)
 }
+
+// metaIOAttempts × metaIOPause é o teto da repetição de leitura/rename do meta (~1 s no pior caso).
+const (
+	metaIOAttempts = 100
+	metaIOPause    = 10 * time.Millisecond
+)
 
 func logActivity(m LocalJobMeta) (time.Time, int64) {
 	st, err := os.Stat(m.LogPath)

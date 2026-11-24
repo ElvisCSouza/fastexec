@@ -634,7 +634,8 @@ FastExec never runs `dotnet restore` — that downloads packages, and downloadin
 decision. The server loads the nearest `.sln` above the file (falling back to the nearest `.csproj`), because references
 are only exact across projects when the whole solution is loaded. That load is slow on a large solution (tens of
 seconds), so the first query in that root answers `lsp loading C# solution…; by name` and falls back to the name graph;
-later queries use the server. Files whose name ends in `.g.cs` (generated) are ignored. C# multiple `TargetFramework`s,
+later queries use the server. The load starts with that first document request, not at the handshake: csharp-ls 0.28
+announces it (`$/progress` with the `loading` title) only after the request arrives. Files whose name ends in `.g.cs` (generated) are ignored. C# multiple `TargetFramework`s,
 Razor and Blazor are out of scope: `.razor`/`.cshtml` stay **by name only**.
 
 Two defects of `csharp-ls` 0.16 are worked around inside the client rather than trusted: its `textDocument/rename`

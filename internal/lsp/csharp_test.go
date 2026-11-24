@@ -321,6 +321,16 @@ func TestCSharpRealServerIsExact(t *testing.T) {
 	// blocking progress; while it is in flight no answer may be trusted, so a
 	// query with a small budget has to come back as a load rather than as an
 	// empty list.
+	// csharp-ls 0.28 loads the solution lazily: nothing is announced after the
+	// handshake, and the load starts with the first document request (measured:
+	// no $/progress for 69 s without one; begin, report and end arrive within
+	// about two seconds of the request). The first request is therefore what
+	// starts the load, and it runs in the background while the gate watches.
+	// Not awaited: waiting for the answer would wait for the load to end and
+	// turn the gate check below into the fast-machine branch.
+	go func() {
+		_, _ = c.DocumentSymbols(ctx, filepath.Join(root, "src", "App", "Conta.cs"))
+	}()
 	title := waitBusy(t, c, 60*time.Second)
 	t.Logf("the server announced %q", title)
 	if !strings.Contains(strings.ToLower(title), "loading") {
