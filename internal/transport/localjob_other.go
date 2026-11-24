@@ -20,6 +20,9 @@ type LocalJobMeta struct {
 	State         string     `json:"state"`
 	EndedAt       *time.Time `json:"ended_at,omitempty"`
 	ExitCode      *int       `json:"exit_code,omitempty"`
+	ExpiresAt     time.Time  `json:"expires_at"`
+	CancelAsked   bool       `json:"cancel_asked,omitempty"`
+	Reason        string     `json:"reason,omitempty"`
 }
 
 type LocalJobInfo struct {
@@ -38,8 +41,8 @@ func LocalJobsDir() (string, error) {
 	return "/tmp/fastexec_jobs", nil
 }
 
-func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJobMeta, error) {
-	return nil, fmt.Errorf("native local jobs are not available on this OS; use the daemon or systemd-run")
+func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJobMeta, bool, error) {
+	return nil, false, fmt.Errorf("native local jobs are not available on this OS; use the daemon or systemd-run")
 }
 
 func LocalJobStatus(id string) (*LocalJobInfo, error) {
@@ -50,7 +53,7 @@ func LocalJobList() ([]LocalJobInfo, error) {
 	return []LocalJobInfo{}, nil
 }
 
-func LocalJobStop(id string) (*LocalJobInfo, error) {
+func LocalJobStop(id string) (*CancelReport, error) {
 	return nil, fmt.Errorf("local job not found")
 }
 
@@ -64,4 +67,16 @@ func TailLocalJob(id string, n int) (string, error) {
 
 func LocalJobLogLines(id string) (int, error) {
 	return 0, fmt.Errorf("local job not found")
+}
+
+// CancelReport: veredito de cancelamento (ver localjob_windows.go).
+type CancelReport struct {
+	Verdict string
+	Reason  string
+	Info    *LocalJobInfo
+}
+
+// LocalJobLogChunk: leitura incremental do log (stub fora do Windows).
+func LocalJobLogChunk(id string, cursor int64) (LogChunk, error) {
+	return LogChunk{}, fmt.Errorf("local job not found")
 }

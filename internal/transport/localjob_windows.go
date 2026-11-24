@@ -47,10 +47,13 @@ var (
 )
 
 const (
-	jobStateRunning = "RUNNING"
-	jobStateExited  = "EXITED"
-	jobStateStopped = "STOPPED"
-	jobStateExpired = "EXPIRED"
+	jobStateStarting = "STARTING" // registro gravado antes do processo nascer
+	jobStateRunning  = "RUNNING"
+	jobStateExited   = "EXITED"          // sempre com ExitCode
+	jobStateStopped  = "STOPPED"         // cancelado com a árvore confirmada morta
+	jobStateExpired  = "EXPIRED"         // passou do TTL declarado (ExpiresAt) e foi encerrado
+	jobStateFailed   = "FAILED"          // falha de infraestrutura ao iniciar (sem processo de usuário)
+	jobStateUnknown  = "OUTCOME_UNKNOWN" // o processo sumiu sem rc registrado (perda do FastExec/resposta): não se sabe o fim
 
 	jobAccessQuery     = 0x0004
 	jobAccessTerminate = 0x0008
@@ -103,6 +106,9 @@ type LocalJobMeta struct {
 	State         string     `json:"state"`
 	EndedAt       *time.Time `json:"ended_at,omitempty"`
 	ExitCode      *int       `json:"exit_code,omitempty"` // nil = ainda não conhecido (job vivo ou saída não coletada)
+	ExpiresAt     time.Time  `json:"expires_at"`          // TTL declarado no start: CreatedAt + localJobTTL
+	CancelAsked   bool       `json:"cancel_asked,omitempty"`
+	Reason        string     `json:"reason,omitempty"` // texto curto para FAILED / OUTCOME_UNKNOWN
 }
 
 // LocalJobInfo é o estado vivo de um job, já reconciliado com o kernel.
@@ -264,6 +270,30 @@ func dropExitSlot(id string) {
 	exitSlotsMu.Unlock()
 }
 
+// startsHere: ids cujo start ainda está em curso neste processo (STARTING legítimo, não perda).
+var (
+	startsMu   sync.Mutex
+	startsHere = map[string]bool{}
+)
+
+func markStarting(id string) {
+	startsMu.Lock()
+	startsHere[id] = true
+	startsMu.Unlock()
+}
+
+func unmarkStarting(id string) {
+	startsMu.Lock()
+	delete(startsHere, id)
+	startsMu.Unlock()
+}
+
+func startingHere(id string) bool {
+	startsMu.Lock()
+	defer startsMu.Unlock()
+	return startsHere[id]
+}
+
 // exitCodePublished devolve o rc de um job iniciado por este processo, esperando (no máximo exitSlotWait) a goroutine
 // que espera o processo. ok=false quando não há nada a esperar ou quando o prazo passou.
 func exitCodePublished(id string) (int, bool) {
@@ -293,8 +323,11 @@ func recordExitWhenDone(dir, id string, slot *exitSlot, cmd *exec.Cmd) {
 	}
 	now := time.Now()
 	m.ExitCode, m.EndedAt = &code, &now
-	if m.State == jobStateRunning {
+	if m.State == jobStateRunning || m.State == jobStateStarting {
 		m.State = jobStateExited
+		if m.CancelAsked {
+			m.State = jobStateStopped
+		}
 	}
 	_ = saveMeta(dir, m)
 }
@@ -336,16 +369,34 @@ func inspect(dir string, m LocalJobMeta) (LocalJobInfo, error) {
 		info.State = jobStateRunning
 		return info, nil
 	}
-	if m.State == jobStateRunning { // terminou sozinho
+	if startingHere(m.ID) { // start em andamento neste processo: ainda não é caso de perda
+		info.State = jobStateStarting
+		return info, nil
+	}
+	if m.State == jobStateRunning || m.State == jobStateStarting {
+		// Sem tree viva. Só há estado final com prova: rc da goroutine deste processo (ou cancelamento confirmado).
+		// Sem isso o fim é desconhecido (FastExec reiniciou ou perdeu o handle): OUTCOME_UNKNOWN, nunca "exited" sem rc.
 		now := time.Now()
-		m.State, m.EndedAt = jobStateExited, &now
-		if code, ok := exitCodePublished(m.ID); ok {
+		m.EndedAt = &now
+		code, ok := exitCodePublished(m.ID)
+		if ok {
 			m.ExitCode = &code
 			dropExitSlot(m.ID)
 		}
-		info.Meta, info.State = m, jobStateExited
+		switch {
+		case m.CancelAsked:
+			m.State = jobStateStopped
+		case ok:
+			m.State = jobStateExited
+		default:
+			m.State = jobStateUnknown
+			m.Reason = "process tree gone without a recorded exit code (FastExec restarted or lost the job handle)"
+		}
+		info.Meta, info.State = m, m.State
 		_ = saveMeta(dir, m)
-	} else if m.ExitCode == nil {
+		return info, nil
+	}
+	if m.ExitCode == nil && (m.State == jobStateExited || m.State == jobStateStopped) {
 		// o metadado pode ter sido gravado (por quem detectou o fim) antes de a goroutine do processo publicar o rc
 		if code, ok := exitCodePublished(m.ID); ok {
 			m.ExitCode = &code
@@ -390,7 +441,7 @@ func maintain(dir string) []LocalJobInfo {
 			out = append(out, info)
 			continue
 		}
-		if info.State == jobStateRunning && now.Sub(m.CreatedAt) > localJobTTL {
+		if info.State == jobStateRunning && now.After(expiryOf(m)) {
 			if terminateByName(m.JobObjectName) == nil {
 				t := now
 				m.State, m.EndedAt = jobStateExpired, &t
@@ -415,54 +466,110 @@ func newJobID() string {
 	return time.Now().Format("20060102_150405") + "_" + hex.EncodeToString(b)
 }
 
+// expiryOf: fim do TTL declarado no start (ExpiresAt; metadados antigos sem ele usam CreatedAt + localJobTTL).
+func expiryOf(m LocalJobMeta) time.Time {
+	if !m.ExpiresAt.IsZero() {
+		return m.ExpiresAt
+	}
+	return m.CreatedAt.Add(localJobTTL)
+}
+
+// sameRequest diz se um job_id repetido traz o mesmo pedido. Só serve para o replay de um job_id já usado:
+// jobs sem job_id NUNCA são comparados por argumentos (cada start sem id é um job novo).
+func sameRequest(m LocalJobMeta, command string, argv []string, cwd string) bool {
+	if m.Command != command || m.Cwd != cwd || len(m.Argv) != len(argv) {
+		return false
+	}
+	for i := range argv {
+		if m.Argv[i] != argv[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// failStart grava o registro como FAILED (falha de infraestrutura ao iniciar) em vez de apagá-lo: o id continua
+// consultável e o start repetido com o mesmo job_id devolve esse estado em vez de tentar de novo.
+func failStart(dir string, meta *LocalJobMeta, why error) (*LocalJobMeta, bool, error) {
+	now := time.Now()
+	meta.State, meta.EndedAt, meta.Reason = jobStateFailed, &now, why.Error()
+	unmarkStarting(meta.ID)
+	_ = saveMeta(dir, *meta)
+	return meta, false, why
+}
+
 // StartLocalJob inicia command (cmd.exe) ou argv (sem shell) em background, num Job Object nomeado, e devolve na hora.
-func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJobMeta, error) {
+// wantID é o job_id informado pelo cliente, usado como chave de idempotência: se já existe com o MESMO pedido,
+// replayed=true e nenhum processo novo é criado; se existe com pedido diferente, é conflito. Vazio = job novo sempre.
+// Antes de qualquer processo, o registro vai para o disco em STARTING (o handle existe antes da resposta).
+func StartLocalJob(command string, argv []string, cwd, wantID string) (meta *LocalJobMeta, replayed bool, err error) {
 	dir, err := LocalJobsDir()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if cwd != "" {
 		if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
-			return nil, fmt.Errorf("cwd does not exist or is not a directory: %s", cwd)
+			return nil, false, fmt.Errorf("cwd does not exist or is not a directory: %s", cwd)
+		}
+	}
+	if wantID != "" && !jobIDRegex.MatchString(wantID) {
+		return nil, false, fmt.Errorf("invalid job_id: %q (letters, digits, '_' and '-', up to 40 characters)", wantID)
+	}
+	if wantID != "" {
+		if prev, lerr := loadMeta(dir, wantID); lerr == nil {
+			if !sameRequest(prev, command, argv, cwd) {
+				return nil, false, fmt.Errorf("job_id '%s' is already used by a different job; use a new job_id", wantID)
+			}
+			return &prev, true, nil // replay: mesmo pedido, mesmo handle, nada iniciado
 		}
 	}
 
 	var running []string
 	for _, j := range maintain(dir) {
-		if j.State == jobStateRunning {
+		if j.State == jobStateRunning || j.State == jobStateStarting {
 			running = append(running, j.Meta.ID)
 		}
 	}
 	if len(running) >= LocalJobMaxActive {
-		return nil, fmt.Errorf("limit of %d active local Windows jobs reached (%s); stop one with job(action='stop', job_id='...')",
+		return nil, false, fmt.Errorf("limit of %d active local Windows jobs reached (%s); stop one with job(action='stop', job_id='...')",
 			LocalJobMaxActive, strings.Join(running, ", "))
 	}
 
 	id := wantID
 	if id == "" {
 		id = newJobID()
-	} else if !jobIDRegex.MatchString(id) {
-		return nil, fmt.Errorf("invalid job_id: %q (letters, digits, '_' and '-', up to 40 characters)", id)
 	}
 	if _, err := os.Stat(metaPath(dir, id)); err == nil {
-		return nil, fmt.Errorf("a job with id '%s' already exists", id)
+		return nil, false, fmt.Errorf("a job with id '%s' already exists", id)
 	}
 
+	now := time.Now()
 	logPath := filepath.Join(dir, id+".log")
+	jobName := `Local\FastExec_Job_` + id
+	rec := &LocalJobMeta{
+		ID: id, Command: command, Argv: argv, Cwd: cwd, CreatedAt: now, ExpiresAt: now.Add(localJobTTL),
+		JobObjectName: jobName, LogPath: logPath, State: jobStateStarting,
+	}
+	markStarting(id)
+	if err := saveMeta(dir, *rec); err != nil {
+		unmarkStarting(id)
+		return nil, false, err
+	}
+
 	// Leitura/escrita normal, NÃO O_APPEND: no Windows o Go abre o append só com FILE_APPEND_DATA e o bash do Git
 	// (msys) não consegue escrever nesse handle (log vazio, rc=1). O filho é o único escritor, então o offset
 	// compartilhado do handle herdado basta.
 	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
-		return nil, err
+		return failStart(dir, rec, err)
 	}
 	defer lf.Close() // o filho já terá herdado a sua própria cópia do handle
 
-	jobName := `Local\FastExec_Job_` + id
 	// O job aninha dentro de qualquer job do host (Windows 8+), então não precisa de breakaway.
 	job, err := newNamedJobObject(jobName)
 	if err != nil {
-		return nil, fmt.Errorf("could not create the job object: %v", err)
+		os.Remove(logPath)
+		return failStart(dir, rec, fmt.Errorf("could not create the job object: %v", err))
 	}
 	keep := false
 	defer func() {
@@ -493,12 +600,9 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 
 	if err := cmd.Start(); err != nil {
 		os.Remove(logPath)
-		return nil, fmt.Errorf("could not start: %v", err)
+		return failStart(dir, rec, fmt.Errorf("could not start: %v", err))
 	}
-	meta := LocalJobMeta{
-		ID: id, Command: command, Argv: argv, Cwd: cwd, PID: cmd.Process.Pid,
-		CreatedAt: time.Now(), JobObjectName: jobName, LogPath: logPath, State: jobStateRunning,
-	}
+	rec.PID = cmd.Process.Pid
 
 	if aerr := job.assign(cmd.Process.Pid); aerr != nil {
 		// quase sempre o processo já terminou (comando que falha na hora); se ainda vive, não dá para gerenciá-lo: mata
@@ -509,29 +613,32 @@ func StartLocalJob(command string, argv []string, cwd, wantID string) (*LocalJob
 			close(done)
 		}()
 		select {
-		case <-done: // saiu rápido: o job fica registrado como finalizado, com o log para consulta
-			now := time.Now()
-			meta.State, meta.EndedAt, meta.ExitCode = jobStateExited, &now, &code
-			if err := saveMeta(dir, meta); err != nil {
-				return nil, err
+		case <-done: // saiu rápido: o job fica registrado como finalizado, com o rc real do processo
+			end := time.Now()
+			rec.State, rec.EndedAt, rec.ExitCode = jobStateExited, &end, &code
+			unmarkStarting(id)
+			if err := saveMeta(dir, *rec); err != nil {
+				return nil, false, err
 			}
-			return &meta, nil
+			return rec, false, nil
 		case <-time.After(500 * time.Millisecond):
 			_ = cmd.Process.Kill()
 			os.Remove(logPath)
-			return nil, fmt.Errorf("could not assign the process to the job object (%v); process killed", aerr)
+			return failStart(dir, rec, fmt.Errorf("could not assign the process to the job object (%v); process killed", aerr))
 		}
 	}
 	own(jobName, job.h) // a partir daqui o handle é guardado; o job vive enquanto este FastExec viver
 	keep = true
+	rec.State = jobStateRunning
+	if err := saveMeta(dir, *rec); err != nil {
+		_ = terminateByName(jobName)
+		unmarkStarting(id)
+		return nil, false, err
+	}
+	unmarkStarting(id)
 	// Sem Release(): a goroutine espera o processo para guardar o rc. O handle é liberado no fim da espera.
 	go recordExitWhenDone(dir, id, putExitSlot(id), cmd)
-
-	if err := saveMeta(dir, meta); err != nil {
-		_ = terminateByName(jobName)
-		return nil, err
-	}
-	return &meta, nil
+	return rec, false, nil
 }
 
 // handoffToJob transforma um exec que estourou o timeout em job de fundo, sem matar nada: o job object do exec
@@ -559,7 +666,7 @@ func handoffToJob(spec localSpec, start time.Time, cmd *exec.Cmd, job *jobObject
 		return "", nil, nil, err
 	}
 	meta := LocalJobMeta{ID: id, Command: spec.cmdStr, Argv: spec.argv, Cwd: spec.cwd, PID: cmd.Process.Pid,
-		CreatedAt: start, JobObjectName: jobName, LogPath: logPath, State: jobStateRunning}
+		CreatedAt: start, ExpiresAt: start.Add(localJobTTL), JobObjectName: jobName, LogPath: logPath, State: jobStateRunning}
 	if err := saveMeta(dir, meta); err != nil {
 		f.Close()
 		os.Remove(logPath)
@@ -616,8 +723,21 @@ func LocalJobList() ([]LocalJobInfo, error) {
 	return maintain(dir), nil
 }
 
-// LocalJobStop encerra a árvore inteira do job pelo NOME do Job Object (atômico, sem PID).
-func LocalJobStop(id string) (*LocalJobInfo, error) {
+// CancelReport é o veredito de um cancelamento, para quem chamou saber o que de fato aconteceu:
+// "confirmed" = a árvore inteira morreu (nenhum processo vivo no Job Object); "accepted" = o pedido foi aceito pelo
+// kernel mas a árvore ainda aparece viva no prazo curto de confirmação (consultar status depois);
+// "denied" = nada foi cancelado (job já terminou, ainda está iniciando, ou o kernel recusou o terminate).
+type CancelReport struct {
+	Verdict string
+	Reason  string
+	Info    *LocalJobInfo
+}
+
+// cancelConfirmWait: quanto LocalJobStop espera a árvore sumir antes de responder "accepted" em vez de "confirmed".
+var cancelConfirmWait = 1500 * time.Millisecond
+
+// LocalJobStop encerra a árvore inteira do job pelo NOME do Job Object (atômico, sem PID) e devolve o veredito.
+func LocalJobStop(id string) (*CancelReport, error) {
 	dir, err := LocalJobsDir()
 	if err != nil {
 		return nil, err
@@ -626,19 +746,37 @@ func LocalJobStop(id string) (*LocalJobInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := terminateByName(m.JobObjectName); err != nil {
-		return nil, fmt.Errorf("could not stop the job: %v", err)
+	cur, err := inspect(dir, m)
+	if err != nil {
+		return nil, err
 	}
-	if m.State == jobStateRunning {
-		now := time.Now()
-		m.State, m.EndedAt = jobStateStopped, &now
-		if err := saveMeta(dir, m); err != nil {
+	if cur.State == jobStateStarting {
+		return &CancelReport{Verdict: "denied", Reason: "job is still starting; retry in a moment", Info: &cur}, nil
+	}
+	if cur.State != jobStateRunning {
+		return &CancelReport{Verdict: "denied", Reason: "job already finished (state " + cur.State + ")", Info: &cur}, nil
+	}
+	if err := terminateByName(m.JobObjectName); err != nil {
+		return &CancelReport{Verdict: "denied", Reason: "terminate refused by the kernel: " + err.Error(), Info: &cur}, nil
+	}
+	m.CancelAsked = true
+	if err := saveMeta(dir, m); err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(cancelConfirmWait)
+	for {
+		info, err := inspect(dir, m)
+		if err != nil {
 			return nil, err
 		}
+		if info.Active == 0 {
+			return &CancelReport{Verdict: "confirmed", Reason: "process tree is gone", Info: &info}, nil
+		}
+		if time.Now().After(deadline) {
+			return &CancelReport{Verdict: "accepted", Reason: "terminate accepted; tree still alive at confirmation time", Info: &info}, nil
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	info := LocalJobInfo{Meta: m, State: m.State}
-	info.LastActivity, info.LogSize = logActivity(m)
-	return &info, nil
 }
 
 // LocalJobWait espera, por evento de polling curto no job, até ele terminar ou até maxWait. finished=false: ainda roda.
@@ -740,4 +878,17 @@ func LocalJobLogLines(id string) (int, error) {
 		total++ // última linha sem \n no fim do arquivo
 	}
 	return total, nil
+}
+
+// LocalJobLogChunk lê o log do job a partir do cursor (offset em bytes). Ver readLogChunk.
+func LocalJobLogChunk(id string, cursor int64) (LogChunk, error) {
+	dir, err := LocalJobsDir()
+	if err != nil {
+		return LogChunk{}, err
+	}
+	m, err := loadMeta(dir, id)
+	if err != nil {
+		return LogChunk{}, err
+	}
+	return readLogChunk(m.LogPath, cursor)
 }

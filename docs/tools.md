@@ -485,6 +485,21 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
   `[job] EXITED` line of a Linux job that ended after the fast-failure window. Before, `status`/`list` showed `up ...`
   counted from the creation — still growing long after the process was gone — and the raw `systemctl` text never named
   the duration. `start`/`wait` keep their existing `after Xs` wording.
+- Job states (Windows `local`): `STARTING`, `RUNNING`, `EXITED` (always with its `rc`), `FAILED` (never started),
+  `STOPPED` (cancelled), `EXPIRED` (past its TTL), `OUTCOME_UNKNOWN` (the process tree is gone and no exit code was
+  recorded, e.g. FastExec restarted). `OUTCOME_UNKNOWN` means "may or may not have run": it is never reported as
+  "not executed", and FastExec never retries a job on its own.
+- `start` with `job_id` is idempotent: the same `job_id` with the same command, argv and cwd returns the existing job
+  (`replayed`) and starts no process; the same `job_id` with a different request is a conflict. Without `job_id`, every
+  start is a new job, even when identical to another.
+- `stop` answers with a verdict: `confirmed` (the tree is gone), `accepted` (kill sent, not yet confirmed), or `denied`
+  (not running, or still starting). The reply includes the current state.
+- `tail` and `wait` accept `cursor` (the decimal byte offset from the previous reply). Each reply ends at a newline,
+  at most 32 KiB, with `next=` for the next call. Cursor replies are raw log bytes: they do not pass through output
+  cleaning or a later cap, so `next` advances exactly the bytes delivered and a reconnect that repeats the cursor
+  gets the same reply with no gap. `truncated` means the log got shorter than the cursor (restart from 0); `expired`
+  means the log is gone. `cursor` is not advertised in `tools/list` to keep its size budget; it is accepted as an
+  argument.
 - Windows (`local`): a named Job Object per job, log file in `<data_dir>/jobs`, at most 12 running, 12 h lifetime,
   finished jobs kept 7 days; `stop` kills the whole tree.
 - Linux (local or remote): `systemd-run --user` units; logs from `journalctl`. Needs a systemd user instance.

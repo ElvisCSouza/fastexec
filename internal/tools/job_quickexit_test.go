@@ -75,7 +75,7 @@ func TestJobStartRodandoMantemRespostaAntiga(t *testing.T) {
 func TestJobStatusFalhaRapidaTrazRcELog(t *testing.T) {
 	t.Setenv("FASTEXEC_JOBS_DIR", t.TempDir())
 
-	m, err := transport.StartLocalJob("", []string{"node", "-e", "console.log('status curto');process.exit(2)"}, "", "")
+	m, _, err := transport.StartLocalJob("", []string{"node", "-e", "console.log('status curto');process.exit(2)"}, "", "")
 	if err != nil {
 		t.Fatalf("StartLocalJob: %v", err)
 	}

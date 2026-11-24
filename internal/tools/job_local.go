@@ -59,9 +59,17 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		if hasArgv {
 			argv = args.Argv
 		}
-		m, err := transport.StartLocalJob(args.Command, argv, args.Cwd, args.JobID)
+		m, replayed, err := transport.StartLocalJob(args.Command, argv, args.Cwd, args.JobID)
 		if err != nil {
 			return "", err
+		}
+		if replayed {
+			// mesmo job_id e mesmo pedido: devolve o job existente, sem processo novo (idempotência por call id)
+			st, serr := transport.LocalJobStatus(m.ID)
+			if serr != nil {
+				return "", serr
+			}
+			return fmt.Sprintf("[job %s replayed: same job_id and request; no new process started]\n%s", m.ID, statusLine(st)), nil
 		}
 		if args.Await {
 			// Comando finito (build, teste, script): o mesmo turno devolve a saída se terminar no prazo, poupando start+wait.
@@ -101,6 +109,9 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 			lines = 30
 		}
 		lines = min(lines, 500)
+		if args.Cursor != "" {
+			return cursorChunk(args.JobID, args.Cursor)
+		}
 		out, err := transport.TailLocalJob(args.JobID, lines)
 		if err != nil {
 			return "", err
@@ -122,13 +133,17 @@ func handleLocalJob(action string, args JobArgs) (string, error) {
 		return capOutput(out), nil
 
 	case "stop", "kill":
-		j, err := transport.LocalJobStop(args.JobID)
+		c, err := transport.LocalJobStop(args.JobID)
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("[job] %s stopped (%s); process tree killed by the Job Object.", j.Meta.ID, j.State), nil
+		// veredito: accepted | confirmed | denied, com o estado atual do job
+		return fmt.Sprintf("[job %s cancel %s: %s | state %s]", args.JobID, c.Verdict, c.Reason, c.Info.State), nil
 
 	case "wait":
+		if args.Cursor != "" {
+			return cursorChunk(args.JobID, args.Cursor) // incremental: sem esperar, pelo cursor de bytes
+		}
 		j, finished, err := transport.LocalJobWait(args.JobID, jobWaitMax)
 		if err != nil {
 			return "", err

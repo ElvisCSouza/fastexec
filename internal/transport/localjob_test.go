@@ -47,7 +47,7 @@ func TestLocalJobCicloDeVida(t *testing.T) {
 	marker := fmt.Sprintf("FXTEST_JOB_%d", time.Now().UnixNano())
 
 	start := time.Now()
-	m, err := StartLocalJob("", tickJob(marker), "", "")
+	m, _, err := StartLocalJob("", tickJob(marker), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestLocalJobCicloDeVida(t *testing.T) {
 	}
 
 	stopped, err := LocalJobStop(m.ID)
-	if err != nil || stopped.State != jobStateStopped {
+	if err != nil || stopped.Verdict != "confirmed" {
 		t.Fatalf("stop falhou: %+v %v", stopped, err)
 	}
 	time.Sleep(300 * time.Millisecond)
@@ -86,7 +86,7 @@ func TestLocalJobCicloDeVida(t *testing.T) {
 func TestLocalJobSobreviveAoExec(t *testing.T) {
 	useTempJobs(t)
 	server := `require('http').createServer(function(q,s){s.end('resposta do job')}).listen(0,'127.0.0.1',function(){console.log('PORT '+this.address().port)})`
-	m, err := StartLocalJob("", []string{"node", "-e", server}, "", "")
+	m, _, err := StartLocalJob("", []string{"node", "-e", server}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,11 +117,11 @@ func TestLocalJobLimiteDeCinco(t *testing.T) {
 	useTempJobs(t)
 	marker := fmt.Sprintf("FXTEST_LIM_%d", time.Now().UnixNano())
 	for i := 0; i < LocalJobMaxActive; i++ {
-		if _, err := StartLocalJob("", tickJob(marker), "", ""); err != nil {
+		if _, _, err := StartLocalJob("", tickJob(marker), "", ""); err != nil {
 			t.Fatalf("job %d deveria iniciar: %v", i+1, err)
 		}
 	}
-	_, err := StartLocalJob("", tickJob(marker), "", "")
+	_, _, err := StartLocalJob("", tickJob(marker), "", "")
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("limit of %d active local Windows jobs", LocalJobMaxActive)) || !strings.Contains(err.Error(), "stop") {
 		t.Errorf("o próximo deveria falhar orientando a parar um job: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestLocalJobTTLEncerraEMarca(t *testing.T) {
 	t.Cleanup(func() { localJobTTL = old })
 
 	marker := fmt.Sprintf("FXTEST_TTL_%d", time.Now().UnixNano())
-	m, err := StartLocalJob("", []string{"node", "-e", "setInterval(function(){},1000)", marker}, "", "")
+	m, _, err := StartLocalJob("", []string{"node", "-e", "setInterval(function(){},1000)", marker}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestLocalJobTTLEncerraEMarca(t *testing.T) {
 
 func TestLocalJobTerminaSozinho(t *testing.T) {
 	useTempJobs(t)
-	m, err := StartLocalJob("", []string{"node", "-e", "console.log('rapido')"}, "", "")
+	m, _, err := StartLocalJob("", []string{"node", "-e", "console.log('rapido')"}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestLocalJobBashEscreveNoLog(t *testing.T) {
 	if _, err := os.Stat(bash); err != nil {
 		t.Skip("Git Bash não instalado")
 	}
-	m, err := StartLocalJob("", []string{bash, "-c", "echo ola; echo fim"}, "", "")
+	m, _, err := StartLocalJob("", []string{bash, "-c", "echo ola; echo fim"}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestLocalJobBashEscreveNoLog(t *testing.T) {
 
 func TestLocalJobComandoQueFalhaNaHora(t *testing.T) {
 	useTempJobs(t)
-	m, err := StartLocalJob("comando_inexistente_job_fastexec", nil, "", "")
+	m, _, err := StartLocalJob("comando_inexistente_job_fastexec", nil, "", "")
 	if err != nil {
 		t.Fatalf("o start não deve falhar; o job só termina logo: %v", err)
 	}
@@ -205,20 +205,20 @@ func TestLocalJobComandoQueFalhaNaHora(t *testing.T) {
 
 func TestLocalJobIDeCwd(t *testing.T) {
 	useTempJobs(t)
-	if _, err := StartLocalJob("echo x", nil, "", "id invalido!"); err == nil {
+	if _, _, err := StartLocalJob("echo x", nil, "", "id invalido!"); err == nil {
 		t.Errorf("id inválido deveria ser rejeitado")
 	}
-	if _, err := StartLocalJob("echo x", nil, `C:\nao\existe\fx_job`, ""); err == nil || !strings.Contains(err.Error(), "cwd does not exist") {
+	if _, _, err := StartLocalJob("echo x", nil, `C:\nao\existe\fx_job`, ""); err == nil || !strings.Contains(err.Error(), "cwd does not exist") {
 		t.Errorf("cwd inexistente deveria dar erro claro: %v", err)
 	}
 	if _, err := LocalJobStatus("nao-existe"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("job inexistente: %v", err)
 	}
-	m, err := StartLocalJob("", []string{"node", "-e", "setInterval(function(){},1000)"}, "", "meu-job")
+	m, _, err := StartLocalJob("", []string{"node", "-e", "setInterval(function(){},1000)"}, "", "meu-job")
 	if err != nil || m.ID != "meu-job" {
 		t.Fatalf("id escolhido pelo agente: %+v %v", m, err)
 	}
-	if _, err := StartLocalJob("", []string{"node", "-e", "1"}, "", "meu-job"); err == nil {
+	if _, _, err := StartLocalJob("", []string{"node", "-e", "1"}, "", "meu-job"); err == nil {
 		t.Errorf("id repetido deveria ser rejeitado")
 	}
 }
