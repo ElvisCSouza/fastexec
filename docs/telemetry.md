@@ -16,7 +16,7 @@ One row per tool call:
 | duration, and for `exec` the time the command itself took (`cmd_ms`, -1 when not measured) | `42` ms, `30` ms |
 | bytes in and out, estimated tokens (bytes / 3.5) | `100`, `250` |
 | success, exit code, truncated, empty result | |
-| command summary | the command line, cleaned, cut at 120 characters |
+| command summary | the command line, cleaned, cut at 120 characters; for `tool_manage`: `action=…`, `module=…`, `tool=…` (see docs/tools.md) |
 | error message | the first error line, cut at 300 characters |
 
 ### Build and client columns

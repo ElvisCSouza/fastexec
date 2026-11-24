@@ -16,17 +16,22 @@ Não há API nova: `start`, `status`, `wait`, `tail`, `stop`, `list` continuam s
 - `wait`: devolve estado e rc quando termina; senão, estado atual e o próximo passo.
 - `tail`: cursor por posição de log; cada chamada devolve a partir do último ponto lido.
 - `status`: estado do unit/job sem bloquear.
+- Nomes de parâmetro: `target`→`host`; `dir`/`workdir`/`directory`→`cwd`; `id`→`job_id`. Sem alias para timeout ou
+  wait. Nome desconhecido é recusado (nada roda) com a lista válida para a ação pedida e o próximo passo.
 
 ## Invariantes
 - Um `start` nunca é repetido automaticamente.
 - `job_id` segue o padrão de nome seguro (`linuxJobIDRegex`), sem barras nem espaços.
 - Estado vem do host (systemd ou Job Object), não de memória do processo que chamou.
+- Alias só quando há um único destino: `timeout_ms` não vira nada, porque `wait` não tem prazo e traduzir mudaria o sentido.
 
 ## Decisões
 - Espera por processo: `job(action='wait')` no handle, sem `wait_for` genérico (não há prova de necessidade e cresceria `tools/list`).
 - Espera por arquivo ou porta: um job no host faz a checagem curta e termina quando o arquivo existe ou a porta responde; quem espera é o job.
 - Espera por log: cursor do `tail`, sem campo novo no schema.
 - `dispatch` é um seam de teste; em produção é `transport.Dispatch`.
+- Recusa de parâmetro desconhecido lista só o que a ação lê (`jobActionParams` em `internal/mcp/argnorm.go`), para o
+  modelo não tentar parâmetros de outra ação. O schema de `job` não mudou.
 
 ## Limites
 - Sem agendador distribuído, cron ou evento novo.
@@ -38,4 +43,5 @@ Não há API nova: `start`, `status`, `wait`, `tail`, `stop`, `list` continuam s
 - `internal/tools/job_linux_state.go`, `job_linux_ops.go`: estado e operações systemd.
 - `internal/tools/sleep_promotion_test.go`: job Windows real e promoção com fake.
 - `internal/tools/ping_promotion_test.go`: payload Linux com fake de `dispatch`.
+- `internal/mcp/job_args_test.go`: recusa de `timeout_ms` por ação, aliases `dir`/`id`, `jobActionParams` contra `JobArgs`.
 - Ver também: [spec-exec.md](spec-exec.md), [tools.md](tools.md).

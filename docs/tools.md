@@ -322,6 +322,26 @@ characters). One line per change, up to 5; beyond that the count says `(and N mo
 ending style kept by the file (`CRLF`, `LF`, `mixed` or `none`), plus the encoding when it is not plain UTF-8
 (`encoding kept: Windows-1252`, `UTF-16LE`, `UTF-8 BOM`). Nothing about what is written changes.
 
+### Refusals: error classes
+
+Every refusal starts with `[edit_file <class>]` and says `nothing was written`. Nothing is applied when a refusal
+happens, including in a batch: one bad entry refuses all of `edits`.
+
+| Class | When | What the reply carries |
+|---|---|---|
+| `file_not_found` | the path does not exist on the host | the path, and that `write_file` creates a new file |
+| `target_not_found` | the `target` text is not in the file | the closest text (`did you mean`), as before |
+| `ambiguous_target` | the `target` appears more than once | the count and up to five starting line numbers (`lines 1, 3, ...`), and how to fix it: add surrounding lines so it matches once, or use `symbol` |
+| `stale_precondition` | `expected_sha256` was given and the file changed | the current sha256 only, never the content; read the file again and retry |
+
+Ambiguity used to change the first match and report `matched N times; only the first was changed`. It is now a
+refusal: the first occurrence is no longer chosen silently. A batch entry reports its index as `edits[i].target`.
+
+`expected_sha256` is an optional argument (not in the schema, to keep `tools/list` small): the sha256 (hex) of the
+decoded text as it was read. If the file has changed since, the edit is refused without writing. It is the only
+guard against editing a file from a stale read. The hash is not returned by a successful edit, so a client gets it
+from a `stale_precondition` refusal or computes it itself.
+
 ### Callers of a symbol whose signature changed
 
 When the edit changes the **header** of a declared symbol (its signature) or removes/renames it, and other files
@@ -482,6 +502,10 @@ exists can bring the caller list above.
 Background work that outlives the call: dev servers, watchers, builds, tunnels.
 
 - Actions: `start`, `wait`, `status`, `list`, `tail`, `stop`.
+- Parameters: `target` = `host`; `dir`, `workdir`, `directory` = `cwd`; `id` = `job_id`. There are no aliases for
+  timeouts: `job` has no timeout, so `timeout_ms` (or any `wait`/`timeout` name) is refused. The refusal lists the
+  parameters valid for the action it was called with and says what to do: `wait` returns after about 45 s, so call it
+  again to keep waiting; for a command that ends, use `start` with `await: true`. Nothing runs when a name is refused.
 - `start` waits up to 12 s by itself (no parameter). A command that ends inside that window comes back in the same
   call with its exit code and output, prefixed by `[FastExec auto-wait]`; no `wait` or `tail` is needed. If the output
   has more than 30 lines, the reply says how many of how many lines it showed and the exact call that brings the rest
@@ -536,6 +560,16 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
     If `journalctl` or the atomic rename fails, the cursor returns an error and never falls back to an older
     materialized file as if it were current.
 - macOS: not supported yet.
+
+## get_file
+
+Copies one file from a host to the local machine. `remote_path` is required; `host` is required unless the
+configured default host is set or `remote_path` is a Windows path (`C:\...`, `\\server\...`), which reads locally.
+The checks run before any connection, so a missing argument fails at once with a message that says what to pass:
+
+- `get_file needs remote_path: the file path on the remote host, e.g. remote_path='/home/user/x.txt'`
+- `get_file needs remote_path to name a file after the host prefix (the text before ':' is the host): e.g. ...`
+- `get_file needs host: no default host is configured. Pass host as one of: local, <configured names>.`
 
 ## code_outline
 
@@ -807,6 +841,11 @@ Markdown in the handoff folder.
 
 Modules stay out of the schema until needed: `search` and `list` show them, `call` runs one of their tools without
 loading it, `enable`/`disable` add or remove them from the tool list (the client is notified).
+
+Telemetry for `tool_manage` records only the action, the module and the tool it resolved, for example
+`action=call module=docker tool=ping`. An unknown module becomes `unknown`, an unknown tool `unresolved`, and an
+action outside the list `other`. It never records `params`, the query, or a hash of the arguments. A module or tool
+that does not exist is counted as `not_found`, not as an unknown failure.
 
 | Module | Tools |
 |---|---|

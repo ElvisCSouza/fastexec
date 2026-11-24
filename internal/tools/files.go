@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"homelab/fastexec/internal/config"
 	"homelab/fastexec/internal/graph"
 	"homelab/fastexec/internal/transport"
 )
@@ -38,8 +39,10 @@ type EditFileArgs struct {
 	Replacement string   `json:"replacement,omitempty"`
 	Symbol      string   `json:"symbol,omitempty"`
 	Edits       []EditOp `json:"edits,omitempty"`
-	Caller      string   `json:"_caller,omitempty"`       // canal MCP (injetado pelo proxy)
-	Conv        string   `json:"_conversation,omitempty"` // id de conversa do cliente, quando houver
+	// ExpectedSHA256: sha256 (hex) do texto decodificado como foi lido; se o arquivo mudou, a edição é recusada.
+	ExpectedSHA256 string `json:"expected_sha256,omitempty"`
+	Caller         string `json:"_caller,omitempty"`       // canal MCP (injetado pelo proxy)
+	Conv           string `json:"_conversation,omitempty"` // id de conversa do cliente, quando houver
 }
 
 // EditOp é uma troca de 'edits': aplicada em ordem sobre o resultado da anterior; todas ou nenhuma.
@@ -612,9 +615,14 @@ func handleWriteFile(args WriteFileArgs, impact bool) (string, error) {
 	return okReply(int64(len(contentBytes))), nil
 }
 
+// getFileExample: exemplo de chamada mostrado nos erros do get_file (genérico: nenhum host ou caminho real).
+const getFileExample = "remote_path='/home/user/x.txt'"
+
+// HandleGetFile valida host e remote_path antes de qualquer contato com o host (dial, ssh ou daemon): cada erro diz o
+// que falta e como chamar.
 func HandleGetFile(args GetFileArgs) (string, error) {
-	if args.RemotePath == "" {
-		return "", fmt.Errorf("parameter 'remote_path' is required")
+	if strings.TrimSpace(args.RemotePath) == "" {
+		return "", fmt.Errorf("get_file needs remote_path: the file path on the remote host, e.g. %s", getFileExample)
 	}
 
 	if h, p := SplitHostPath(args.RemotePath); h != "" && h != "local" {
@@ -622,6 +630,17 @@ func HandleGetFile(args GetFileArgs) (string, error) {
 			args.Host = h
 		}
 		args.RemotePath = p
+	}
+	if strings.TrimSpace(args.RemotePath) == "" {
+		return "", fmt.Errorf("get_file needs remote_path to name a file after the host prefix (the text before ':' is the host): e.g. %s", getFileExample)
+	}
+
+	// Sem host e sem host padrão na config não há para onde ir: caminho Windows (C:\, \\servidor) fica no 'local'.
+	if strings.TrimSpace(args.Host) == "" && config.Get().DefaultHost == "" && !isWindowsPath(args.RemotePath) {
+		valid := append([]string{"local"}, config.Get().Remote(false)...)
+		return "", fmt.Errorf("get_file needs host: no default host is configured, so remote_path '%s' has no target. "+
+			"Pass host as one of: %s (use 'local' for this computer), or put it in the path as host:path",
+			args.RemotePath, strings.Join(valid, ", "))
 	}
 
 	target, err := ResolveTargetHost(args.Host, args.RemotePath)
@@ -736,7 +755,10 @@ func handleEditFile(args EditFileArgs) (string, error) {
 		}
 		content, enc, err := readForEdit(host, args.Path)
 		if err != nil {
-			return "", fmt.Errorf("could not read '%s' to edit it: %w", args.Path, err)
+			return "", readEditErr(args.Path, err)
+		}
+		if err := checkExpectedSHA(args.Path, content, args.ExpectedSHA256); err != nil {
+			return "", err
 		}
 		newContent, note, err := editSymbol(args.Path, content, args.Symbol, args.Replacement)
 		if err != nil {
@@ -778,7 +800,10 @@ func handleEditFile(args EditFileArgs) (string, error) {
 
 	content, enc, err := readForEdit(host, args.Path)
 	if err != nil {
-		return "", fmt.Errorf("could not read '%s' to edit it: %w", args.Path, err)
+		return "", readEditErr(args.Path, err)
+	}
+	if err := checkExpectedSHA(args.Path, content, args.ExpectedSHA256); err != nil {
+		return "", err
 	}
 
 	// todas as trocas em memória, em ordem; qualquer target ausente aborta sem gravar nada
@@ -826,14 +851,15 @@ func handleEditFile(args EditFileArgs) (string, error) {
 			continue
 		}
 		if n == 0 {
-			msg := fmt.Sprintf("%s not found in '%s'; nothing was written", label, args.Path)
+			msg := fmt.Sprintf("[edit_file %s] %s not found in '%s'; nothing was written", editClassTargetNotFound, label, args.Path)
 			if h := nearMiss(newContent, op.Target); h != "" {
 				msg += "\n" + h
 			}
 			return "", fmt.Errorf("%s", msg)
 		}
 		if n > 1 {
-			notes = append(notes, fmt.Sprintf("%s matched %d times; only the first was changed", label, n))
+			// nunca troca o primeiro de vários: recusa tudo (nada é gravado)
+			return "", ambiguousRefusal(label, args.Path, newContent, t, n)
 		}
 		at := strings.Index(newContent, t)
 		newContent = newContent[:at] + r + newContent[at+len(t):]

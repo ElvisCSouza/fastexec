@@ -130,7 +130,7 @@ func (e *AfterSendError) Unwrap() error { return e.Err }
 // o Forwarder rodar, para que DurationMs seja a duração real da chamada (inclui a espera até a perda).
 func transportLostEntry(name string, rawArgs json.RawMessage, err error, start time.Time) telemetry.AuditEntry {
 	client, conversation := callerOf(rawArgs)
-	host, summary := telemetry.SummarizeCall(name, rawArgs)
+	host, summary := summarizeCall(name, rawArgs)
 	return telemetry.AuditEntry{
 		Tool:           name,
 		Host:           host,
@@ -143,7 +143,7 @@ func transportLostEntry(name string, rawArgs json.RawMessage, err error, start t
 		Client:         client,
 		ClientVersion:  clientVersionOf(rawArgs),
 		Conversation:   conversation,
-		ArgsHash:       telemetry.ArgsHash(rawArgs),
+		ArgsHash:       argsHashFor(name, rawArgs),
 		Outcome:        outcomePtr(telemetry.LostOutcome()),
 	}
 }
@@ -192,7 +192,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	if clientVer != "" {
 		bytesIn -= len(`,"_client_version":""`) + len(clientVer)
 	}
-	host, summary := telemetry.SummarizeCall(name, rawArgs)
+	host, summary := summarizeCall(name, rawArgs)
 	if nerr != nil {
 		telemetry.Record(telemetry.AuditEntry{
 			Tool:           name,
@@ -207,7 +207,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 			Client:         client,
 			ClientVersion:  clientVer,
 			Conversation:   conversation,
-			ArgsHash:       telemetry.ArgsHash(rawArgs),
+			ArgsHash:       argsHashFor(name, rawArgs),
 			Marks:          "args-refused",
 			Outcome:        outcomePtr(telemetry.InvalidOutcome()),
 		})
@@ -288,7 +288,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 	exitCode := 0
 	outcome := telemetry.SuccessOutcome(cmdMs >= 0)
 	if err != nil {
-		outcome = telemetry.FailureOutcome(err, outText) // antes de outText receber o texto do erro
+		outcome = toolOutcome(name, err, outText) // antes de outText receber o texto do erro
 		errMsg, exitCode = errorCause(err, outText)
 		if outText == "" {
 			outText = err.Error()
@@ -321,7 +321,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		Conversation:   conversation,
 		Graph:          graphDecision(outText),
 		GraphSavedKB:   graphSavedKB(outText),
-		ArgsHash:       telemetry.ArgsHash(rawArgs),
+		ArgsHash:       argsHashFor(name, rawArgs),
 		OutHash:        telemetry.ShortHash(outText),
 		Marks:          telemetry.Marks(outText, len(notes) > 0),
 		MarkDefs:       telemetry.MarkDefs(outText),

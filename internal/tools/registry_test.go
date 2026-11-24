@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestToolManageList(t *testing.T) {
@@ -43,10 +44,9 @@ func TestToolManageSearch(t *testing.T) {
 }
 
 func TestToolManageEnableDisable(t *testing.T) {
-	notified := false
-	SetOnListChanged(func() {
-		notified = true
-	})
+	notified := make(chan struct{}, 2)
+	SetOnListChanged(func() { notified <- struct{}{} })
+	t.Cleanup(func() { SetOnListChanged(nil) })
 
 	out, err := HandleToolManage(json.RawMessage(`{"action": "enable", "module": "docker"}`))
 	if err != nil || !strings.Contains(out, "enabled (") {
@@ -57,7 +57,14 @@ func TestToolManageEnableDisable(t *testing.T) {
 	if err != nil || !strings.Contains(out, "disabled") {
 		t.Fatalf("disable failed: (%q, %v)", out, err)
 	}
-	_ = notified
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-notified:
+		case <-time.After(time.Second):
+			t.Fatal("list_changed notification was not delivered")
+		}
+	}
 }
 
 func TestToolManageCallDirect(t *testing.T) {

@@ -27,10 +27,12 @@ var aliasTable = map[string]map[string]string{
 	"write_file":   {"target": "path"},
 	"code_outline": {"target": "path"},
 	"exec":         {"target": "host"},
-	"job":          {"target": "host"},
-	"file_ops":     {"op": "action", "operation": "action"},
-	"edit_file":    {"texttoreplace": "target", "oldtext": "target", "newtext": "replacement"},
-	"sql":          {"db": "database", "sql": "query"},
+	// job: só equivalências com um único destino. Sem alias para timeout/wait: 'wait' não tem prazo, e traduzir seria
+	// trocar o significado (a recusa diz o próximo passo em unknownParamMsg).
+	"job":       {"target": "host", "dir": "cwd", "workdir": "cwd", "directory": "cwd", "id": "job_id"},
+	"file_ops":  {"op": "action", "operation": "action"},
+	"edit_file": {"texttoreplace": "target", "oldtext": "target", "newtext": "replacement"},
+	"sql":       {"db": "database", "sql": "query"},
 }
 
 // ignorableKeys: metadata some clients attach to every call. They cannot change what the tool does, so they are
@@ -154,12 +156,7 @@ func normalizeArgs(tool string, fs *fieldSet, raw json.RawMessage) (json.RawMess
 	}
 
 	if len(unknown) > 0 {
-		msg := fmt.Sprintf("unknown parameter(s) for %s: %s. Valid: %s.", tool, strings.Join(quoteAll(unknown), ", "), validList(fs))
-		if s := suggest(unknown[0], fs); s != "" {
-			msg += fmt.Sprintf(" Did you mean '%s'?", s)
-		} else if tool == "job" && canonKey(unknown[0]) == canonKey("timeout_ms") {
-			msg += " 'wait' blocks up to 45 s per call and takes no timeout; call it again to keep waiting."
-		}
+		msg := unknownParamMsg(tool, unknown, m, fs)
 		if strictArgs() {
 			return raw, nil, fmt.Errorf("%s Nothing was run.", msg)
 		}
@@ -181,6 +178,48 @@ func normalizeArgs(tool string, fs *fieldSet, raw json.RawMessage) (json.RawMess
 		notes = append(notes, "ignored: "+strings.Join(ignored, ", "))
 	}
 	return out, notes, nil
+}
+
+// jobActionParams: parâmetros que cada ação de job lê (internal/tools/job.go e job_local.go). Conferido pelo teste
+// TestJobActionParamsExist contra a struct JobArgs.
+var jobActionParams = map[string]string{
+	"start":  "action, argv, await, command, cwd, host, job_id",
+	"wait":   "action, cursor, host, job_id",
+	"status": "action, host, job_id",
+	"tail":   "action, cursor, host, job_id, lines",
+	"stop":   "action, host, job_id",
+	"kill":   "action, host, job_id",
+	"list":   "action, host",
+	"ls":     "action, host",
+}
+
+// unknownParamMsg: a recusa de parâmetros desconhecidos. Para job lista o que vale para a ação pedida e diz o próximo
+// passo; os outros tools mantêm a lista completa.
+func unknownParamMsg(tool string, unknown []string, m map[string]json.RawMessage, fs *fieldSet) string {
+	if tool != "job" {
+		msg := fmt.Sprintf("unknown parameter(s) for %s: %s. Valid: %s.", tool, strings.Join(quoteAll(unknown), ", "), validList(fs))
+		if s := suggest(unknown[0], fs); s != "" {
+			msg += fmt.Sprintf(" Did you mean '%s'?", s)
+		}
+		return msg
+	}
+	var action string
+	_ = json.Unmarshal(m["action"], &action)
+	action = strings.ToLower(strings.TrimSpace(action))
+	var msg string
+	if valid, ok := jobActionParams[action]; ok {
+		msg = fmt.Sprintf("job: unknown parameter %s. Valid for action '%s': %s.", strings.Join(quoteAll(unknown), ", "), action, valid)
+	} else {
+		msg = fmt.Sprintf("job: unknown parameter %s. Valid: %s.", strings.Join(quoteAll(unknown), ", "), validList(fs))
+	}
+	if s := suggest(unknown[0], fs); s != "" {
+		msg += fmt.Sprintf(" Did you mean '%s'?", s)
+	}
+	if c := canonKey(unknown[0]); strings.Contains(c, "timeout") || strings.Contains(c, "wait") {
+		msg += " job has no timeout: 'wait' returns after about 45 s with the new log lines, so call it again to keep waiting; " +
+			"for a command that ends, use action 'start' with await=true."
+	}
+	return msg
 }
 
 func quoteAll(ss []string) []string {
