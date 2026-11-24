@@ -198,16 +198,33 @@ func handleJob(args JobArgs) (string, error) {
 			jobID = fmt.Sprintf("%s_%d", time.Now().Format("20060102_150405"), rand.Intn(9000)+1000)
 		}
 		unit := sanitizeUnit(jobID)
+		if args.JobID != "" {
+			if !linuxJobIDRegex.MatchString(args.JobID) {
+				return "", fmt.Errorf("job_id must be 1-40 characters: letters, digits, '_' or '-', starting with a letter or digit")
+			}
+			// job_id já usado: replay (mesmo pedido) ou conflito. Nada novo começa nesse caso.
+			cur, err := linuxShow(targetHost, envPrefix, unit)
+			if err != nil {
+				return "", err
+			}
+			if linuxFound(cur) {
+				return linuxStartExisting(args.JobID, unit, cur, args.Command)
+			}
+		}
 
 		b64Cmd := base64.StdEncoding.EncodeToString([]byte(args.Command))
-		cmd := fmt.Sprintf("%s systemd-run --user --unit='%s' --description='FastExec Job %s' /bin/bash -c \"$(echo '%s' | base64 -d)\" && %s",
-			envPrefix, unit, unit, b64Cmd, linuxJobProbe(unit, true, true))
+		cmd := fmt.Sprintf("%s systemd-run --user --unit='%s' --description='%s' /bin/bash -c \"$(echo '%s' | base64 -d)\" && %s",
+			envPrefix, unit, linuxDescription(unit, linuxIntent(args.Command)), b64Cmd, linuxJobProbe(unit, true, true))
 
 		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
 			return "", err
 		}
 		if res.ExitCode != 0 {
+			// corrida com outro start do mesmo job_id: o systemd recusou o nome. Só lê de novo; não repete o start.
+			if cur, rerr := linuxShow(targetHost, envPrefix, unit); rerr == nil && linuxFound(cur) {
+				return linuxStartExisting(jobID, unit, cur, args.Command)
+			}
 			return fmt.Sprintf("[Job Start Error: exit %d] %s", res.ExitCode, res.Stderr), fmt.Errorf("could not start job: %s", res.Stderr)
 		}
 
@@ -228,6 +245,10 @@ func handleJob(args JobArgs) (string, error) {
 		unit := sanitizeUnit(args.JobID)
 		if args.JobID == "" {
 			return "", fmt.Errorf("action 'wait' needs 'job_id'")
+		}
+		if args.Cursor != "" {
+			// cursor de bytes (mesmo contrato do Windows): espera no orçamento e devolve os bytes a partir do cursor
+			return linuxCursorCall(targetHost, envPrefix, unit, args.Cursor, true)
 		}
 		// Aguarda o processo terminar no SO e devolve o log final no instante do término. O laço é limitado no próprio host
 		// remoto (jobWaitMax): se o job ainda roda no prazo, imprime o marcador e segue para o log, em vez de o transporte
@@ -261,7 +282,7 @@ func handleJob(args JobArgs) (string, error) {
 		if args.JobID == "" {
 			return "", fmt.Errorf("action 'status' needs 'job_id'")
 		}
-		cmd := fmt.Sprintf("%s systemctl --user status '%s.service' --no-pager; %s", envPrefix, unit, linuxJobProbe(unit, false, true))
+		cmd := fmt.Sprintf("%s%s systemctl --user status '%s.service' --no-pager; %s", envPrefix, linuxUnitShow(unit), unit, linuxJobProbe(unit, false, true))
 		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
 			return "", err
@@ -270,16 +291,21 @@ func handleJob(args JobArgs) (string, error) {
 		if out == "" {
 			out = res.Stderr
 		}
+		head := ""
+		if rest, u, ok := splitLinuxUnit(out); ok {
+			out = rest
+			head = linuxStateHeader(u, false)
+		}
 		before, state, log, rc, life, hasLife := splitLinuxProbe(out)
 		if state == "EXITED" && (!hasLife || life <= quickExitLife) {
 			// terminou na largada: rc e log junto do status, sem precisar de 'tail'
-			return strings.TrimRight(before, "\n") + "\n" + linuxExitTail(rc, life, hasLife, args.Command, log), nil
+			return head + strings.TrimRight(before, "\n") + "\n" + linuxExitTail(rc, life, hasLife, args.Command, log), nil
 		}
 		if state == "EXITED" {
 			// terminou depois da largada: o rc e a vida vêm na frente, do texto cru do systemctl
-			return linuxExitRan(rc, life, hasLife) + before, nil
+			return head + linuxExitRan(rc, life, hasLife) + before, nil
 		}
-		return before, nil
+		return head + before, nil
 
 	case "list", "ls":
 		cmd := fmt.Sprintf("%s systemctl --user list-units 'job-*.service' --all --no-pager", envPrefix)
@@ -297,6 +323,9 @@ func handleJob(args JobArgs) (string, error) {
 		unit := sanitizeUnit(args.JobID)
 		if args.JobID == "" {
 			return "", fmt.Errorf("action 'tail' needs 'job_id'")
+		}
+		if args.Cursor != "" {
+			return linuxCursorCall(targetHost, envPrefix, unit, args.Cursor, false)
 		}
 		lines := args.Lines
 		if lines <= 0 {
@@ -332,15 +361,8 @@ func handleJob(args JobArgs) (string, error) {
 		if args.JobID == "" {
 			return "", fmt.Errorf("action 'stop' needs 'job_id'")
 		}
-		cmd := fmt.Sprintf("%s systemctl --user stop '%s.service'", envPrefix, unit)
-		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
-		if err != nil {
-			return "", err
-		}
-		if res.ExitCode != 0 {
-			return fmt.Sprintf("could not stop job: %s", res.Stderr), fmt.Errorf("could not stop job: %s", res.Stderr)
-		}
-		return fmt.Sprintf("[job] %s.service stopped.", unit), nil
+		// um único stop, sem retry: veredito confirmed / accepted / denied a partir do estado antes e depois
+		return linuxStopOnce(targetHost, envPrefix, unit)
 
 	default:
 		return "", fmt.Errorf("unknown job action '%s' (valid: start, wait, status, list, tail, stop)", action)

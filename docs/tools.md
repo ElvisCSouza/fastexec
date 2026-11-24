@@ -503,6 +503,22 @@ Background work that outlives the call: dev servers, watchers, builds, tunnels.
 - Windows (`local`): a named Job Object per job, log file in `<data_dir>/jobs`, at most 12 running, 12 h lifetime,
   finished jobs kept 7 days; `stop` kills the whole tree.
 - Linux (local or remote): `systemd-run --user` units; logs from `journalctl`. Needs a systemd user instance.
+  - State lives in systemd only (no metadata file on the host). Each unit's `Description` carries a fingerprint of the
+    request, so `start` with `job_id` replays the same request and answers `conflict` for a different one. Units from
+    before this change have no fingerprint and count as a conflict, never as a replay.
+  - States come from `systemctl show`: `activating` → `STARTING`; `active` → `RUNNING`; clean exit → `EXITED` with its
+    `rc` (`STOPPED` when the status is SIGTERM/SIGINT/SIGPIPE, a heuristic); `failed` without a process → `FAILED`. A
+    unit that is not found for the `job_id` answers `OUTCOME_UNKNOWN` ("may or may not have run"), never "not executed".
+  - `EXPIRED`: a finished unit older than 7 days (by the host's monotonic clock). FastExec deletes nothing on the
+    host; `systemd` keeps finished units queryable until it unloads them.
+  - `stop` is one host command (state before, `systemctl --user stop`, state after). Verdict: `confirmed` (gone),
+    `accepted` (still deactivating), `denied` (systemd refused, already finished, or unit not found). Never retried.
+  - `tail`/`wait` with `cursor`: the journal is written to a per-unit file in `$XDG_RUNTIME_DIR` (or `/tmp`) and the
+    32 KiB block is read from the byte offset, returned base64 and cut by the same rule as Windows.
+  - Cost debt: each cursor call rewrites the whole unit log from `journalctl` before reading the block. Fine for
+    typical job logs; a very large log pays that per call. A file-backed log (like Windows) would remove it.
+    If `journalctl` or the atomic rename fails, the cursor returns an error and never falls back to an older
+    materialized file as if it were current.
 - macOS: not supported yet.
 
 ## code_outline
