@@ -367,27 +367,62 @@ func withImplementersLine(body string) string {
 
 // implementersHint: para um tipo, quem o implementa ou estende (exato, do servidor de linguagem) dentro da pasta
 // buscada. Acompanha a lista crua de um grep -l: é a pergunta que costuma vir logo depois dela. "" sem servidor,
-// sem resposta ou sem implementador.
+// sem resposta ou sem implementador. Lê a linha "implementers (...)" que o lspCallers emite.
 func implementersHint(root, symbol, sub string) string {
 	ex, err := lspCallers(root, symbol, 0, 1)
 	if err != nil || ex == "" {
 		return ""
 	}
-	var files []string
-	for _, l := range strings.Split(filterExactToSub(groupCallerSites(ex), sub), "\n") {
-		if strings.HasPrefix(l, "- ") && strings.Contains(l, "(implements)") {
-			path := strings.TrimPrefix(l, "- ")
-			if i := strings.IndexAny(path, " :"); i >= 0 {
-				path = path[:i]
-			}
-			files = append(files, path)
-		}
-	}
+	files := implementerFiles(ex, sub)
 	if len(files) == 0 {
 		return ""
 	}
 	return fmt.Sprintf("%s: %d file(s) declare a type that implements or extends '%s' (exact, language server): %s",
 		GraphMarkSearch, len(files), graph.LastName(symbol), strings.Join(files, ", "))
+}
+
+// implementerEntryRe reconhece cada item de "implementers (...): Tipo (arquivo:linha), ...".
+var implementerEntryRe = regexp.MustCompile(`(?:^|, )(.+?) \(([^()]+):(\d+)\)`)
+
+// implementerFiles devolve os arquivos únicos da linha implementers cujo caminho está dentro de sub ("" = todos).
+func implementerFiles(text, sub string) []string {
+	var files []string
+	seen := map[string]bool{}
+	for _, l := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(l, "implementers (") {
+			continue
+		}
+		_, body, _ := strings.Cut(l, "): ")
+		for _, m := range implementerEntryRe.FindAllStringSubmatch(body, -1) {
+			path := m[2]
+			if !inSub(path, sub) || seen[path] {
+				continue
+			}
+			seen[path] = true
+			files = append(files, path)
+		}
+	}
+	return files
+}
+
+// inSub diz se o caminho relativo está dentro da pasta sub ("" = raiz, tudo).
+func inSub(path, sub string) bool {
+	return sub == "" || strings.HasPrefix(path, sub+"/")
+}
+
+// filterImplementersLine restringe a linha implementers à pasta sub e recalcula a contagem. "" quando nada sobra.
+func filterImplementersLine(line, sub string) string {
+	_, body, _ := strings.Cut(line, "): ")
+	var keep []string
+	for _, m := range implementerEntryRe.FindAllStringSubmatch(body, -1) {
+		if inSub(m[2], sub) {
+			keep = append(keep, fmt.Sprintf("%s (%s:%s)", m[1], m[2], m[3]))
+		}
+	}
+	if len(keep) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("implementers (%d, complete, exact): %s", len(keep), strings.Join(keep, ", "))
 }
 
 // isHeadLimit: o segmento é só `head -N`, `head -n N` ou `head -nN` (sem arquivo, sem outra opção).
@@ -741,7 +776,7 @@ func tryGraphSearch(args ExecArgs, label string, raw bool) (out string, handled 
 	// caminho de sempre segue, e o primeiro uso paga o carregamento da solução.
 	if !req.count {
 		if ex, err := lspCallers(root, req.pattern, 0, 1); err == nil && ex != "" {
-			if body := withImplementersLine(filterExactToSub(groupCallerSites(ex), sub)); body != "" {
+			if body := filterExactToSub(groupCallerSites(ex), sub); body != "" {
 				head := fmt.Sprintf("%s: '%s' in %s — %s; exact references (language server)", GraphMarkSearch, req.pattern, where, defPhrase(defs))
 				footer := "comments and strings are not listed. For the raw search: " + withRawEscape(escapeLabel)
 				return capAnswerTo(head+"\n"+body, footer, graphExactMax), true, ""
@@ -1034,8 +1069,12 @@ func filterExactToSub(text, sub string) string {
 			}
 		case strings.HasPrefix(l, "Total: "), strings.HasPrefix(l, "... "):
 			// recalculado abaixo; "... N more" refere-se à lista inteira
+		case strings.HasPrefix(l, "implementers ("):
+			if f := filterImplementersLine(l, sub); f != "" {
+				out = append(out, f)
+			}
 		default:
-			out = append(out, l) // cabeçalho, implements/implemented by, NOTE
+			out = append(out, l) // cabeçalho, implemented by, NOTE
 		}
 	}
 	if files == 0 {

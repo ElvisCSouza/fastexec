@@ -302,12 +302,14 @@ func lspCallers(root, symbol string, max, depth int) (string, error) {
 		max = graph.DefaultMax
 	}
 	infos := graph.AnnotateRefs(root, ans.name, ans.sites)
+	// Quem IMPLEMENTA ou herda não é "chamador": sai da lista de callers e vai para a linha implementers.
+	sites, infos, impls, implInfos := splitImplementers(ans.sites, infos)
 
 	var b strings.Builder
 	files := map[string]bool{}
 	tests := map[string]bool{}
 	var kept []int
-	for i, s := range ans.sites {
+	for i, s := range sites {
 		files[s.File] = true
 		if graph.IsTestPath(s.File) {
 			tests[s.File] = true
@@ -317,11 +319,11 @@ func lspCallers(root, symbol string, max, depth int) (string, error) {
 		}
 		kept = append(kept, i)
 	}
-	if len(ans.sites) > groupCallersOver {
-		writeGroupedSites(&b, ans.sites, infos, kept)
+	if len(sites) > groupCallersOver {
+		writeGroupedSites(&b, sites, infos, kept)
 	} else {
 		for _, i := range kept {
-			s := ans.sites[i]
+			s := sites[i]
 			label := ""
 			if infos[i].Label != "" {
 				label = " in " + infos[i].Label
@@ -333,14 +335,16 @@ func lspCallers(root, symbol string, max, depth int) (string, error) {
 			fmt.Fprintf(&b, "- %s:%d%s (%s)\n", s.File, s.Line, label, rel)
 		}
 	}
-	if n := len(ans.sites) - max; n > 0 {
-		fmt.Fprintf(&b, "... %d more (raise 'max')\n", n)
+	omitted := len(sites) - max
+	if omitted > 0 {
+		fmt.Fprintf(&b, "... %d more (raise 'max')\n", omitted)
 	}
 
 	head := fmt.Sprintf("=== callers of '%s' (exact, %s) ===\n", ans.name, ans.server)
 	// A relação vem ANTES da lista: quem mexe em uma interface precisa saber quem a implementa antes de ler
 	// as referências — em Go o tipo que a satisfaz não referencia o nome dela em lugar nenhum.
 	head += strings.Join(ans.rel, "")
+	head += implementersLine(impls, implInfos)
 	if len(tests) > 0 {
 		head += fmt.Sprintf("tests: %d files: %s\n", len(tests), strings.Join(sortedFiles(tests), ", "))
 	}
@@ -348,8 +352,51 @@ func lspCallers(root, symbol string, max, depth int) (string, error) {
 		head += fmt.Sprintf("NOTE: '%s' has %d declarations, all resolved: the list is exact (no 'Type.%s' needed).\n",
 			ans.name, len(ans.defs), ans.name)
 	}
-	tail := fmt.Sprintf("Total: %d references in %d files.\n", len(ans.sites), len(files))
+	tail := fmt.Sprintf("Total: %d references in %d files.\n", len(sites), len(files))
 	return head + b.String() + tail, nil
+}
+
+// splitImplementers separa os usos de relação "implements" e "inherits" dos demais. Implementar não é chamar:
+// misturados, um "callers" de interface mostrava a classe que a implementa como se chamasse o método.
+func splitImplementers(sites []graph.Site, infos []graph.RefInfo) ([]graph.Site, []graph.RefInfo, []graph.Site, []graph.RefInfo) {
+	var cs []graph.Site
+	var ci []graph.RefInfo
+	var is []graph.Site
+	var ii []graph.RefInfo
+	for i, s := range sites {
+		var inf graph.RefInfo
+		if i < len(infos) {
+			inf = infos[i]
+		}
+		if inf.Relation == "implements" || inf.Relation == "inherits" {
+			is = append(is, s)
+			ii = append(ii, inf)
+			continue
+		}
+		cs = append(cs, s)
+		ci = append(ci, inf)
+	}
+	return cs, ci, is, ii
+}
+
+// implementersLine é a linha "implementers (N, complete, exact): Tipo (arquivo:linha), ..." que acompanha o
+// cabeçalho exato. "" sem implementadores. Lista completa: nunca cortada por max (max se aplica aos chamadores).
+func implementersLine(sites []graph.Site, infos []graph.RefInfo) string {
+	if len(sites) == 0 {
+		return ""
+	}
+	items := make([]string, 0, len(sites))
+	for i, s := range sites {
+		name := ""
+		if i < len(infos) {
+			name = infos[i].Label
+		}
+		if name == "" {
+			name = "?"
+		}
+		items = append(items, fmt.Sprintf("%s (%s:%d)", name, s.File, s.Line))
+	}
+	return fmt.Sprintf("implementers (%d, complete, exact): %s\n", len(items), strings.Join(items, ", "))
 }
 
 // groupCallersOver: acima disto a lista exata sai agrupada por arquivo. Uma linha por uso repete o caminho dezenas

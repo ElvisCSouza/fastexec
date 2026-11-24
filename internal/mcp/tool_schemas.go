@@ -64,7 +64,7 @@ var serverTools = []ToolSchema{
 	},
 	{
 		Name:        "code_graph",
-		Description: "Code graph of a local repo (auto-refreshed): 'callers' (where a symbol is used), 'def' (where declared), 'impact' (files that use what a file or symbol defines; check before refactoring), 'index' (rebuild). Exact (LSP) for C#/Go/TS, else by name; interface 'callers' lists implementers.",
+		Description: "Code graph of a local repo (auto-refreshed): 'callers' (where a symbol is used), 'def' (where declared), 'impact' (files that use what a file or symbol defines; check before refactoring), 'index' (rebuild). Exact (LSP) for C#/Go/TS, else by name; implementers get their own line.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]PropertyDef{

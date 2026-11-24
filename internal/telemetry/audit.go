@@ -16,6 +16,19 @@ import (
 	"homelab/fastexec/internal/measure"
 )
 
+// GraphBasis é o recorte de uma resposta do code_graph (ver internal/tools/basis.go). Sem basis (Action "") os
+// inteiros gravam -1 = desconhecido, para que 0 nunca se passe por "zero refs".
+type GraphBasis struct {
+	Action   string // callers | def | impact
+	Lang     string // id do servidor de linguagem, ou extensão quando não há servidor
+	Provider string // csharp-ls, gopls, ... ou "index"
+	Grade    string // semantic (servidor) | name (índice)
+	Cache    string // warm | cold | n/a
+	Depth    int    // profundidade pedida (callers); 0 nas outras ações
+	Refs     int    // -1 quando a resposta não traz o total
+	Files    int    // -1 idem
+}
+
 type AuditEntry struct {
 	SessionID      string
 	Tool           string
@@ -32,26 +45,27 @@ type AuditEntry struct {
 	CommandSummary string
 	Truncated      bool
 	NoResult       bool
-	Client         string    // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
-	ClientName     string    // parte "name" de Client ("unknown" se ausente); preenchido em withIdentity
-	ClientPID      int64     // parte "pid" de Client (-1 se ausente); preenchido em withIdentity
-	ClientVersion  string    // clientInfo.version do cliente MCP ("unknown" se ausente)
-	AppVersion     string    // versão do FastExec que gerou a linha (cli.Version)
-	AppBuild       string    // revisão VCS do binário (12 hex, "+dirty" se havia alterações); "unknown" se ausente
-	InvokeMode     string    // proxy | daemon | cli
-	Conversation   string    // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
-	Graph          string    // decisão do grafo: outline, repeat, search ("" = nenhuma)
-	GraphSavedKB   int       // tamanho do texto que o outline substituiu
-	ArgsHash       string    // sha256 (16 hex) dos argumentos completos, sem campos internos: repetição real de comando/script/arquivo
-	OutHash        string    // sha256 (16 hex) do texto devolvido: saída idêntica de verdade
-	Marks          string    // marcas do FastExec na resposta ("Hint:ab12,Guard:cd34,args"): o que foi dito ao agente
-	Doc            string    // .md lido nesta chamada (caminho normalizado)
-	DocFrom        string    // .md lido antes, pela mesma identidade, cujo texto cita Doc
-	DocHow         string    // link | dir | name | none | first
-	DocLinks       []string  // .md citados no texto que o agente viu (vai para doc_links)
-	MarkDefs       []MarkDef // marcas desta resposta com o texto-modelo (vai para mark_catalog, uma vez por id)
-	Savings        []Saving  // economias desta chamada (tabela saving)
-	Outcome        *Outcome  // desfecho explícito (outcome.go); nil = linha sem desfecho (legado: outcome_schema=0)
+	Client         string     // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
+	ClientName     string     // parte "name" de Client ("unknown" se ausente); preenchido em withIdentity
+	ClientPID      int64      // parte "pid" de Client (-1 se ausente); preenchido em withIdentity
+	ClientVersion  string     // clientInfo.version do cliente MCP ("unknown" se ausente)
+	AppVersion     string     // versão do FastExec que gerou a linha (cli.Version)
+	AppBuild       string     // revisão VCS do binário (12 hex, "+dirty" se havia alterações); "unknown" se ausente
+	InvokeMode     string     // proxy | daemon | cli
+	Conversation   string     // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
+	Graph          string     // decisão do grafo: outline, repeat, search ("" = nenhuma)
+	GraphSavedKB   int        // tamanho do texto que o outline substituiu
+	Basis          GraphBasis // linha basis do code_graph: segmenta ação × linguagem × provider × grau × cache
+	ArgsHash       string     // sha256 (16 hex) dos argumentos completos, sem campos internos: repetição real de comando/script/arquivo
+	OutHash        string     // sha256 (16 hex) do texto devolvido: saída idêntica de verdade
+	Marks          string     // marcas do FastExec na resposta ("Hint:ab12,Guard:cd34,args"): o que foi dito ao agente
+	Doc            string     // .md lido nesta chamada (caminho normalizado)
+	DocFrom        string     // .md lido antes, pela mesma identidade, cujo texto cita Doc
+	DocHow         string     // link | dir | name | none | first
+	DocLinks       []string   // .md citados no texto que o agente viu (vai para doc_links)
+	MarkDefs       []MarkDef  // marcas desta resposta com o texto-modelo (vai para mark_catalog, uma vez por id)
+	Savings        []Saving   // economias desta chamada (tabela saving)
+	Outcome        *Outcome   // desfecho explícito (outcome.go); nil = linha sem desfecho (legado: outcome_schema=0)
 }
 
 var (
@@ -235,9 +249,17 @@ func setupAuditSchema(db *sql.DB) {
 			noteFailure("schema migration", err)
 		}
 	}
-	for _, col := range []string{"client", "conversation", "graph", "args_hash", "out_hash", "marks", "doc", "doc_from", "doc_how"} {
+	for _, col := range []string{"client", "conversation", "graph", "args_hash", "out_hash", "marks", "doc", "doc_from", "doc_how",
+		"graph_action", "graph_lang", "graph_provider", "graph_grade", "graph_cache"} {
 		if !existing[col] {
 			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s TEXT NOT NULL DEFAULT '';", col)); err != nil {
+				noteFailure("schema migration", err)
+			}
+		}
+	}
+	for _, col := range []string{"graph_depth", "graph_refs", "graph_files"} {
+		if !existing[col] {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE audit ADD COLUMN %s INTEGER NOT NULL DEFAULT -1;", col)); err != nil {
 				noteFailure("schema migration", err)
 			}
 		}
@@ -309,8 +331,9 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		truncated, no_result, client, conversation, graph, graph_saved_kb,
 		args_hash, out_hash, marks, doc, doc_from, doc_how, cmd_ms,
 		outcome_schema, transport_ok, tool_ok, command_exit_code, error_type, effect_unknown,
-		app_version, app_build, client_name, client_version, client_pid, invoke_mode
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		app_version, app_build, client_name, client_version, client_pid, invoke_mode,
+		graph_action, graph_lang, graph_provider, graph_grade, graph_cache, graph_depth, graph_refs, graph_files
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	o, schema := UnknownOutcome, 0
 	if e.Outcome != nil {
@@ -326,6 +349,8 @@ func writeEntry(db *sql.DB, e AuditEntry) error {
 		schema, o.TransportOK, o.ToolOK, o.CommandExitCode, o.ErrorType, o.EffectUnknown,
 		orUnknown(e.AppVersion), orUnknown(e.AppBuild), orUnknown(e.ClientName), orUnknown(e.ClientVersion),
 		clientPIDValue(e.ClientPID), orUnknown(e.InvokeMode),
+		e.Basis.Action, e.Basis.Lang, e.Basis.Provider, e.Basis.Grade, e.Basis.Cache,
+		basisInt(e.Basis, e.Basis.Depth), basisInt(e.Basis, e.Basis.Refs), basisInt(e.Basis, e.Basis.Files),
 	)
 	if err == nil && len(e.Savings) > 0 {
 		id, _ := res.LastInsertId()
@@ -517,4 +542,12 @@ func cleanLine(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "\t", " ")
 	return strings.TrimSpace(s)
+}
+
+// basisInt: sem basis o inteiro vai como -1 (desconhecido), não como 0.
+func basisInt(b GraphBasis, v int) int {
+	if b.Action == "" {
+		return -1
+	}
+	return v
 }

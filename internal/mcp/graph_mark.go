@@ -5,14 +5,15 @@ import (
 	"strconv"
 	"strings"
 
+	"homelab/fastexec/internal/telemetry"
 	"homelab/fastexec/internal/tools"
 )
 
 var (
 	// reExactHeader: the header a code_graph answer carries when a language server (csharp-ls, gopls, ...) gave it.
 	reExactHeader = regexp.MustCompile(`^=== \w+ of '[^']*' \(exact, ([a-z0-9._-]+)\) ===`)
-	reGraphKB   = regexp.MustCompile(`\((\d+) KB\)`)
-	reRewriteKB = regexp.MustCompile(`\(avoidable (\d+) KB\)`)
+	reGraphKB     = regexp.MustCompile(`\((\d+) KB\)`)
+	reRewriteKB   = regexp.MustCompile(`\(avoidable (\d+) KB\)`)
 )
 
 // graphDecision reads the graph marker that tools put in the output. An outline can also come inside an exec
@@ -43,6 +44,46 @@ func graphDecision(out string) string {
 		return "rewrite"
 	}
 	return ""
+}
+
+// graphBasisOf lê a linha "basis:" que o code_graph põe logo após o cabeçalho (internal/tools/basis.go). Sem a
+// linha devolve o zero (Action ""), e a telemetria grava -1 nos inteiros. Só valores de vocabulário fechado entram
+// (ação, linguagem, provider, grau, cache, contagens): nenhum nome de símbolo ou caminho.
+func graphBasisOf(out string) telemetry.GraphBasis {
+	var b telemetry.GraphBasis
+	if !strings.HasPrefix(out, "=== ") {
+		return b
+	}
+	lines := strings.SplitN(out, "\n", 3)
+	if len(lines) < 2 || !strings.HasPrefix(lines[1], "basis: ") {
+		return b
+	}
+	b = telemetry.GraphBasis{Refs: -1, Files: -1}
+	for _, kv := range strings.Fields(strings.TrimPrefix(lines[1], "basis: ")) {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "action":
+			b.Action = v
+		case "lang":
+			b.Lang = v
+		case "provider":
+			b.Provider = v
+		case "grade":
+			b.Grade = v
+		case "cache":
+			b.Cache = v
+		case "depth":
+			b.Depth, _ = strconv.Atoi(v)
+		case "refs":
+			b.Refs, _ = strconv.Atoi(v)
+		case "files":
+			b.Files, _ = strconv.Atoi(v)
+		}
+	}
+	return b
 }
 
 // graphSavedKB: KB avoided. Outline: size of the text each outline replaced (sum, from each outline's first line).

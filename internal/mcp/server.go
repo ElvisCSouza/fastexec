@@ -321,6 +321,7 @@ func DispatchTool(name string, rawArgs json.RawMessage) (result ToolCallResult) 
 		Conversation:   conversation,
 		Graph:          graphDecision(outText),
 		GraphSavedKB:   graphSavedKB(outText),
+		Basis:          graphBasisOf(outText),
 		ArgsHash:       argsHashFor(name, rawArgs),
 		OutHash:        telemetry.ShortHash(outText),
 		Marks:          telemetry.Marks(outText, len(notes) > 0),

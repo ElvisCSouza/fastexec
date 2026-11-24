@@ -831,6 +831,20 @@ a file from another namespace when that file has a `using` for it — the same n
 Only repositories (a `.git` folder) are indexed, each in isolation, up to 10 000 files. Index:
 `<data_dir>/telemetry/graph.db`. CLI: `fastexec graph clean` and `fastexec graph repos`.
 
+### basis line and implementers
+
+Every `code_graph` answer carries one `basis:` line right after its header. It says where the numbers came from:
+
+`basis: action=… lang=… provider=… grade=semantic|name fallback=none|lsp_unavailable|depth|no_server exact=yes|no freshness=fresh|stale|unknown completeness=complete|partial|unknown scope=repo cache=warm|cold|n/a depth=N [refs=N files=N] omitted=N`
+
+- `exact=yes` only when the grade is `semantic`, there is no fallback, the answer is `complete`, and the index is `fresh`. A by-name answer never says exact.
+- `fallback=lsp_unavailable` means a language server was wanted and could not answer; the reason is in the text. The answer is then by name, never an empty exact list.
+- `freshness=fresh` and `completeness=complete` are asserted for a live semantic provider. A by-name index
+  answer uses `unknown` when merely not building does not prove revision or coverage. `completeness=partial` when
+  results were cut (`... N more`) or the index is still building (`freshness=stale`).
+- Implementers (`implements`, `inherits`) are not callers. They come on their own line, `implementers (N, complete|partial, exact): Label (file:line), ...`.
+- Telemetry reads the same line into the audit columns `graph_action`, `graph_lang`, `graph_provider`, `graph_grade`, `graph_cache`, `graph_depth`, `graph_refs`, `graph_files`. Unknown integers are stored as -1. No symbol or path is stored.
+
 ## handoff
 
 Session notes for the next session, built from the telemetry (files touched, commands that failed) plus the

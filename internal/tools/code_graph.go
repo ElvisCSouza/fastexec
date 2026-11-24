@@ -60,17 +60,20 @@ func runCodeGraph(root string, args CodeGraphArgs) (string, error) {
 		}
 		// Exato quando o servidor de linguagem responde (distingue dois métodos de mesmo nome em tipos
 		// diferentes); por nome quando não há servidor, com uma linha dizendo por quê.
+		g := newGraphCall(root, "callers", args.Symbol, args.Depth)
 		out, err := courseWithGraph(root, args.Symbol,
 			func() (string, error) { return lspCallers(root, args.Symbol, args.Max, args.Depth) },
 			func() (string, error) { return graph.Callers(root, args.Symbol, args.Max, args.Depth) })
-			return withImplementersLine(groupCallerSites(out)), err
-		case "def", "definition":
+		return withBasis(withImplementersLine(groupCallerSites(out)), g), err
+	case "def", "definition":
 		if err := need(args.Symbol, "symbol"); err != nil {
 			return "", err
 		}
-		return courseWithGraph(root, args.Symbol,
+		g := newGraphCall(root, "def", args.Symbol, 0)
+		out, err := courseWithGraph(root, args.Symbol,
 			func() (string, error) { return lspDefinition(root, args.Symbol) },
 			func() (string, error) { return graph.Definition(root, args.Symbol) })
+		return withBasis(out, g), err
 	case "impact":
 		t := args.Target
 		if t == "" {
@@ -79,9 +82,11 @@ func runCodeGraph(root string, args CodeGraphArgs) (string, error) {
 		if err := need(t, "target"); err != nil {
 			return "", err
 		}
-		return courseWithGraph(root, t,
+		g := newGraphCall(root, "impact", t, 0)
+		out, err := courseWithGraph(root, t,
 			func() (string, error) { return lspImpact(root, t, args.Max) },
 			func() (string, error) { return graph.Impact(root, t, args.Max) })
+		return withBasis(out, g), err
 	case "index":
 		st, err := graph.Reindex(root)
 		if err != nil {
