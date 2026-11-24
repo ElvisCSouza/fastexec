@@ -125,7 +125,7 @@ Each one tells the model what it did and what to do next time.
 |---|---|
 | `cat file`, `type file`, `Get-Content file` | Served by `read_file` (no process) |
 | `ls`, `dir` of a folder | Served by `file_ops list` — except the recursive forms (`ls -R`, `dir /s`), which run and come back grouped (see *Grouped listings*) |
-| `sleep N` / `timeout N` | Up to 15 s: done with a native timer. Longer: refused, with a pointer to `job` |
+| `sleep N` / `Start-Sleep N` / `timeout [/t] N` / `python -c "time.sleep(N)"` (pure pause) | Up to 15 s: done with a native timer. Longer: promoted to a background `job` (same command), which returns the handle and the next step (`job` `wait` / `status` / `tail`). Embedded sleeps in a chain stay guarded (budget 15 s). Pings and test runs are not touched |
 | `cd <host default cwd> && ...` | The redundant `cd` is removed |
 | `grep`, `rg`, `findstr`, `Select-String` (also inside `pwsh -Command`) | Treated as searches by the rows below |
 | recursive `grep` | Gets `--exclude-dir` for `.git`, `node_modules`, `dist`, `build`, `vendor`, caches... |

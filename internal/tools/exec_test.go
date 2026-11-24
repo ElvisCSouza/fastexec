@@ -53,13 +53,10 @@ func TestSleepGuardRejection(t *testing.T) {
 	sleepFn = func(d time.Duration) {}
 	defer func() { sleepFn = origSleep }()
 
-	// Comandos com sleep longo (>15s) ou encadeados no shell continuam bloqueados
+	// Sleeps encadeados no shell continuam bloqueados. Pausas puras longas são promovidas a job (sleep_promotion_test.go).
 	proibidos := []string{
-		"sleep 140",
 		"bash -c 'sleep 100; echo oi'",
 		"sleep 10 && sleep 10 && ls", // soma > 15 s (sleep embutido curto agora é permitido)
-		"timeout 20",
-		"timeout /t 25",
 	}
 
 	for _, cmd := range proibidos {

@@ -91,22 +91,6 @@ func TestSleepAutoRemediationPython(t *testing.T) {
 		}
 	}
 
-	// Python longo (>15s) deve ser bloqueado com instrução de job assíncrono
-	pyLong := []string{
-		`python -c "import time; time.sleep(20)"`,
-		`python3 -c 'import time; time.sleep(30)'`,
-	}
-	for _, cmd := range pyLong {
-		_, err := HandleExec(ExecArgs{
-			Host:    "local",
-			Command: cmd,
-		})
-		if err == nil {
-			t.Errorf("esperava erro de guarda para '%s', mas passou", cmd)
-		} else if !strings.Contains(err.Error(), "[FastExec Guard]") {
-			t.Errorf("mensagem de erro esperada não contém '[FastExec Guard]': %v", err)
-		}
-	}
 }
 
 func TestWriteFileNudgeExisting(t *testing.T) {

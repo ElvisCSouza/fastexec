@@ -694,9 +694,12 @@ var pythonSleepRegex = regexp.MustCompile(`(?i)^\s*(?:python|python3|py)(?:\.exe
 
 var sleepFn = time.Sleep
 
+// promoteSleepJob starts a long pause as a background job. A seam: tests check the promotion without a process.
+var promoteSleepJob = HandleJob
+
 // tryRemediateSleep intercepta comandos exclusivos de sleep / timeout (incluindo python time.sleep).
 // Se a pausa pedida for <= 15s, executa a espera controlada em Go e retorna aviso pedagógico.
-// Se > 15s, bloqueia com instrução explícita de usar job assíncrono.
+// Se > 15s, promove a espera para um job em segundo plano e devolve o handle.
 func tryRemediateSleep(label string, args ExecArgs) (string, bool, error) {
 	if !autofixOn(identity(args.Caller, args.Conv)) {
 		return "", false, nil
@@ -732,7 +735,15 @@ func tryRemediateSleep(label string, args ExecArgs) (string, bool, error) {
 	}
 
 	if sec > 15 {
-		return "", true, fmt.Errorf("[FastExec Guard] A %ds pause is blocked in the synchronous exec (over 15 s). For background work start a job, or schedule a later check instead of holding the session.", sec)
+		// Pausa longa: promove a espera para um job em segundo plano (mesmo comando, sem retry) e devolve o handle.
+		// Não segura a chamada e não gera loop de ping: quem espera é o job; o agente usa wait/tail/status.
+		start := JobArgs{Host: args.Host, Action: "start", Command: args.Command, Argv: args.Argv, Cwd: args.Cwd, Caller: args.Caller}
+		out, err := promoteSleepJob(start)
+		if err != nil {
+			return "", true, err
+		}
+		notice := fmt.Sprintf("[FastExec Auto-Remediation] A %ds pause was promoted to a background job, so the call returns now. Next: job(action='wait', job_id=...) blocks up to 45 s per call; job(action='status') or tail checks progress.", sec)
+		return notice + "\n" + out, true, nil
 	}
 
 	sleepFn(time.Duration(sec) * time.Second)
