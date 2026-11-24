@@ -32,19 +32,19 @@ type AuditEntry struct {
 	CommandSummary string
 	Truncated      bool
 	NoResult       bool
-	Client         string   // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
-	Conversation   string   // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
-	Graph          string   // decisão do grafo: outline, repeat, search ("" = nenhuma)
-	GraphSavedKB   int      // tamanho do texto que o outline substituiu
-	ArgsHash       string   // sha256 (16 hex) dos argumentos completos, sem campos internos: repetição real de comando/script/arquivo
-	OutHash        string   // sha256 (16 hex) do texto devolvido: saída idêntica de verdade
-	Marks          string   // marcas do FastExec na resposta ("Hint:ab12,Guard:cd34,args"): o que foi dito ao agente
-	Doc            string   // .md lido nesta chamada (caminho normalizado)
-	DocFrom        string   // .md lido antes, pela mesma identidade, cujo texto cita Doc
-	DocHow         string   // link | dir | name | none | first
-	DocLinks       []string // .md citados no texto que o agente viu (vai para doc_links)
+	Client         string    // canal: clientInfo.name#pid do proxy MCP ("" para CLI)
+	Conversation   string    // id de conversa vindo do cliente (_meta), quando ele manda (ex.: Antigravity)
+	Graph          string    // decisão do grafo: outline, repeat, search ("" = nenhuma)
+	GraphSavedKB   int       // tamanho do texto que o outline substituiu
+	ArgsHash       string    // sha256 (16 hex) dos argumentos completos, sem campos internos: repetição real de comando/script/arquivo
+	OutHash        string    // sha256 (16 hex) do texto devolvido: saída idêntica de verdade
+	Marks          string    // marcas do FastExec na resposta ("Hint:ab12,Guard:cd34,args"): o que foi dito ao agente
+	Doc            string    // .md lido nesta chamada (caminho normalizado)
+	DocFrom        string    // .md lido antes, pela mesma identidade, cujo texto cita Doc
+	DocHow         string    // link | dir | name | none | first
+	DocLinks       []string  // .md citados no texto que o agente viu (vai para doc_links)
 	MarkDefs       []MarkDef // marcas desta resposta com o texto-modelo (vai para mark_catalog, uma vez por id)
-	Savings        []Saving // economias desta chamada (tabela saving)
+	Savings        []Saving  // economias desta chamada (tabela saving)
 }
 
 var (
@@ -254,6 +254,7 @@ func insertEntry(e AuditEntry) {
 }
 
 func writeEntry(db *sql.DB, e AuditEntry) error {
+	e = sanitizeEntry(e)
 	query := `
 	INSERT INTO audit (
 		session_id, tool, host, duration_ms,
@@ -427,13 +428,6 @@ func SummarizeCall(toolName string, rawArgs []byte) (string, string) {
 	}
 
 	return host, summary
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }
 
 func cleanLine(s string) string {

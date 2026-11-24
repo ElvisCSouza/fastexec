@@ -19,8 +19,36 @@ One row per tool call:
 | command summary | the command line, cleaned, cut at 120 characters |
 | error message | the first error line, cut at 300 characters |
 
-File contents and command output are never stored. Be aware that a command line can contain a secret you typed
-into it (a password in a `curl` URL, for example); it ends up in the summary like any other text.
+File contents and command output are never stored.
+
+**Invariant:** every new row is written with text that is valid UTF-8 and has recognizable credentials masked
+(`[REDACTED]`, `[REDACTED:token]`, `[REDACTED:private-key]`). Text in Windows-1252 or in UTF-16 (with a BOM) is converted
+to UTF-8 first. Masking runs before truncation, so a secret cut at the limit is still masked, and truncation counts
+runes, never splitting a character. The same masking (`corpus.Sanitize`) is applied when reading old rows in `fastexec stats` (largest returns, latest
+errors, per-tool tables and the savings block), in the savings report, in `stats --measure` (call text, mark templates)
+and in handoff, so rows written before this change are shown masked too. The database itself is not rewritten.
+
+Masking covers: bearer/basic tokens, known token shapes (GitHub, GitLab, Slack, AWS, Google, Stripe, npm, OpenAI-style
+keys, JWTs), PEM private key blocks (including a truncated one), CLI flags such as `--password x` or `--token=x`,
+`key=value` / `key: value` / JSON pairs whose key names a credential (`password`, `secret`, `token`, `cookie`,
+`credential`, `authorization`, `api_key`, `*_key`, `.key`, `-key`), passwords or tokens in URLs, and the device key
+literal of TinyTuya-style constructors (see below).
+
+**Device key pattern.** The third quoted argument of `Device(...)`, `BulbDevice(...)` and `OutletDevice(...)`, as in
+`Device("id", "address", "key")`, is masked when it is a quoted literal of 8 or more characters. Any other form is not
+matched: a variable, a short or unquoted value, or another library's call. This is a narrow rule chosen to avoid
+masking ordinary code; it is written from the documented positional form, and was not checked against real rows.
+
+**Limits (defense-in-depth, not a guarantee):**
+- A secret with no recognizable shape and no credential-like key name is not masked. Unknown formats are not caught.
+- Key names are matched by name; the device pattern covers only the positional constructor form above.
+- Old rows are masked on read, not scrubbed. Anyone with the database file can still read what was written before.
+- The masking of read-side text does not cover handoff save, notes and pending items (`handoff save/notes/pending`),
+  which still write their own text unmasked. This is a known gap, not handled by this change.
+- Do not share the database file as if it were clean.
+
+A command line can still contain a secret you typed into it (a password in a `curl` URL, for example); the masking
+above reduces that risk but does not remove it.
 
 ## Where
 
@@ -80,7 +108,8 @@ from telemetry and stays on this computer.
 - Each call that ran a command becomes one JSON file in the `corpus` data folder (`FASTEXEC_CORPUS_DIR` overrides):
   host, command line, exit code, command time, the raw output and what FastExec returned.
 - Secrets are masked before writing (bearer and API tokens, `password=`-style values, URL passwords, private key
-  blocks). Masking is a safety net, not a guarantee: do not share the folder.
+  blocks, and the device key literal described above). Masking is a safety net, not a guarantee: do not share the
+  folder. The size cut of a sample is made by bytes, so the last character of a truncated sample may be incomplete.
 - Retention has two tracks, because only big outputs (raw output of 10 KB or more) are changed by a filter. Big
   samples are kept 14 days (`FASTEXEC_CORPUS_BIG_TTL_H`) and are the last to go when the folder is full; small ones
   are kept 72 h (`FASTEXEC_CORPUS_TTL_H`), at most 500 of them (`FASTEXEC_CORPUS_MAX_SMALL`). The whole folder stays under

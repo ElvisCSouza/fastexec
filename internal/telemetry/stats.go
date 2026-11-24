@@ -13,6 +13,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"homelab/fastexec/internal/corpus"
 )
 
 type StatsFilter struct {
@@ -260,7 +262,7 @@ func renderStats(db *sql.DB, filter StatsFilter) (string, error) {
 		tw = tabwriter.NewWriter(&sb, 2, 4, 2, ' ', 0)
 		fmt.Fprintf(tw, "TIME\tTOOL\tBYTES\tCOMMAND / TARGET\n")
 		for _, r := range topReturns {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Timestamp, r.Tool, formatBytes(r.Bytes), truncRunes(r.CommandSummary, 60))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Timestamp, r.Tool, formatBytes(r.Bytes), truncate(r.CommandSummary, 60))
 		}
 		tw.Flush()
 		sb.WriteString("\n")
@@ -391,6 +393,7 @@ func queryTools(db *sql.DB, whereClause string) ([]ToolBreakdown, error) {
 	for rows.Next() {
 		var tb ToolBreakdown
 		if err := rows.Scan(&tb.Tool, &tb.Calls, &tb.Errors, &tb.AvgDuration, &tb.TokensIn, &tb.TokensOut); err == nil {
+			tb.Tool = corpus.Sanitize(tb.Tool)
 			list = append(list, tb)
 		}
 	}
@@ -425,6 +428,10 @@ func queryErrors(db *sql.DB, whereClause string, limit int) ([]ErrorRecord, erro
 	for rows.Next() {
 		var er ErrorRecord
 		if err := rows.Scan(&er.Timestamp, &er.Tool, &er.Host, &er.CommandSummary, &er.ErrorMessage); err == nil {
+			er.Tool = corpus.Sanitize(er.Tool)
+			er.Host = corpus.Sanitize(er.Host)
+			er.CommandSummary = corpus.Sanitize(er.CommandSummary)
+			er.ErrorMessage = corpus.Sanitize(er.ErrorMessage)
 			list = append(list, er)
 		}
 	}
@@ -475,6 +482,7 @@ func queryToolBytes(db *sql.DB, whereClause string) ([]ToolBytes, error) {
 		if err := rows.Scan(&tool, &b, &tr, &nr); err != nil {
 			continue
 		}
+		tool = corpus.Sanitize(tool)
 		a, ok := byTool[tool]
 		if !ok {
 			a = &acc{}
@@ -520,6 +528,8 @@ func queryTopReturns(db *sql.DB, whereClause string, limit int) ([]TopReturn, er
 	for rows.Next() {
 		var r TopReturn
 		if err := rows.Scan(&r.Timestamp, &r.Tool, &r.CommandSummary, &r.Bytes); err == nil {
+			r.Tool = corpus.Sanitize(r.Tool)
+			r.CommandSummary = corpus.Sanitize(r.CommandSummary)
 			list = append(list, r)
 		}
 	}
@@ -540,14 +550,6 @@ func percentile(sorted []int64, p float64) int64 {
 		idx = n - 1
 	}
 	return sorted[idx]
-}
-
-func truncRunes(s string, maxLen int) string {
-	r := []rune(s)
-	if len(r) <= maxLen {
-		return s
-	}
-	return string(r[:maxLen-3]) + "..."
 }
 
 func calculateP95(durations []int64) int64 {

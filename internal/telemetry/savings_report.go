@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"homelab/fastexec/internal/corpus"
 )
 
 // Relatório de economia para a janela de métricas. Tudo vem do banco local; nada sai da máquina.
@@ -287,16 +289,15 @@ func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
 				e.Cats = strings.Split(cats, ",")
 				e.Parts = []EventPart{}
 				e.OK, e.Truncated = okInt != 0, trunc != 0
-				e.Target = e.FullTarget
-				if len(e.Target) > 90 {
-					e.Target = e.Target[:90] + "…"
-				}
-				if len(e.FullTarget) > 4000 {
-					e.FullTarget = e.FullTarget[:4000] + "…"
-				}
-				if len(e.Err) > 600 {
-					e.Err = e.Err[:600] + "…"
-				}
+				e.FullTarget = corpus.Sanitize(e.FullTarget)
+				e.Err = corpus.Sanitize(e.Err)
+				e.Host = corpus.Sanitize(e.Host)
+				e.Tool = corpus.Sanitize(e.Tool)
+				e.Client = corpus.Sanitize(e.Client)
+				e.Marks = corpus.Sanitize(e.Marks)
+				e.Target = cutRunes(e.FullTarget, 90, "…")
+				e.FullTarget = cutRunes(e.FullTarget, 4000, "…")
+				e.Err = cutRunes(e.Err, 600, "…")
 				key := aid
 				if aid == 0 {
 					key = -e.ID
@@ -341,6 +342,7 @@ func buildSavingsReport(db *sql.DB, period string) (SavingsReport, error) {
 					var p EventPart
 					if prow.Scan(&aid, &id, &p.Cat, &p.Bytes, &p.Trips, &p.Ms, &ex, &p.Before, &p.After, &p.Note) == nil {
 						p.Exact = ex == 1
+						p.Note = corpus.Sanitize(p.Note)
 						k := aid
 						if aid == 0 {
 							k = -id

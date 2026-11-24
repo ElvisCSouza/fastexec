@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"homelab/fastexec/internal/config"
+	"homelab/fastexec/internal/corpus"
 	"homelab/fastexec/internal/measure"
 )
 
@@ -43,6 +44,12 @@ func (s sqlSource) Calls(w measure.Window) ([]measure.Call, error) {
 			&c.TokensOut, &c.DurMs, &c.CmdMs, &epoch); err != nil {
 			return nil, err
 		}
+		// linhas antigas podem ter texto não higienizado: mascara antes do domínio ver
+		c.Channel = corpus.Sanitize(c.Channel)
+		c.Tool = corpus.Sanitize(c.Tool)
+		c.Summary = corpus.Sanitize(c.Summary)
+		c.Marks = corpus.Sanitize(c.Marks)
+		c.Conversation = corpus.Sanitize(c.Conversation)
 		c.Truncated, c.OK, c.HasConversation = trunc != 0, ok != 0, c.Conversation != ""
 		if epoch > 0 {
 			c.At = time.Unix(epoch, 0)
@@ -83,7 +90,8 @@ func (s sqlSource) MarkTemplates() (map[string]string, error) {
 		if err := rows.Scan(&id, &tpl); err != nil {
 			return nil, err
 		}
-		out[id] = tpl
+		// só o texto do template é mascarado; a chave do mark fica como está
+		out[id] = corpus.Sanitize(tpl)
 	}
 	return out, rows.Err()
 }

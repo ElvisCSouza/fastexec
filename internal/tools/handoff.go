@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"homelab/fastexec/internal/config"
+	"homelab/fastexec/internal/corpus"
 	"homelab/fastexec/internal/telemetry"
 )
 
@@ -148,12 +150,17 @@ type handoffFacts struct {
 }
 
 func extractHandoffFacts() (*handoffFacts, error) {
-	facts := &handoffFacts{}
-
 	db, err := telemetry.GetDB()
 	if err != nil || db == nil {
-		return facts, err
+		return &handoffFacts{}, err
 	}
+	return collectHandoffFacts(db)
+}
+
+// collectHandoffFacts reads the recent audit rows from db and builds the facts. It is
+// split out so the masking of legacy rows can be tested with a plain database.
+func collectHandoffFacts(db *sql.DB) (*handoffFacts, error) {
+	facts := &handoffFacts{}
 
 	rows, qErr := db.Query(`
 		SELECT tool, command_summary, success, error_message 
@@ -176,6 +183,9 @@ func extractHandoffFacts() (*handoffFacts, error) {
 		if err := rows.Scan(&tool, &summary, &success, &errMsg); err != nil {
 			continue
 		}
+		// linhas gravadas antes da higienização: mascara aqui também (o banco não é reescrito)
+		summary = corpus.Sanitize(summary)
+		errMsg = corpus.Sanitize(errMsg)
 
 		summary = strings.TrimSpace(summary)
 		if summary == "" {
