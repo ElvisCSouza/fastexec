@@ -125,7 +125,10 @@ Each one tells the model what it did and what to do next time.
 |---|---|
 | `cat file`, `type file`, `Get-Content file` | Served by `read_file` (no process) |
 | `ls`, `dir` of a folder | Served by `file_ops list` — except the recursive forms (`ls -R`, `dir /s`), which run and come back grouped (see *Grouped listings*) |
-| `sleep N` / `Start-Sleep N` / `timeout [/t] N` / `python -c "time.sleep(N)"` (pure pause) | Up to 15 s: done with a native timer. Longer: promoted to a background `job` (same command), which returns the handle and the next step (`job` `wait` / `status` / `tail`). Embedded sleeps in a chain stay guarded (budget 15 s). Pings and test runs are not touched |
+| `sleep N` / `Start-Sleep N` / `timeout [/t] N` / `python -c "time.sleep(N)"` (pure pause) | Up to 15 s: done with a native timer. Longer: promoted to a background `job` (same command), which returns the handle and the next step (`job` `wait` / `status` / `tail`). Embedded sleeps in a chain stay guarded (budget 15 s). Test runs are not touched |
+| `ping -n N 127.0.0.1 >nul` / `ping -c N localhost >/dev/null` / `... | Out-Null` (silent loopback wait, N > 15) | Promoted to a background `job` with the same command, cwd and host, also when the ping starts a chain (`&&`, `||`, `&`, `;`). Only loopback (`localhost`, `127.0.0.1`, `::1`), a count above 15 and output suppressed qualify. Visible pings, short counts, remote targets, extra flags and direct argv (no shell) stay inline |
+
+**Waiting without a new API:** a process is waited for with `job(action='wait')` on the job handle. A file or port is watched on the host: a job runs a short check that exits when the file exists or the port answers, and the caller waits on that job. A log is followed with the `job` cursor (`job(action='tail')`), which replays from the last position. No `wait_for` tool or schema field is added.
 | `cd <host default cwd> && ...` | The redundant `cd` is removed |
 | `grep`, `rg`, `findstr`, `Select-String` (also inside `pwsh -Command`) | Treated as searches by the rows below |
 | recursive `grep` | Gets `--exclude-dir` for `.git`, `node_modules`, `dist`, `build`, `vendor`, caches... |

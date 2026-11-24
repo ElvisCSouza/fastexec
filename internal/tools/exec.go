@@ -103,6 +103,12 @@ func handleExec(args ExecArgs, rec *corpus.Capture) (string, error) {
 		return out, err
 	}
 
+	// Ping silencioso em loopback (>15 probes, saída suprimida) usado como espera: promove a job em segundo plano
+	if out, handled, err := tryPromotePingWait(args); handled {
+		avoidedRetry(label, out)
+		return out, err
+	}
+
 	// Bloqueio determinístico de sleep / timeout artificial
 	var sleepNotice string
 	if checkSleepGuard(cmdToCheck, args) {

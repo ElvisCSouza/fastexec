@@ -12,6 +12,9 @@ import (
 	"homelab/fastexec/internal/transport"
 )
 
+// dispatch sends a job command to the target host. A seam: tests capture the systemd payload without a real host.
+var dispatch = transport.Dispatch
+
 type JobArgs struct {
 	Host    string   `json:"host"`
 	Action  string   `json:"action"` // start, status, list, tail, stop, wait
@@ -216,7 +219,7 @@ func handleJob(args JobArgs) (string, error) {
 		cmd := fmt.Sprintf("%s systemd-run --user --unit='%s' --description='%s' /bin/bash -c \"$(echo '%s' | base64 -d)\" && %s",
 			envPrefix, unit, linuxDescription(unit, linuxIntent(args.Command)), b64Cmd, linuxJobProbe(unit, true, true))
 
-		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
+		res, err := dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
 			return "", err
 		}
@@ -255,7 +258,7 @@ func handleJob(args JobArgs) (string, error) {
 		// estourar o limite do cliente MCP.
 		cmd := fmt.Sprintf("%s end=$(( $(date +%%s) + %d )); while systemctl --user is-active --quiet '%s.service'; do if [ $(date +%%s) -ge $end ]; then echo %s; break; fi; sleep 0.5; done; journalctl --user-unit='%s.service' -n 50 --no-pager",
 			envPrefix, int(jobWaitMax/time.Second), unit, waitTimeoutMarker, unit)
-		res, err := transport.Dispatch(targetHost, cmd, jobWaitMax+5*time.Second)
+		res, err := dispatch(targetHost, cmd, jobWaitMax+5*time.Second)
 		if err != nil {
 			return "", err
 		}
@@ -283,7 +286,7 @@ func handleJob(args JobArgs) (string, error) {
 			return "", fmt.Errorf("action 'status' needs 'job_id'")
 		}
 		cmd := fmt.Sprintf("%s%s systemctl --user status '%s.service' --no-pager; %s", envPrefix, linuxUnitShow(unit), unit, linuxJobProbe(unit, false, true))
-		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
+		res, err := dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
 			return "", err
 		}
@@ -309,7 +312,7 @@ func handleJob(args JobArgs) (string, error) {
 
 	case "list", "ls":
 		cmd := fmt.Sprintf("%s systemctl --user list-units 'job-*.service' --all --no-pager", envPrefix)
-		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
+		res, err := dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
 			return "", err
 		}
@@ -332,7 +335,7 @@ func handleJob(args JobArgs) (string, error) {
 			lines = 30
 		}
 		cmd := fmt.Sprintf("%s journalctl --user-unit='%s.service' -n %d --no-pager; %s", envPrefix, unit, lines, linuxJobProbe(unit, false, false))
-		res, err := transport.Dispatch(targetHost, cmd, transport.DefaultTimeout)
+		res, err := dispatch(targetHost, cmd, transport.DefaultTimeout)
 		if err != nil {
 			return "", err
 		}
