@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v0.3.0 - 2026-11-27
+
+- **Lossless structured shrinking (`shrink`, Measured):** automatically compacts homogeneous JSON arrays (≥ 4 scalar objects) into pipe-delimited tables, strips `(use "git ...")` boilerplate from `git status`, removes redundant `index`/`diff --git` headers from `git diff`, compacts verbose `git log` commit headers, shortens 64-char IDs in `docker ps`/`images`, drops 100%-empty CSV columns, and folds consecutive identical-template log bursts while preserving errors/warnings and code/diffs.
+- **Built-in BM25 section search (`read_file(query=...)`):** ranks Markdown sections (`#`/`##`/`###`) or 30-line blocks with BM25 (including accent folding) within an 8 KB budget, returning exact line ranges; `read_cap` footers now suggest `query='keywords'` directly.
+- **Symbol-relative editing (`edit_file(symbol=..., position='before'|'after')`):** inserts new functions, methods or fields directly before or after an existing AST declaration without sending surrounding context blocks.
+- **Shell file-read guard expanded:** `powershell -Command "Get-Content '...'"` and `cmd /c type "..."` pure file reads are now unwrapped and routed to native `read_file` (with `read_cap` and `read_dedup`), leaving pipelines untouched.
+- **Optional embedded concise-output mode (`concise_output`):** when enabled in `~/.fastexec/config.json` (or `FASTEXEC_CONCISE_OUTPUT=1`), FastExec emits terse response rules in the standard MCP `initialize` `instructions` field across all MCP clients (Claude Desktop, Claude Code, Antigravity, OpenCode, Cursor) without external plugins.
+- **More accurate savings panel:** prevents `CatSlice` double-counting when opening spill files, exposes `Measured` vs `Estimate` split and `Cut spills` recovery summary in `SavingsReport` and the monitor UI, adds the `Structured shrink` category, and shows an optional separate Caveman output card when `~/.claude/.caveman-history.jsonl` is present.
+
 ## v0.2.0 - 2026-11-27
 
 - **Recoverable output cuts with secret redaction.** Truncated command/tool outputs now persist the redacted full text to a local spill file and return the exact `read_file` call (line range or regex pattern) to inspect any omitted section without re-running the command.
