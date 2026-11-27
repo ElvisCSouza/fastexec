@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.2.0 - 2026-11-27
+
+- **Recoverable output cuts with secret redaction.** Truncated command/tool outputs now persist the redacted full text to a local spill file and return the exact `read_file` call (line range or regex pattern) to inspect any omitted section without re-running the command.
+- **Full background job lifecycle on Windows and Linux.** `job` adds idempotent starts, race-safe local job metadata, byte-safe log cursors and replay, Linux `systemd` lifecycle support, and 12-second auto-wait for short commands. Long pure pauses (`sleep`) and silent loopback ping waits are promoted to background jobs automatically.
+- **Session-wide read and command deduplication.** Identical repeated `read_file` and `exec` outputs (including spilled large outputs) are replaced with a compact stub for the entire session, cutting redundant context growth.
+- **Multi-language syntax checking after edits.** Post-edit syntax checks now cover JSON (with duplicate-key and format hints), TypeScript (`tsc --noEmit` plus project-level `tsc` fallback when no language server is attached), JavaScript, Zig, Shell, and Python (best-effort by installed toolchain), with column pointers.
+- **Better `code_graph` and actionable edit validation.** `code_graph` exposes resolution basis and separates interface implementers; `edit_file` validates parameters up front and returns actionable refusal diagnostics instead of opaque misses.
+- **Privacy, telemetry and MCP metadata.** Credentials in telemetry, handoffs and spill files are masked before persistence; UTF-8 boundaries are preserved on cuts; `file_ops` `list` caps at 400 entries; `handoff save` returns a short confirmation; MCP `initialize` reports the actual build version; telemetry tracks build, client, invocation identity and explicit outcomes, plus switchback A/B measurement (`stats --measure`).
+- **Local SQLite and Windows transport fixes.** SQLite queries on local Windows run in-process; drive paths without an explicit host route locally; older Windows `server-exec` receives native PowerShell lines.
+
 ## v0.1.2 - 2026-11-13
 
 - **Tests that cover the file.** The first edit of a code file ends with one line naming the test files that cover it and
